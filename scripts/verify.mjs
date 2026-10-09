@@ -20,6 +20,25 @@ for (const name of ['prepare', 'prepack', 'preinstall', 'install', 'postinstall'
   assert.equal(pkg.scripts?.[name], undefined, `Unexpected lifecycle script: ${name}`);
 }
 
+// DSH discovers the nearest same-name manifest above the Host entry.
+function verifyPetClient(manifest) {
+  assert.equal(manifest.name, pkg.name);
+  assert.equal(manifest.version, pkg.version);
+  assert.equal(manifest.dsh?.client?.platform, 'web');
+  assert.deepEqual(manifest.dsh.client, pkg.dsh.client);
+  assert.equal(manifest.exports?.['./client'], './lib/client.js');
+  assert.equal(resolve(root, 'plugins/pet', manifest.exports['./client']),
+    resolve(root, pkg.exports['./client'].default));
+}
+const petManifest = readJson('plugins/pet/package.json');
+verifyPetClient(petManifest);
+const withoutDeclaration = structuredClone(petManifest);
+delete withoutDeclaration.dsh;
+assert.throws(() => verifyPetClient(withoutDeclaration));
+const withoutEntry = structuredClone(petManifest);
+delete withoutEntry.exports['./client'];
+assert.throws(() => verifyPetClient(withoutEntry));
+
 // Both entries are independent plugin rows.
 const patch = readFileSync(resolve(root, 'cordis.patch.yml'), 'utf8');
 assert.match(patch, /id: dsh-pet\s+name: dsh-pet/);

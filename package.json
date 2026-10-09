@@ -1,6 +1,6 @@
 {
   "name": "dsh-pet",
-  "version": "0.3.6-fix.3-local.4",
+  "version": "0.3.6-fix.3-local.5",
   "private": true,
   "description": "统一收集的插件套件：DS Pet 桌宠与 Memory 跨会话记忆，作为同一个 Bundle 中的两个平等条目。",
   "license": "MIT",

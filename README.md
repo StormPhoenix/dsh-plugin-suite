@@ -15,6 +15,8 @@ Pet 的浏览器端模块在编译产物里把注册 id 硬编码为 `dsh-pet`�
 
 每个条目有独立的 id、模块文件、配置和显示信息。Pet 有浏览器端（注册为 `dsh-pet` 客户端模块）；Memory 是纯宿主插件，提供 `memory_write`、`memory_search`、`memory_forget` 和 `memory:recall`。
 
+DSH 从 Host 入口向上寻找最近的同名包清单。`plugins/pet/package.json` 因此必须声明 `dsh.client` 与相对于 Pet 目录的 `./client` 导出，且与根清单指向同一客户端文件。`node scripts/verify.mjs` 检查两份声明一致，并验证缺失声明或入口会被拒绝。安装后，Pet 客户端在设置页面注册独立的桌宠配置条目；替换已安装版本需要完整重启 Desktop。
+
 ## 布局
 
 ```text

@@ -1,6 +1,17 @@
 {
   "name": "dsh-pet",
-  "version": "0.3.6-fix.3-local.4",
+  "version": "0.3.6-fix.3-local.5",
   "type": "module",
-  "license": "MIT"
+  "license": "MIT",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": ["@deepseek-ai/dsh-client-connection"],
+      "platform": "web"
+    }
+  }
 }
