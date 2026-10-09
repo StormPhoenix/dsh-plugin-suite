@@ -1,5 +1,5 @@
 {
-  "distributionVersion": "0.3.6-fix.3-local.5",
+  "distributionVersion": "0.3.6-fix.3-local.6",
   "sourceKind": "upstream-file-snapshots",
   "packages": {
     "dsh-pet": "0.3.6-fix.3",
