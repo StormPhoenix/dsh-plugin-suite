@@ -122,6 +122,9 @@ async function buildClient() {
     platform: 'browser',
     target: ['chrome120'],
     external: CLIENT_EXTERNAL,
+    // pnpm 把依赖装成符号链接，esbuild 默认解析成 .pnpm 下的真实路径，产物里的
+    // 依赖路径注释就会带上 store 路径。保留链接路径，重建结果才与发布包逐字节一致。
+    preserveSymlinks: true,
     legalComments: 'none',
     logLevel: 'warning',
     loader: { '.css': 'text' },

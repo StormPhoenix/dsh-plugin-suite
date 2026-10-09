@@ -24,7 +24,7 @@
       "releaseArtifactSha256": "2932a2567b8c0fc2cccc3bd17e0635cc8d6a862e9e45c4ae1040ee008c683cf0"
     }
   },
-  "note": "Hashecks cover files copied unchanged from the upstream source (installed packages for pet and memory, git commit 1a640ee6a7d914200fa69733a68df829f41bd4b5 for qiaomu-reader-dsh); hand-edited manifests, locales, icons, and README files are excluded, as is the symlink plugins/qiaomu-reader/src/client/ui, which has no content hash.",
+  "note": "Hashecks cover files copied unchanged from the upstream source (installed packages for pet and memory, git commit 1a640ee6a7d914200fa69733a68df829f41bd4b5 for qiaomu-reader-dsh); hand-edited manifests, locales, build scripts, icons, and README files are excluded, as is the symlink plugins/qiaomu-reader/src/client/ui, which has no content hash.",
   "sha256": {
     "LICENSE": "22757dc9c895b2729a2fc684d227cadfb54d5af3dd300029926839e8c4e269ce",
     "plugins/memory/UPSTREAM-README.md": "bce01db1b36220162b2c4258f18beef3c25c70191c4937d2087079820f69b8d8",
@@ -457,7 +457,6 @@
     "plugins/qiaomu-reader/index.js": "39f6fcb9181d5fe48da4ea8e917093b01c8b991c675dc6cdb5eec1faeef4c978",
     "plugins/qiaomu-reader/media/starter-books.js": "7f6b512c2ea4d8012e4af106464efca27e55f8ad19a26562f963fc8622975694",
     "plugins/qiaomu-reader/screenshots.json": "6f69b19ee49d7dfe653484d5dbec5c4aa1d042f2a01476251e078f9779dcacdd",
-    "plugins/qiaomu-reader/scripts/build.mjs": "f50b931dc45adc17fa1fa045defc343ae33a1569f326d80fc523fd1307b0e1d6",
     "plugins/qiaomu-reader/scripts/check-client.mjs": "704540e15e90f45d47707b72d377431cef6a63b5330f435b2f69af3e44ec9587",
     "plugins/qiaomu-reader/scripts/make-starter-books.mjs": "b2aaf265a1c534952102fb6d390bc5d19e2b99132f792c515589aed77ec64fb1",
     "plugins/qiaomu-reader/scripts/verify-package.mjs": "e106c12cd2e5f98a316cf4f014af754ae2222c84423835d6b382d59595b4f7ed",

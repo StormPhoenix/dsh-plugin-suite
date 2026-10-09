@@ -20,14 +20,15 @@
 
 复制来源是上游提交 `1a640ee6a7d914200fa69733a68df829f41bd4b5`（tag `v1.0.2`），也就是该 Release 指向的提交。复制时排除 `.git`、`node_modules`、`package-lock.json` 与 `.github`，其余文件字节未改，摘要见 [SNAPSHOT.json](SNAPSHOT.json)。`src/client/ui` 是上游入库的符号链接（git 模式 120000），按原样保留。`index.js`（`39f6fcb9…c978`）与 `client.js`（`2058c5ff…95dcf`）与上游提交和 Release 包内的同名文件逐字节相同。
 
-手改四处：
+手改五处：
 
 - `package.json` 增加 `exports["./cordis.patch.yml"]`，与套件其余插件一致。
 - `package.json` 删除 `prepack` 脚本。套件禁止任何安装期脚本，本仓库也不打包发布；`npm run check`（build + test + verify-package）仍可手动使用。
 - `package.json` 把 `dependencies.pdfjs-dist` 由 `^6.2.108` 收窄为精确 `6.2.108`。原因不是版本偏好：客户端产物把 pdf.js 内联进 `client.js`（`src/client/pdf-book.js` 导入它），宿主半在运行时外部解析同一个包，范围声明会让两半装上不同版本。
 - `locale/{en,zh}.json` 增加 `meta.title` / `meta.description`。DSH 从 `./locale/*.json` 读取插件显示名与描述，缺失时标题回退为包名；原有扁平键未动，界面文案在代码中注册（`src/ui/library-locale.js`），构建不读取这两个文件。
+- `scripts/build.mjs` 的客户端构建增加 `preserveSymlinks: true`。pnpm 把依赖装成符号链接，esbuild 默认解析到 `.pnpm` 下的真实路径，产物里的依赖路径注释就会带上 store 路径；保留链接路径后，本仓库的重建结果与上游发布包逐字节一致。不开该选项时两者只差 4 处依赖路径字符串，被内联的代码本身相同。
 
-重建：仓库根执行 `pnpm install --ignore-scripts`，再到 `plugins/qiaomu-reader` 运行 `node scripts/build.mjs`；上游 `npm test` 的 47 项测试在该副本上通过。`index.js` 逐字节一致；`client.js` 在套件的 pnpm 隔离布局下只差一条 esbuild 依赖路径注释（`node_modules/pdfjs-dist/…` 变为 `../../node_modules/.pnpm/pdfjs-dist@6.2.108/node_modules/pdfjs-dist/…`），归一化该注释后逐字节一致，`nodeLinker: hoisted` 与上游的 `npm ci` 布局下则直接逐字节一致。更新产物时以上游提交为准，重建用于本地核对。
+重建：仓库根执行 `pnpm install --ignore-scripts`，再到 `plugins/qiaomu-reader` 运行 `node scripts/build.mjs`。在本仓库的 pnpm 隔离布局下，`index.js` 与 `client.js` 都逐字节重现发布包；上游 `npm test` 的 47 项测试在该副本上通过。
 
 ## 集合
 
