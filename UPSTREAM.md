@@ -12,6 +12,8 @@
 
 原包声明 MIT，但未附 LICENSE、作者或仓库信息。原 README 保存在 [plugins/memory/UPSTREAM-README.md](plugins/memory/UPSTREAM-README.md)，其中的安装命令不适用于本仓库。不虚构作者，完整许可仍待确认。Memory 图标为本仓库原创。
 
+原包 peer 声明为 `dsh-tools@^0.1.0-rc.6`、`dsh-system-prompt@^0.1.0-rc.6`。本套件将其更正为 `^0.2.0-rc.1`，依据是对 DSH 0.2.1-alpha.1 源码的比对：`defineTool`（`output.schema`/`output.render`/`output.presentationMeta`/`presentCall`）与 `systemPrompt.section` 的调用方式与当前 API 一致。运行代码本身未改动，仅 peer 声明更新。
+
 ## 集合
 
 根包名 `dsh-pet` 是保留 Pet 浏览器模块 id 的技术要求，不代表版权归属。根包不承担 Pet 或 Memory 上游的版权；各插件的依赖、兼容声明与数据归属保持独立。复制原文件摘要见 [SNAPSHOT.json](SNAPSHOT.json)，手改的清单、locale、图标与 README 不纳入该清单。

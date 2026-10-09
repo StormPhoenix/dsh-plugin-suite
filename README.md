@@ -40,7 +40,7 @@ github:StormPhoenix/dsh-plugin-suite#main
 
 安装前先卸载旧的 `dsh-pet` Bundle 和旧的 `dsh-memory` Bundle，避免重复插入条目和注册工具；不要删除用户数据。安装完成后完整退出并重启 Desktop。
 
-Memory 保留较旧的 DSH peer 范围（`dsh-system-prompt`、`dsh-tools` 为 `^0.1.0-rc.6`），目标 DSH 可能拒绝安装或激活；本次只做了静态检查，未验证实际运行。不要为此授予版本豁免。
+Memory 原包声明 peer 范围 `^0.1.0-rc.6`，但目标 DSH 0.2.x 提供的是 `0.2.x`。经比对 DSH 0.2.1-alpha.1 源码，Memory 的 `defineTool` 与 `systemPrompt.section` 调用与当前 API 一致，故套件将这两个 peer 范围更正为 `^0.2.0-rc.1`。这是基于源码核对的版本更新，不是盲目放宽；仍未做运行时加载验证，安装后如报错请保留具体日志。
 
 ## 本地单独运行与维护
 
