@@ -1,9 +1,8 @@
-# The suite mounts its dependencies explicitly; dependency bundles are not selected here.
 - insert:
     - id: dsh-pet
       name: dsh-pet
     - id: memory
-      name: dsh-memory
+      name: dsh-pet/memory
       config:
         path: !!js dshHomePath('memory/memory.db')
         promptRecentCount: 10
