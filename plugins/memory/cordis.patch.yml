@@ -1,8 +1,6 @@
 - insert:
-    - id: dsh-pet
-      name: dsh-pet
     - id: memory
-      name: dsh-pet/memory
+      name: dsh-memory
       config:
         path: !!js dshHomePath('memory/memory.db')
         promptRecentCount: 10

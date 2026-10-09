@@ -1,56 +1,8 @@
 {
-  "name": "dsh-pet",
-  "version": "0.3.6-fix.3-local.5",
+  "name": "dsh-plugin-suite-workspace",
+  "version": "0.1.0",
   "private": true,
-  "description": "统一收集的插件套件：DS Pet 桌宠与 Memory 跨会话记忆，作为同一个 Bundle 中的两个平等条目。",
-  "license": "MIT",
   "type": "module",
-  "icon": "plugins/pet/assets/logo.png",
-  "main": "plugins/pet/lib/index.js",
-  "exports": {
-    ".": { "types": "./plugins/pet/lib/types/index.d.ts", "default": "./plugins/pet/lib/index.js" },
-    "./client": { "types": "./plugins/pet/lib/types/client/index.d.ts", "default": "./plugins/pet/lib/client.js" },
-    "./memory": { "types": "./plugins/memory/lib/index.d.ts", "default": "./plugins/memory/lib/index.js" },
-    "./locale/*.json": "./plugins/pet/locale/*.json",
-    "./icon": "./plugins/pet/assets/logo.png",
-    "./memory/locale/*.json": "./plugins/memory/locale/*.json",
-    "./memory/icon": "./plugins/memory/icon.svg",
-    "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json"
-  },
-  "files": [
-    "plugins/pet",
-    "plugins/memory",
-    "cordis.patch.yml",
-    "README.md",
-    "UPSTREAM.md",
-    "SNAPSHOT.json"
-  ],
-  "scripts": { "verify": "node scripts/verify.mjs" },
-  "engines": { "node": "^22.19.0 || >=24.0.0" },
-  "dependencies": {
-    "@electron-internal/extract-zip": "^1.0.5",
-    "@electron/get": "^5.1.0",
-    "@deepseek-ai/schemastery": "^3.18.1"
-  },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.4",
-    "@deepseek-ai/dsh-agent-default-model": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-client-connection": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-client-ui-primitives": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-client-ui-slots": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-commands": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-credentials": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-home-paths": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-host-webserver": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-llm": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-system-prompt": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-tools": "^0.2.0-rc.1",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
-  "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
-    "client": { "inject": ["@deepseek-ai/dsh-client-connection"], "platform": "web" }
-  }
+  "description": "Independent local-install DSH plugins maintained in one repository.",
+  "scripts": { "verify": "node scripts/verify.mjs" }
 }

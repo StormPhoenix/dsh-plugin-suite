@@ -1,17 +1,43 @@
 {
   "name": "dsh-pet",
-  "version": "0.3.6-fix.3-local.5",
+  "version": "0.3.6-fix.3-local.6",
+  "private": true,
+  "description": "DS Pet 桌面宠物：桌面动画、聊天和独立设置页面。",
   "type": "module",
   "license": "MIT",
+  "icon": "assets/logo.png",
+  "main": "lib/index.js",
   "exports": {
-    ".": "./lib/index.js",
-    "./client": "./lib/client.js",
+    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
+    "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" },
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./assets/logo.png",
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
+  "files": ["lib", "runtime", "assets", "locale", "cordis.patch.yml", "README.md"],
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "dependencies": {
+    "@electron-internal/extract-zip": "^1.0.5",
+    "@electron/get": "^5.1.0",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-agent-default-model": "^0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-connection": "^0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.2.0-rc.1",
+    "@deepseek-ai/dsh-commands": "^0.2.0-rc.1",
+    "@deepseek-ai/dsh-credentials": "^0.2.0-rc.1",
+    "@deepseek-ai/dsh-home-paths": "^0.2.0-rc.1",
+    "@deepseek-ai/dsh-host-webserver": "^0.2.0-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.2.0-rc.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
   "dsh": {
-    "client": {
-      "inject": ["@deepseek-ai/dsh-client-connection"],
-      "platform": "web"
-    }
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "inject": ["@deepseek-ai/dsh-client-connection"], "platform": "web" }
   }
 }
