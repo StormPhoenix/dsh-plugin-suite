@@ -1,0 +1,4 @@
+# Keep the existing package and entry names to replace, not duplicate, DS Pet.
+- insert:
+    - id: dsh-pet
+      name: dsh-pet
