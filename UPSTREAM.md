@@ -28,7 +28,7 @@
 - `locale/{en,zh}.json` 增加 `meta.title` / `meta.description`。DSH 从 `./locale/*.json` 读取插件显示名与描述，缺失时标题回退为包名；原有扁平键未动，界面文案在代码中注册（`src/ui/library-locale.js`），构建不读取这两个文件。
 - `scripts/build.mjs` 的客户端构建增加 `preserveSymlinks: true`。pnpm 把依赖装成符号链接，esbuild 默认解析到 `.pnpm` 下的真实路径，产物里的依赖路径注释就会带上 store 路径；保留链接路径后，本仓库的重建结果与上游发布包逐字节一致。不开该选项时两者只差 4 处依赖路径字符串，被内联的代码本身相同。
 
-重建：仓库根执行 `pnpm install --ignore-scripts`，再到 `plugins/qiaomu-reader` 运行 `node scripts/build.mjs`。在本仓库的 pnpm 隔离布局下，`index.js` 与 `client.js` 都逐字节重现发布包；上游 `npm test` 的 47 项测试在该副本上通过。
+重建：仓库根执行 `pnpm install --ignore-scripts`，再到 `plugins/qiaomu-reader` 运行 `node scripts/build.mjs`。在本仓库的 pnpm 隔离布局下，`index.js` 与 `client.js` 都逐字节重现发布包；上游 `npm test` 的 47 项测试在该副本上通过。该属性由仓库根的 `node scripts/verify-rebuild.mjs` 持续校验：它先比对 [SNAPSHOT.json](SNAPSHOT.json) 记录的摘要，再重建比对，不一致即失败并还原已提交的产物。
 
 ## 集合
 

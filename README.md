@@ -41,9 +41,12 @@ G:\Workspace\dsh-plugin-suite\plugins\qiaomu-reader
 
 ```sh
 node scripts/verify.mjs
+node scripts/verify-rebuild.mjs
 ```
 
-验证检查三个包的独立入口、单条目 patch、客户端声明、资源与 JavaScript 语法，并检查缺失 Pet 客户端声明或入口会被拒绝。不导入插件、不打开用户数据库；静态检查不等于运行时验证。
+`verify.mjs` 检查三个包的独立入口、单条目 patch、客户端声明、资源与 JavaScript 语法，并检查缺失 Pet 客户端声明或入口会被拒绝。不导入插件、不打开用户数据库；静态检查不等于运行时验证。
+
+`verify-rebuild.mjs` 只覆盖随源码一起提供产物的插件（当前是乔木阅读）：先核对已提交产物与 [SNAPSHOT.json](SNAPSHOT.json) 记录的发布摘要一致，再重新构建并逐字节比对。比对不一致时会还原已提交的产物并返回非零退出码，不留下脏工作树。运行前需在仓库根执行 `pnpm install --ignore-scripts`。
 
 DS Pet 的聊天和碎碎念可能调用模型。Memory 提供记忆工具及上下文召回，召回内容会增加模型输入 token。乔木阅读默认在 Desktop profile 目录下的 `乔木阅读/` 维护本地书库、划线批注与阅读笔记，其 AI 伴读会调用模型。各包资源与说明见各自目录的 README。
 
