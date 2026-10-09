@@ -1,6 +1,1 @@
-{
-  "meta": {
-    "title": "DS Pet + Memory · Local Suite",
-    "description": "Prebuilt desktop pet and SQLite cross-session memory snapshots. User memory databases are not included."
-  }
-}
+{"meta":{"title":"DSH Plugin Collection","description":"Manage independent DS Pet and Memory plugins and install them as a suite."}}

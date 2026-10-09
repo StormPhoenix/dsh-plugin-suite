@@ -1,55 +1,25 @@
 {
-  "name": "dsh-pet",
-  "version": "0.3.6-fix.3-local.2",
+  "name": "dsh-plugin-suite",
+  "version": "0.1.0-local.1",
   "private": true,
-  "description": "本地插件套件：DS Pet 桌宠与 Memory 跨会话记忆的预构建快照。",
-  "license": "MIT",
+  "description": "统一管理的 DSH 插件集合：DS Pet 与 Memory。根包仅负责组合。",
   "type": "module",
-  "icon": "assets/logo.png",
-  "main": "lib/index.js",
+  "icon": "icon.svg",
+  "repository": { "type": "git", "url": "git+ssh://git@github.com/StormPhoenix/dsh-plugin-suite.git" },
   "exports": {
-    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
-    "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" },
-    "./src/*": "./src/*",
-    "./memory": { "types": "./plugins/memory/lib/index.d.ts", "default": "./plugins/memory/lib/index.js" },
-    "./memory/locale/*.json": "./plugins/memory/locale/*.json",
-    "./memory/icon": "./plugins/memory/icon.svg",
     "./locale/*.json": "./locale/*.json",
-    "./icon": "./assets/logo.png",
+    "./icon": "./icon.svg",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
-  "files": [
-    "lib", "src", "plugins/memory", "runtime/electron-helper", "assets/webm", "assets/preview", "assets/fonts",
-    "assets/pic", "assets/memes", "assets/config.jsonc", "assets/logo.png",
-    "scripts/ensure-electron.mjs", "scripts/verify.mjs", "locale",
-    "cordis.patch.yml", "SNAPSHOT.json", "UPSTREAM.md", "README.md", "LICENSE"
-  ],
-  "scripts": { "verify": "node scripts/verify.mjs" },
-  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "files": ["dist/*.tgz", "dist/manifest.json", "cordis.patch.yml", "locale", "icon.svg", "README.md", "UPSTREAM.md", "SNAPSHOT.json"],
+  "scripts": {
+    "release:prepare": "node scripts/prepare-distribution.mjs",
+    "verify": "node scripts/verify.mjs"
+  },
   "dependencies": {
-    "@electron-internal/extract-zip": "^1.0.5",
-    "@electron/get": "^5.1.0",
-    "@deepseek-ai/schemastery": "^3.18.1"
+    "dsh-pet": "file:./dist/dsh-pet-0.3.6-fix.3-local.3.tgz",
+    "dsh-memory": "file:./dist/dsh-memory-0.1.0-local.1.tgz"
   },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.4",
-    "@deepseek-ai/dsh-agent-default-model": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-client-connection": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-client-ui-primitives": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-client-ui-slots": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-commands": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-credentials": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-home-paths": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-host-webserver": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-llm": "^0.2.0-rc.1",
-    "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
-  "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
-    "client": { "inject": ["@deepseek-ai/dsh-client-connection"], "platform": "web" }
-  }
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
 }

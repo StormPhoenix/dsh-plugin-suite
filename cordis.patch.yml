@@ -1,9 +1,9 @@
-# Keep the existing package and entry names to replace, not duplicate, DS Pet.
+# The suite mounts its dependencies explicitly; dependency bundles are not selected here.
 - insert:
     - id: dsh-pet
       name: dsh-pet
     - id: memory
-      name: dsh-pet/memory
+      name: dsh-memory
       config:
         path: !!js dshHomePath('memory/memory.db')
         promptRecentCount: 10

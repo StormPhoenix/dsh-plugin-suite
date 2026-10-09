@@ -1,96 +1,103 @@
-# DSH 本地插件套件
+# DSH 插件集合
 
-一个 Git 仓库、一个根 Bundle，包含 DS Pet 与 Memory 两个插件。当前套件版本为 `0.3.6-fix.3-local.2`；本次 Memory 添加仅整理文件和配置，未安装、未运行测试。
+统一收集、管理独立的 DSH 插件。Pet 和 Memory 位于同级目录，各有自己的包名、版本、依赖、Bundle 声明与显示资源。根包 `dsh-plugin-suite@0.1.0-local.1` 只负责可选的整套安装，不是任何插件的实现。
 
-## 插件与布局
-
-| 插件 | 来源版本 | 根 Bundle 挂载名 | 条目 ID |
-|---|---|---|---|
-| DS Pet | `dsh-pet@0.3.6-fix.3` 已安装包 | `dsh-pet` | `dsh-pet` |
-| Memory | `dsh-memory@0.1.0` 已安装包 | `dsh-pet/memory` | `memory` |
+## 布局与身份
 
 ```text
-package.json                 根包仍名为 dsh-pet；导出 Pet 与 Memory
-cordis.patch.yml             同时插入两个插件条目
-lib/                        Pet 的预构建 Host / Client
-runtime/electron-helper/    Pet 桌宠窗口实现
-assets/                     Pet 动画、字体、图片和默认配置
-src/                        Pet 安装包附带的源码参考
-plugins/memory/lib/         Memory 预构建模块及类型声明
-plugins/memory/locale/      Memory 显示信息
-plugins/memory/icon.svg     本仓库原创 Memory 图标
-plugins/memory/README.md    安装包附带的原说明，仅作上游参考
-locale/                     根 Bundle / Pet 显示信息
-SNAPSHOT.json               复制文件的 SHA-256 校验值
-UPSTREAM.md                 来源与许可证说明
+dsh-plugin-suite/
+├── package.json              根组合 Bundle：dsh-plugin-suite
+├── pnpm-workspace.yaml       统一管理 plugins/*
+├── cordis.patch.yml          明确组合两个插件
+├── plugins/
+│   ├── pet/                  独立包 dsh-pet
+│   │   ├── package.json
+│   │   ├── cordis.patch.yml
+│   │   ├── lib/
+│   │   ├── runtime/
+│   │   └── assets/
+│   └── memory/               独立包 dsh-memory
+│       ├── package.json
+│       ├── cordis.patch.yml
+│       └── lib/
+├── dist/                     提交到 Git 的独立插件 tarball
+│   └── manifest.json         版本、路径和 SHA-256
+├── scripts/                  分发准备与静态检查
+└── SNAPSHOT.json              原始复制文件的摘要
 ```
 
-根包保留 `dsh-pet` 名称，因为 Pet 的 Client 模块以该名称注册。Memory 使用同一根包的子路径导出，由根补丁加载；它的子目录不是独立安装包，根依赖清单负责提供其运行依赖。两个插件可以分别禁用，但包的安装、升级和卸载仍是一起进行。
+| 插件 | 独立包名 | 当前分发版本 | 配置条目 ID |
+|---|---|---|---|
+| [Pet](plugins/pet/README.md) | `dsh-pet` | `0.3.6-fix.3-local.3` | `dsh-pet` |
+| [Memory](plugins/memory/README.md) | `dsh-memory` | `0.1.0-local.1` | `memory` |
 
-## Memory 行为与配置
+Pet 的 Client 标识仍为 `dsh-pet`，移动目录不改变注册名。Memory 不再作为 `dsh-pet/memory` 子路径加载，而是使用自己的包名。根包没有 Client 导出或 Client 声明。
 
-Memory 提供 `memory_write`、`memory_search`、`memory_forget`，并通过 `memory:recall` 提示词段带入置顶和最近记忆。存储为本地 SQLite FTS5，不使用 embedding 服务。
+## 整套安装如何分发
 
-根补丁保留其原始部署参数：
+根包通过 `file:./dist/<包名>-<版本>.tgz` 依赖两个独立包；根补丁明确挂载 `dsh-pet` 与 `dsh-memory`。子包 tarball 随根包和 Git 仓库分发，安装时不构建源码，也不依赖 pnpm 把未经发布的 `workspace:*` 自动转换。
 
-```yaml
-- insert:
-    - id: memory
-      name: dsh-pet/memory
-      config:
-        path: !!js dshHomePath('memory/memory.db')
-        promptRecentCount: 10
-        promptMaxChars: 2000
-        maxTextChars: 2000
-        searchLimitDefault: 10
-        searchLimitMax: 50
-        promptOrder: 50
-```
+工作目录保留所有 Pet 素材，但分发 tarball 只包含播放需要的 WebM，预览 GIF 不进入 tarball。每个文件均小于 GitHub 普通 Git 单文件限制；不要把包含预览 GIF 的旧大压缩包提交到 Git。
 
-这里仅展示根补丁中的 Memory 条目，不要再把它作为第二份补丁插入。数据库位于目标运行时的 `$DSH_HOME/memory/memory.db`；相同 Home 可读到已有记忆，不同 Home 不自动迁移。本仓库不包含用户数据库、记忆正文、凭据或会话。以后启用插件会打开或创建该数据库，并让召回内容进入模型上下文。
+准备分发文件后需将子包改动、根依赖版本、tarball 和 [dist/manifest.json](dist/manifest.json) 一起提交。升级一个插件不强制改变另一个插件的版本。根 tarball 只含组合配置、元数据和两个子包 tarball，不再次包含整个插件源码树。
 
-## 兼容性与许可限制
+## 在源码 Desktop 安装
 
-Memory 原包声明 `@deepseek-ai/dsh-system-prompt` 和 `@deepseek-ai/dsh-tools` 的 peer 范围为 `^0.1.0-rc.6`，根套件保留该要求。若目标 DSH 版本不满足，整个套件可能在安装阶段被拒绝。未测试前不扩大版本范围，也不自动申请版本豁免。
+普通 npm `dsh` 或源码 `pnpm dsh` 不能修改 Desktop Profile，请在目标 Desktop 的 Plugins 页面安装。
 
-Memory 已安装包声明 MIT，但不含 LICENSE、作者或仓库地址。本仓库保留其包清单声明和原 README，不凭空补写版权归属。公开分发 Memory 前，应确认其完整许可证与来源。本次修改未推送。
+### 整套安装
 
-Pet 源码是安装包附带的参考，不保证与修补产物完全同步；Memory 没有附带源码和构建配置。两者均使用预构建产物，修改源码不等于运行代码已经更新。
-
-## 以后在源码 Desktop 中安装
-
-1. 从 DSH 源码仓库运行 `pnpm run start:desktop`，打开 Desktop 的 Plugins 页面。
-2. 记录已有 `dsh-pet` 与 `dsh-memory` 的来源，再手动卸载旧 Bundle，防止重复的 `memory` 条目和工具注册。不要删除记忆数据库。
-3. 安装本地仓库根目录：
+1. 运行 `pnpm run start:desktop`，打开 Plugins 页面。
+2. 先记录原 Pet、Memory 或旧套件的来源。卸载旧的 `dsh-pet` 根 Bundle 和原 `dsh-memory` Bundle，避免重复配置条目、工具和数据库连接。不要删除用户数据库或宠物配置。
+3. 本地安装输入仓库根目录：
 
    ```text
    G:\Workspace\deepseek-harness\.local\dsh-plugin-suite
    ```
 
-4. 查看兼容性及激活结果；替换包代码后完整退出并重启 Desktop。
-5. 后续再验证两个条目和各自功能。本次尚未进行此步骤。
+4. 发布本次重构后，GitHub 安装输入：
 
-本地目录安装链接仓库目录，安装后不要移动它。普通 npm `dsh` 和源码 `pnpm dsh` 不能修改 Desktop Profile，请通过目标 Desktop 的 Plugins 页面管理。
+   ```text
+   github:StormPhoenix/dsh-plugin-suite#main
+   ```
 
-源码 Desktop 默认 Home 为 `apps/desktop/.desktop-build/development/home`，显式 `DSH_HOME` 会替换该目录。源码版和正式安装版可能使用不同 Home。
+5. 查看兼容与激活结果；替换代码后完整退出并重启 Desktop。
 
-## GitHub 与版本
+本次重构尚未推送；远端 main 暂时仍是之前的布局。旧标签 `v0.3.6-fix.3-local.1` 不移动，也不是新结构。
 
-远端为 [StormPhoenix/dsh-plugin-suite](https://github.com/StormPhoenix/dsh-plugin-suite)。已推送的 `v0.3.6-fix.3-local.1` 是 Pet-only 版本，不含 Memory。本次 local.2 修改只在本地；完成兼容性与分发确认后，再提交新版本并推送。旧标签不移动。
+### 单独安装
 
-旧的 `.tgz` 也是 Pet-only，不能用于安装新套件。后续生成新包或发布新标签时使用新版本，不覆盖旧文件。
+本地 Plugins 页面可以只安装其中一个包目录：
 
-## 后续验证命令
+```text
+G:\Workspace\deepseek-harness\.local\dsh-plugin-suite\plugins\pet
+G:\Workspace\deepseek-harness\.local\dsh-plugin-suite\plugins\memory
+```
+
+也可以输入对应 dist tarball 的绝对路径。目录安装会链接目录，安装后不要移动它。通过整套安装得到的依赖不是独立选中的 Bundle；需要独立管理时使用单独安装路径。不要同时选择独立插件 Bundle 和插入相同条目的根套件。
+
+## 数据、兼容性与许可
+
+Memory 的原始配置路径仍为 `$DSH_HOME/memory/memory.db`；同一 Home 使用同一数据，不同 Home 不自动迁移。此仓库不包含数据库、记忆正文、凭据或会话。启用 Memory 时会打开或创建数据库，并把召回内容加入模型上下文。
+
+源码 Desktop 默认 Home 为 `apps/desktop/.desktop-build/development/home`，显式 `DSH_HOME` 会替换它。正式安装版与源码版可能使用不同 Home。
+
+Memory 保留原 DSH peers `^0.1.0-rc.6`，目标 DSH 可能拒绝安装或启动；根包不设伪造的统一范围来绕过子包检查。没有扩大兼容范围或申请豁免。Pet 的碎碎念和聊天可能调用模型。
+
+Pet 和 Memory 都是安装包快照，不是已经验证可重建的源码 fork。Pet 附带参考源码但可能与修补产物不同步；Memory 未附带源码工具链。修改参考源码不等于运行代码已更新。
+
+Pet 的 MIT 文件在 [Pet LICENSE](plugins/pet/LICENSE)，素材的独立许可仍需核实。Memory 原包只声明 MIT，缺少完整 LICENSE 与作者信息，公开分发许可仍待确认。根组合没有借用 Pet 作者作为整个集合的版权人。详细来源见 [UPSTREAM.md](UPSTREAM.md)。
+
+## 维护命令
 
 ```sh
-node scripts/verify.mjs
+pnpm run release:prepare
+pnpm run verify
 pnpm pack
 ```
 
-这些命令本次未运行。验证脚本仅检查快照、入口语法、声明和资源，不激活插件，也不验证 Desktop 显示。本包没有安装期构建脚本；依赖脚本的许可仍需另行确认。Host 插件及获准脚本在宿主权限下执行。
+`release:prepare` 使用 pnpm 打包两个子包并生成摘要，不安装依赖或导入插件；`verify` 只核对声明和文件摘要，不运行行为测试或打开数据库；`pnpm pack` 生成可选的根包。脚本没有挂到 prepare、install 等生命周期，Git 安装使用已提交的 dist 文件。依赖脚本权限仍由安装者单独确认，Host 插件和获准脚本在宿主权限下运行。
 
-## 扩展套件
+## 新增插件
 
-以后增加纯 Host 插件，可继续放在 `plugins/`，增加根导出、运行依赖和唯一的插件条目。新增 Client 插件还需处理模块注册和 Client 分发，不是只添加目录。需要各插件独立安装或升级时，应转为多包发布。
-
-详细来源说明见 [UPSTREAM.md](UPSTREAM.md)，快照清单见 [SNAPSHOT.json](SNAPSHOT.json)。
+将新插件放在 `plugins/<名称>/`，保留它独立的包名、依赖和 Bundle 配置。需要加入整套时，在分发脚本的包列表、根依赖和根补丁中增加对应条目，再生成 dist。新增 Client 插件也保持自身模块名和 Client 声明；根包不承接其 Client 身份。

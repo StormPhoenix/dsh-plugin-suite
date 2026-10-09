@@ -1,89 +1,11 @@
-# dsh-memory
+# Memory
 
-Durable cross-session memory for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
+独立的 `dsh-memory` Bundle，基于当前安装版 `0.1.0` 的预构建模块。此仓库版本为 `0.1.0-local.1`，包名保持 `dsh-memory`。它与 Pet 同级，可以单独安装、升级和卸载；也可以由根套件组合。
 
-The harness ships no memory plugin. Its `extension-cookbook` names the mechanism — a prompt section plus tools — but nothing implements it, so every session starts blank. This package fills that gap with one local SQLite file: **no embedding service, no API key, no sidecar process.**
+提供 `memory_write`、`memory_search`、`memory_forget` 和 `memory:recall` 提示词召回。SQLite 数据库由 [Bundle 配置](cordis.patch.yml) 指向 `$DSH_HOME/memory/memory.db`。相同 Home 会使用同一份数据；不同 Home 不自动迁移。仓库不包含数据库、用户记忆或凭据。
 
-## Install
+在 Desktop Plugins 页面可安装本目录。不要同时选择原 Memory、此独立 Bundle 和根套件，否则可能重复插入 `memory` 条目或注册工具。根套件安装流程见 [根说明](../../README.md)。
 
-```bash
-dsh plugin --profile web add dsh-memory
-```
+保留原来的 `@deepseek-ai/dsh-system-prompt`、`@deepseek-ai/dsh-tools` peer 范围 `^0.1.0-rc.6`。目标 DSH 不满足时可能拒绝安装或激活；没有扩大范围、自动申请豁免或宣称已验证兼容。本次不运行插件测试，也不打开数据库。
 
-The shipped bundle row stores memories at `$DSH_HOME/memory/memory.db`, shared by every profile on the machine.
-
-## What it gives the model
-
-| Tool | Purpose |
-|---|---|
-| `memory_write` | Store one self-contained durable fact, optionally tagged and pinned |
-| `memory_search` | Keyword search over memory text and tags |
-| `memory_forget` | Delete a memory that is now wrong or obsolete |
-
-Plus a `memory:recall` prompt section that renders **pinned memories first, then the most recently updated**, under a character budget. Recall therefore does not depend on the model remembering to search — what it stored is already in front of it, and search is for anything older than the budget allows.
-
-The `memory_write` description steers the model away from the common failure modes: transient task state (that is what the todo list is for), secrets, and facts the repository already records.
-
-## Configuration
-
-```yaml
-- id: memory
-  name: dsh-memory
-  config:
-    path: !!js dshHomePath('memory/memory.db')
-    promptRecentCount: 10
-    promptMaxChars: 2000
-    maxTextChars: 2000
-    searchLimitDefault: 10
-    searchLimitMax: 50
-    promptOrder: 50
-```
-
-| Field | Default | Meaning |
-|---|---|---|
-| `path` | — (required) | SQLite file, or `:memory:` for an ephemeral store |
-| `promptRecentCount` | `10` | Unpinned recent memories offered to the prompt section |
-| `promptMaxChars` | `2000` | Budget for the rendered section; overflow is reported as a count, and pinned memories are emitted first so they survive a tight budget |
-| `maxTextChars` | `2000` | Maximum characters accepted for one memory |
-| `searchLimitDefault` | `10` | `memory_search` limit when the model omits it |
-| `searchLimitMax` | `50` | Hard cap, whatever the model asks for |
-| `promptOrder` | `50` | Section order; `-100` is the harness identity, `0` the persona |
-
-`path` has **no code-side default on purpose**: a default would scatter durable user facts into whatever directory the harness happened to start in. The deployment value lives in the patch row.
-
-## Storage
-
-One SQLite file: a `memories` table plus an external-content FTS5 index kept in sync by triggers. Parent directories are created on open, and the store survives process restarts.
-
-Search compiles the query by **quoting every token**, so FTS5 operators a model happens to type (`OR`, `*`, `-`, `"`) are matched literally instead of changing the query's meaning or raising a syntax error mid-tool-call. Surviving tokens combine with FTS5's implicit AND: every token must appear, and a query whose tokens include a word you did not store legitimately matches nothing.
-
-`node:sqlite` is still flagged experimental in Node 22/24, so running the harness prints one `ExperimentalWarning`. The harness's own `dsh-session-query-sqlite` uses the same module.
-
-## Failure behavior
-
-Load-time misconfiguration fails loud: an empty `path`, a non-positive bound, or a `searchLimitDefault` above `searchLimitMax` throws at plugin load.
-
-At call time, a blank fact or one over `maxTextChars` is a tool error the model can correct. A `memory_forget` for an id that does not exist is a **successful** result reporting `forgotten: false` — the model asked for a state that already holds, which is not an infrastructure failure.
-
-## Extension points
-
-`ctx.tools.register()` for the three tools and `ctx.systemPrompt.section()` for recall. Every registration is a Cordis effect, so unloading the plugin removes the tools and the section together and closes the database.
-
-## Development
-
-```bash
-pnpm install --ignore-workspace
-pnpm run typecheck
-pnpm test
-pnpm run build
-```
-
-Tests cover the store directly (FTS retrieval, the literal-token query contract, prompt ordering, durability across reopens) and the plugin against the **real** tool registry and prompt service (registration, disposal, the write→recall round trip, bounds, fail-loud config).
-
-## License
-
-MIT
-
-## Prior art
-
-The idea comes from [pi-mentis](https://github.com/guchengod/pi-mentis) (MIT) in the Pi ecosystem. This is an independent implementation against Harness extension points and shares no code with it. It deliberately drops pi-mentis's sidecar process, Zvec vector store, and required SiliconFlow embedding key in favour of one local FTS5 file — smaller, keyless, and offline, at the cost of lexical rather than semantic retrieval.
+原包只附带构建产物和类型声明，没有完整源码构建工具链。包声明 MIT，但未附带 LICENSE 或作者信息；许可核实仍待完成。原 README 保存在 [UPSTREAM-README.md](UPSTREAM-README.md)，其中的安装命令不是本仓库的 Desktop 安装流程。图标由本仓库原创，非上游资源。
