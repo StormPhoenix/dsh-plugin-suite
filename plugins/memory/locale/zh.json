@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Memory · 本地套件版",
+    "description": "SQLite 跨会话记忆：写入、搜索、删除与提示词召回。不包含用户记忆数据。"
+  }
+}

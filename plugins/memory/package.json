@@ -1,0 +1,16 @@
+{
+  "name": "dsh-memory",
+  "version": "0.1.0",
+  "description": "Installed Memory plugin snapshot, embedded in the root suite.",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "license": "MIT",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+  },
+  "dependencies": { "@deepseek-ai/schemastery": "^3.18.1" }
+}

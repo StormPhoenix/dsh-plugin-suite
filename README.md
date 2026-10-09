@@ -1,78 +1,96 @@
-# DS Pet 本地插件仓库
+# DSH 本地插件套件
 
-本仓库是当前集成的 `dsh-pet@0.3.6-fix.3` 的预构建分发快照，测试包版本为 `0.3.6-fix.3-local.1`。根包本身就是可安装的 DSH Bundle，包含 Host、Client、Electron 桌宠运行文件和动画素材，不需要安装时编译。
+一个 Git 仓库、一个根 Bundle，包含 DS Pet 与 Memory 两个插件。当前套件版本为 `0.3.6-fix.3-local.2`；本次 Memory 添加仅整理文件和配置，未安装、未运行测试。
 
-## 布局
+## 插件与布局
+
+| 插件 | 来源版本 | 根 Bundle 挂载名 | 条目 ID |
+|---|---|---|---|
+| DS Pet | `dsh-pet@0.3.6-fix.3` 已安装包 | `dsh-pet` | `dsh-pet` |
+| Memory | `dsh-memory@0.1.0` 已安装包 | `dsh-pet/memory` | `memory` |
 
 ```text
-package.json                 包名 dsh-pet；声明 Bundle 和 Client
-cordis.patch.yml             挂载 dsh-pet 条目
-lib/                        已构建的 Host / Client 和类型声明
-runtime/electron-helper/    桌宠窗口实现
-assets/                     动画、字体、图片和默认配置
-src/                        安装包附带的源码参考
-locale/                     本地测试版的中英文显示信息
-scripts/verify.mjs          静态分发验证，不激活插件
+package.json                 根包仍名为 dsh-pet；导出 Pet 与 Memory
+cordis.patch.yml             同时插入两个插件条目
+lib/                        Pet 的预构建 Host / Client
+runtime/electron-helper/    Pet 桌宠窗口实现
+assets/                     Pet 动画、字体、图片和默认配置
+src/                        Pet 安装包附带的源码参考
+plugins/memory/lib/         Memory 预构建模块及类型声明
+plugins/memory/locale/      Memory 显示信息
+plugins/memory/icon.svg     本仓库原创 Memory 图标
+plugins/memory/README.md    安装包附带的原说明，仅作上游参考
+locale/                     根 Bundle / Pet 显示信息
 SNAPSHOT.json               复制文件的 SHA-256 校验值
-UPSTREAM.md                 上游与许可证说明
+UPSTREAM.md                 来源与许可证说明
 ```
 
-包名和条目 ID 保留为 `dsh-pet`，Client 模块也使用这个名称。仓库目录名可以改变，但不能只改包名而不修改代码中的模块标识。每个复制文件的初始摘要记录在 [SNAPSHOT.json](SNAPSHOT.json) 中。
+根包保留 `dsh-pet` 名称，因为 Pet 的 Client 模块以该名称注册。Memory 使用同一根包的子路径导出，由根补丁加载；它的子目录不是独立安装包，根依赖清单负责提供其运行依赖。两个插件可以分别禁用，但包的安装、升级和卸载仍是一起进行。
 
-## 在源码 Desktop 中安装
+## Memory 行为与配置
 
-1. 从 DSH 源码仓库运行 `pnpm run start:desktop`。该命令使用已有构建产物；如果 DSH 本身还未构建，请先完成 DSH 的构建。
-2. 打开 Desktop 侧栏的 Plugins 页面，通过安装功能输入这个仓库根目录的绝对路径：
+Memory 提供 `memory_write`、`memory_search`、`memory_forget`，并通过 `memory:recall` 提示词段带入置顶和最近记忆。存储为本地 SQLite FTS5，不使用 embedding 服务。
+
+根补丁保留其原始部署参数：
+
+```yaml
+- insert:
+    - id: memory
+      name: dsh-pet/memory
+      config:
+        path: !!js dshHomePath('memory/memory.db')
+        promptRecentCount: 10
+        promptMaxChars: 2000
+        maxTextChars: 2000
+        searchLimitDefault: 10
+        searchLimitMax: 50
+        promptOrder: 50
+```
+
+这里仅展示根补丁中的 Memory 条目，不要再把它作为第二份补丁插入。数据库位于目标运行时的 `$DSH_HOME/memory/memory.db`；相同 Home 可读到已有记忆，不同 Home 不自动迁移。本仓库不包含用户数据库、记忆正文、凭据或会话。以后启用插件会打开或创建该数据库，并让召回内容进入模型上下文。
+
+## 兼容性与许可限制
+
+Memory 原包声明 `@deepseek-ai/dsh-system-prompt` 和 `@deepseek-ai/dsh-tools` 的 peer 范围为 `^0.1.0-rc.6`，根套件保留该要求。若目标 DSH 版本不满足，整个套件可能在安装阶段被拒绝。未测试前不扩大版本范围，也不自动申请版本豁免。
+
+Memory 已安装包声明 MIT，但不含 LICENSE、作者或仓库地址。本仓库保留其包清单声明和原 README，不凭空补写版权归属。公开分发 Memory 前，应确认其完整许可证与来源。本次修改未推送。
+
+Pet 源码是安装包附带的参考，不保证与修补产物完全同步；Memory 没有附带源码和构建配置。两者均使用预构建产物，修改源码不等于运行代码已经更新。
+
+## 以后在源码 Desktop 中安装
+
+1. 从 DSH 源码仓库运行 `pnpm run start:desktop`，打开 Desktop 的 Plugins 页面。
+2. 记录已有 `dsh-pet` 与 `dsh-memory` 的来源，再手动卸载旧 Bundle，防止重复的 `memory` 条目和工具注册。不要删除记忆数据库。
+3. 安装本地仓库根目录：
 
    ```text
    G:\Workspace\deepseek-harness\.local\dsh-plugin-suite
    ```
 
-3. 如果原来的 `dsh-pet` 已安装，先查看其来源并记下恢复地址。同名本地包用于替换原包；若页面拒绝重复安装，先用 Plugins 页面卸载原 Bundle，再安装本目录。不要把两个同名插件同时挂载。
-4. 以管理器返回的结果判断安装和激活。替换已加载的包代码后，需要完整退出并重新运行 Desktop。
-5. 确认插件行显示“DS Pet · 本地测试版”，检查宠物动画、桌面显示、拖拽和双击唤回等已有功能。桌面宠物是否显示取决于配置中宠物的 `display` 值。
+4. 查看兼容性及激活结果；替换包代码后完整退出并重启 Desktop。
+5. 后续再验证两个条目和各自功能。本次尚未进行此步骤。
 
-本地目录安装会链接仓库目录；安装后不要移动或删除它。如果希望安装固定快照，可运行 `pnpm pack`，再在 Plugins 页面输入生成的 `.tgz` 文件的绝对路径。
+本地目录安装链接仓库目录，安装后不要移动它。普通 npm `dsh` 和源码 `pnpm dsh` 不能修改 Desktop Profile，请通过目标 Desktop 的 Plugins 页面管理。
 
-普通 npm `dsh` 和源码 `pnpm dsh` 不能修改保留的 Desktop Profile。请使用 Desktop 的 Plugins 页面，不要在 Profile 目录手动运行 pnpm 或改写包清单。
+源码 Desktop 默认 Home 为 `apps/desktop/.desktop-build/development/home`，显式 `DSH_HOME` 会替换该目录。源码版和正式安装版可能使用不同 Home。
 
-源码 Desktop 默认使用 `apps/desktop/.desktop-build/development/home`，显式设置 `DSH_HOME` 时改用指定目录。正式安装版和源码开发版可能使用不同的 Home；必须在你准备测试的 Desktop 窗口里安装。
+## GitHub 与版本
 
-## 上传自己的 GitHub 仓库
+远端为 [StormPhoenix/dsh-plugin-suite](https://github.com/StormPhoenix/dsh-plugin-suite)。已推送的 `v0.3.6-fix.3-local.1` 是 Pet-only 版本，不含 Memory。本次 local.2 修改只在本地；完成兼容性与分发确认后，再提交新版本并推送。旧标签不移动。
 
-本仓库尚未配置远端，也未上传。创建空 GitHub 仓库后，在本仓库目录执行：
+旧的 `.tgz` 也是 Pet-only，不能用于安装新套件。后续生成新包或发布新标签时使用新版本，不覆盖旧文件。
 
-```sh
-git remote add origin https://github.com/YOUR-NAME/YOUR-REPO.git
-git push -u origin main
-git push origin v0.3.6-fix.3-local.1
-```
-
-然后在 Desktop 的 Plugins 页面输入：
-
-```text
-github:YOUR-NAME/YOUR-REPO#v0.3.6-fix.3-local.1
-```
-
-构建产物和素材已提交到 Git；保留它们才能直接从 Git 安装。本包没有 prepare、prepack 或安装生命周期脚本，但依赖包的脚本许可是另一回事：如果管理器报告待批准脚本，先确认其用途再允许。Host 代码和获准的脚本以宿主权限运行。
-
-## 验证与限制
+## 后续验证命令
 
 ```sh
 node scripts/verify.mjs
 pnpm pack
 ```
 
-验证脚本检查快照摘要、关键入口语法、Bundle 声明、显示资源和动画文件。它不导入插件，不调用模型，也不验证实际 Desktop 显示效果。
+这些命令本次未运行。验证脚本仅检查快照、入口语法、声明和资源，不激活插件，也不验证 Desktop 显示。本包没有安装期构建脚本；依赖脚本的许可仍需另行确认。Host 插件及获准脚本在宿主权限下执行。
 
-源码目录是安装包附带的参考，不保证与当前安装的修补产物完全同步。此快照没有完整的源码构建工具链，不能直接把修改 `src/` 当作运行代码更新。需要开发新功能时，应先补齐可复现的构建流程，再同时更新 Host、Client 或桌宠相关产物和快照摘要。
+## 扩展套件
 
-保留上游 DSH peerDependencies；兼容检查由目标 DSH 运行时执行，本仓库未声明所有 DSH 版本均兼容。宠物的碎碎念、聊天等功能可能调用模型；安装不会主动重写用户配置，也不会复制凭据、对话记忆或用户目录。
+以后增加纯 Host 插件，可继续放在 `plugins/`，增加根导出、运行依赖和唯一的插件条目。新增 Client 插件还需处理模块注册和 Client 分发，不是只添加目录。需要各插件独立安装或升级时，应转为多包发布。
 
-## 将来增加其他插件
-
-不独立发布时，可在本根包中增加插件模块，并在根补丁中增加唯一的条目 ID。纯 Host 插件可使用包子路径导出。新增 Client 插件还必须处理模块注册标识和 Client 分发配置，不能仅添加目录。需要独立安装、升级和卸载时，应转为多包仓库并分别发布可安装包。
-
-## 来源与许可
-
-上游为 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)，保留其 [MIT 许可证](LICENSE)。[UPSTREAM.md](UPSTREAM.md) 记录本快照的来源与分发修改。附带图标沿用上游原图，本仓库不把它描述为新创作素材；上传公开仓库前应确认动画、字体和图像的再分发许可。
+详细来源说明见 [UPSTREAM.md](UPSTREAM.md)，快照清单见 [SNAPSHOT.json](SNAPSHOT.json)。

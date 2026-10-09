@@ -1,9 +1,19 @@
-# 上游与快照来源
+# 来源与许可
 
-上游项目：[PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)。上游 MIT 版权声明保留在 [LICENSE](LICENSE)。本仓库是独立本地 Git 仓库，不包含上游 Git 历史，也不是已在 GitHub 建立的 fork。
+## DS Pet
 
-快照取自当前 DSH Inspect 返回的已安装 `dsh-pet` 包，原版本为 `0.3.6-fix.3`。保留原包内的 `lib/`、`src/`、`runtime/`、`assets/` 以及 Electron 下载辅助脚本；摘要见 [SNAPSHOT.json](SNAPSHOT.json)。未复制 Profile、node_modules、用户配置、缓存、凭据或会话。
+上游项目：[PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)。MIT 版权声明保留在根 [LICENSE](LICENSE)。本仓库不包含上游 Git 历史，也不是 GitHub fork。
 
-本地分发版本为 `0.3.6-fix.3-local.1`。分发修改包括精简包清单、移除缺失工具链对应的构建脚本和独立运行 bin、移除未经本次验证的商城兼容记录、增加本地测试版显示信息、根补丁、安装说明和验证脚本。不修改复制的宠物运行代码或素材。
+快照来自当前 Inspect 返回的已安装 `dsh-pet@0.3.6-fix.3`。Pet 的运行代码、素材和附带源码保持原样；未复制 Profile、node_modules、用户配置、缓存、凭据或会话。图标、动画、字体和图片沿用原包；公开发布前须核实第三方素材的再分发条件。
 
-图标、动画、字体和图片沿用上游包中的资源。包的 MIT 声明不替代第三方素材的单独授权；本快照仅用于本地测试，公开发布前须核实附带资源的再分发条件。
+## Memory
+
+快照来自当前 Inspect 返回的已安装 `dsh-memory@0.1.0`。复制其构建模块、类型声明、README 和原补丁；构建模块字节保持原样。其子目录包清单移除缺失的构建工具链和安装生命周期脚本，作为嵌入根包的 ESM 模块目录，不作为独立 Bundle 自动选择。
+
+原包声明 MIT，但未附带 LICENSE 或作者、仓库信息。原 README 保留于 [Memory 原说明](plugins/memory/README.md)；其中命令和开发指引不是本套件的安装流程。没有凭空补写 Memory 的版权归属；公开分发前须确认其完整许可。本仓库原创的 [Memory 图标](plugins/memory/icon.svg) 按根 MIT 许可证提供。
+
+根套件加入 Memory 的依赖和原始 DSH peer 范围，没有扩大其兼容声明。根补丁保留 `$DSH_HOME/memory/memory.db` 路径，不复制数据库，也不运行插件。
+
+## 分发版本
+
+`0.3.6-fix.3-local.2` 在 Pet 快照上加入 Memory 子路径导出、根配置条目、显示信息和分发清单。摘要见 [SNAPSHOT.json](SNAPSHOT.json)。此次没有进行安装、运行测试或推送；原 Pet-only 标签保留不变。

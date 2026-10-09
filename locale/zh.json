@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "DS Pet · 本地测试版",
-    "description": "当前集成版桌宠的预构建快照，用于测试本地和 GitHub Bundle 安装。"
+    "title": "DS Pet + Memory · 本地套件",
+    "description": "桌宠与 SQLite 跨会话记忆的预构建快照，不包含用户记忆数据库。"
   }
 }

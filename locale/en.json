@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "DS Pet · Local Test",
-    "description": "A prebuilt snapshot of the integrated desktop pet for local and GitHub bundle installation tests."
+    "title": "DS Pet + Memory · Local Suite",
+    "description": "Prebuilt desktop pet and SQLite cross-session memory snapshots. User memory databases are not included."
   }
 }

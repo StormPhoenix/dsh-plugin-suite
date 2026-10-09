@@ -1,8 +1,8 @@
 {
   "name": "dsh-pet",
-  "version": "0.3.6-fix.3-local.1",
+  "version": "0.3.6-fix.3-local.2",
   "private": true,
-  "description": "DS Pet 本地测试快照：包含当前集成版的 Host、Client、桌宠运行文件和动画素材。",
+  "description": "本地插件套件：DS Pet 桌宠与 Memory 跨会话记忆的预构建快照。",
   "license": "MIT",
   "type": "module",
   "icon": "assets/logo.png",
@@ -11,22 +11,26 @@
     ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
     "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" },
     "./src/*": "./src/*",
+    "./memory": { "types": "./plugins/memory/lib/index.d.ts", "default": "./plugins/memory/lib/index.js" },
+    "./memory/locale/*.json": "./plugins/memory/locale/*.json",
+    "./memory/icon": "./plugins/memory/icon.svg",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./assets/logo.png",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
-    "lib", "src", "runtime/electron-helper", "assets/webm", "assets/preview", "assets/fonts",
+    "lib", "src", "plugins/memory", "runtime/electron-helper", "assets/webm", "assets/preview", "assets/fonts",
     "assets/pic", "assets/memes", "assets/config.jsonc", "assets/logo.png",
     "scripts/ensure-electron.mjs", "scripts/verify.mjs", "locale",
     "cordis.patch.yml", "SNAPSHOT.json", "UPSTREAM.md", "README.md", "LICENSE"
   ],
   "scripts": { "verify": "node scripts/verify.mjs" },
-  "engines": { "node": ">=22.12.0" },
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
   "dependencies": {
     "@electron-internal/extract-zip": "^1.0.5",
-    "@electron/get": "^5.1.0"
+    "@electron/get": "^5.1.0",
+    "@deepseek-ai/schemastery": "^3.18.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
@@ -39,6 +43,8 @@
     "@deepseek-ai/dsh-home-paths": "^0.2.0-rc.1",
     "@deepseek-ai/dsh-host-webserver": "^0.2.0-rc.1",
     "@deepseek-ai/dsh-llm": "^0.2.0-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

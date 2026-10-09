@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Memory · Local Suite",
+    "description": "SQLite cross-session memory with write, search, delete and prompt recall. No user memories are distributed."
+  }
+}
