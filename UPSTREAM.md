@@ -14,6 +14,21 @@
 
 原包 peer 声明为 `dsh-tools@^0.1.0-rc.6`、`dsh-system-prompt@^0.1.0-rc.6`。本套件将其更正为 `^0.2.0-rc.1`，依据是对 DSH 0.2.1-alpha.1 源码的比对：`defineTool`（`output.schema`/`output.render`/`output.presentationMeta`/`presentCall`）与 `systemPrompt.section` 的调用方式与当前 API 一致。运行代码本身未改动，仅 peer 声明更新。
 
+## Qiaomu Reader
+
+上游项目：[joeseesun/qiaomu-reader-dsh](https://github.com/joeseesun/qiaomu-reader-dsh)，GPL-3.0-only，许可见 [plugins/qiaomu-reader/LICENSE](plugins/qiaomu-reader/LICENSE)。该包为 `private: true`，不发布 npm；公开产物只有 v1.0.2 的 Release 包 `qiaomu-reader-dsh-1.0.2.tgz`（sha256 `2932a2567b8c0fc2cccc3bd17e0635cc8d6a862e9e45c4ae1040ee008c683cf0`）。
+
+复制来源是上游提交 `1a640ee6a7d914200fa69733a68df829f41bd4b5`（tag `v1.0.2`），也就是该 Release 指向的提交。复制时排除 `.git`、`node_modules`、`package-lock.json` 与 `.github`，其余文件字节未改，摘要见 [SNAPSHOT.json](SNAPSHOT.json)。`src/client/ui` 是上游入库的符号链接（git 模式 120000），按原样保留。`index.js`（`39f6fcb9…c978`）与 `client.js`（`2058c5ff…95dcf`）与上游提交和 Release 包内的同名文件逐字节相同。
+
+手改四处：
+
+- `package.json` 增加 `exports["./cordis.patch.yml"]`，与套件其余插件一致。
+- `package.json` 删除 `prepack` 脚本。套件禁止任何安装期脚本，本仓库也不打包发布；`npm run check`（build + test + verify-package）仍可手动使用。
+- `package.json` 把 `dependencies.pdfjs-dist` 由 `^6.2.108` 收窄为精确 `6.2.108`。原因不是版本偏好：客户端产物把 pdf.js 内联进 `client.js`（`src/client/pdf-book.js` 导入它），宿主半在运行时外部解析同一个包，范围声明会让两半装上不同版本。
+- `locale/{en,zh}.json` 增加 `meta.title` / `meta.description`。DSH 从 `./locale/*.json` 读取插件显示名与描述，缺失时标题回退为包名；原有扁平键未动，界面文案在代码中注册（`src/ui/library-locale.js`），构建不读取这两个文件。
+
+重建：仓库根执行 `pnpm install --ignore-scripts`，再到 `plugins/qiaomu-reader` 运行 `node scripts/build.mjs`；上游 `npm test` 的 47 项测试在该副本上通过。`index.js` 逐字节一致；`client.js` 在套件的 pnpm 隔离布局下只差一条 esbuild 依赖路径注释（`node_modules/pdfjs-dist/…` 变为 `../../node_modules/.pnpm/pdfjs-dist@6.2.108/node_modules/pdfjs-dist/…`），归一化该注释后逐字节一致，`nodeLinker: hoisted` 与上游的 `npm ci` 布局下则直接逐字节一致。更新产物时以上游提交为准，重建用于本地核对。
+
 ## 集合
 
-根包名 `dsh-pet` 是保留 Pet 浏览器模块 id 的技术要求，不代表版权归属。根包不承担 Pet 或 Memory 上游的版权；各插件的依赖、兼容声明与数据归属保持独立。复制原文件摘要见 [SNAPSHOT.json](SNAPSHOT.json)，手改的清单、locale、图标与 README 不纳入该清单。
+仓库根包名 `dsh-plugin-suite-workspace`，是 workspace 管理目录而非 DSH Bundle，不代表也不承担任何上游的版权归属；`dsh-pet` 这一插件包名是保留 Pet 浏览器模块 id 的技术要求。各插件的依赖、兼容声明与许可相互独立，每个包的来源（已安装包或上游提交）记在 [SNAPSHOT.json](SNAPSHOT.json) 的 `sources`。复制原文件摘要见同一文件的 `sha256`，手改的清单、locale、图标与 README 不纳入该清单。

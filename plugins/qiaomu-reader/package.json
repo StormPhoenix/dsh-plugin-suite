@@ -1,0 +1,81 @@
+{
+  "name": "qiaomu-reader-dsh",
+  "version": "1.0.2",
+  "private": true,
+  "type": "module",
+  "description": "乔木阅读：DeepSeek Harness 的 EPUB、PDF、TXT 阅读器，支持书库、划线、批注、Markdown 阅读笔记和 AI 伴读。",
+  "exports": {
+    ".": "./index.js",
+    "./index.js": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "icon": "./icon.svg",
+  "files": [
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "index.js",
+    "locale/*.json",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "books": "node scripts/make-starter-books.mjs",
+    "check": "npm run build && npm test && node scripts/verify-package.mjs"
+  },
+  "meta": {
+    "title": "乔木阅读",
+    "description": "DSH 里的 EPUB、PDF、TXT 阅读器：书库、划线批注、阅读笔记与 AI 伴读。"
+  },
+  "license": "GPL-3.0-only",
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": false,
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-connection"
+      ]
+    },
+    "meta": {
+      "title": "乔木阅读",
+      "description": "DSH 里的 EPUB、PDF、TXT 阅读器：书库、划线批注、阅读笔记与 AI 伴读。"
+    }
+  },
+  "dependencies": {
+    "pdfjs-dist": "6.2.108"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-typert-protocol": {
+      "optional": true
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joeseesun/qiaomu-reader-dsh.git"
+  },
+  "homepage": "https://github.com/joeseesun/qiaomu-reader-dsh#readme",
+  "bugs": {
+    "url": "https://github.com/joeseesun/qiaomu-reader-dsh/issues"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "qiaomu",
+    "epub",
+    "reading"
+  ]
+}

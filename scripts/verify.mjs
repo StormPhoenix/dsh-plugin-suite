@@ -45,6 +45,13 @@ const PLUGINS = [
       assert.match(patch, /path: !!js dshHomePath\('memory\/memory\.db'\)/);
     },
   },
+  {
+    folder: 'qiaomu-reader',
+    name: 'qiaomu-reader-dsh',
+    id: 'qiaomu-reader',
+    entry: './index.js',
+    client: { entry: './client.js', moduleId: 'qiaomu-reader-dsh' },
+  },
 ];
 
 /** A web plugin exposes its client half at the declared entry, on no other platform. */

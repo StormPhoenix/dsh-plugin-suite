@@ -1,0 +1,12 @@
+# 乔木阅读 · 宿主插件行
+#
+# name 必须是**裸包名**。DSH 的客户端模块扫描器（dsh-client-modules
+# locatePkgJson → exactPackageSpecifier）要求行名是一个精确的包名：
+# 任何含 "/" 的子路径（例如 `qiaomu-reader-dsh/index.js`）都会让它
+# 判定「这行没有包根」，于是 exports["./client"] 永不被登记 ——
+# 宿主半照常激活，但客户端半整个消失（侧栏没有图标、浮层不存在）。
+#
+# 也因此不能用子路径来绕开 Node 的 ESM 模块缓存；改完代码要重启宿主。
+- insert:
+    - id: qiaomu-reader
+      name: 'qiaomu-reader-dsh'
