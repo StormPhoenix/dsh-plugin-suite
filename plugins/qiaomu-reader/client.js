@@ -486,13 +486,13 @@ function RGBToHSL(rgb, output) {
   output[2] = l;
 }
 function HSLToRGB(hsl, output) {
-  const h14 = hsl[0];
+  const h15 = hsl[0];
   const s = hsl[1];
   const l = hsl[2];
   const c = (1 - Math.abs(2 * l - 1)) * s;
-  const x = c * (1 - Math.abs(h14 / 60 % 2 - 1));
+  const x = c * (1 - Math.abs(h15 / 60 % 2 - 1));
   const m = l - c / 2;
-  switch (Math.floor(h14 / 60)) {
+  switch (Math.floor(h15 / 60)) {
     case 0:
       output[0] = c + m;
       output[1] = x + m;
@@ -1689,21 +1689,21 @@ var init_pdf = __esm({
       },
       /***/
       3972(module2, __unused_webpack_exports, __webpack_require__3) {
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var $String = String;
         var $TypeError = TypeError;
         module2.exports = function(argument) {
-          if (argument === void 0 || isObject2(argument)) return argument;
+          if (argument === void 0 || isObject3(argument)) return argument;
           throw new $TypeError($String(argument) + " is not an object or undefined");
         };
       },
       /***/
       8551(module2, __unused_webpack_exports, __webpack_require__3) {
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var $String = String;
         var $TypeError = TypeError;
         module2.exports = function(argument) {
-          if (isObject2(argument)) return argument;
+          if (isObject3(argument)) return argument;
           throw new $TypeError($String(argument) + " is not an object");
         };
       },
@@ -1763,7 +1763,7 @@ var init_pdf = __esm({
         var DESCRIPTORS = __webpack_require__3(3724);
         var globalThis2 = __webpack_require__3(4576);
         var isCallable = __webpack_require__3(4901);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var hasOwn = __webpack_require__3(9297);
         var classof = __webpack_require__3(6955);
         var tryToString = __webpack_require__3(6823);
@@ -1808,18 +1808,18 @@ var init_pdf = __esm({
           BigUint64Array: 8
         };
         var isView = function isView2(it) {
-          if (!isObject2(it)) return false;
+          if (!isObject3(it)) return false;
           var klass = classof(it);
           return klass === "DataView" || hasOwn(TypedArrayConstructorsList, klass) || hasOwn(BigIntArrayConstructorsList, klass);
         };
         var getTypedArrayConstructor = function(it) {
           var proto = getPrototypeOf(it);
-          if (!isObject2(proto)) return;
+          if (!isObject3(proto)) return;
           var state = getInternalState(proto);
           return state && hasOwn(state, TYPED_ARRAY_CONSTRUCTOR) ? state[TYPED_ARRAY_CONSTRUCTOR] : getTypedArrayConstructor(proto);
         };
         var isTypedArray = function(it) {
-          if (!isObject2(it)) return false;
+          if (!isObject3(it)) return false;
           var klass = classof(it);
           return hasOwn(TypedArrayConstructorsList, klass) || hasOwn(BigIntArrayConstructorsList, klass);
         };
@@ -1906,7 +1906,7 @@ var init_pdf = __esm({
           defineBuiltInAccessor(TypedArrayPrototype, TO_STRING_TAG, {
             configurable: true,
             get: function() {
-              return isObject2(this) ? this[TYPED_ARRAY_TAG] : void 0;
+              return isObject3(this) ? this[TYPED_ARRAY_TAG] : void 0;
             }
           });
           for (NAME in TypedArrayConstructorsList) if (globalThis2[NAME]) {
@@ -2199,9 +2199,9 @@ var init_pdf = __esm({
       /***/
       4055(module2, __unused_webpack_exports, __webpack_require__3) {
         var globalThis2 = __webpack_require__3(4576);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var document2 = globalThis2.document;
-        var EXISTS = isObject2(document2) && isObject2(document2.createElement);
+        var EXISTS = isObject3(document2) && isObject3(document2.createElement);
         module2.exports = function(it) {
           return EXISTS ? document2.createElement(it) : {};
         };
@@ -2584,9 +2584,9 @@ var init_pdf = __esm({
       5917(module2, __unused_webpack_exports, __webpack_require__3) {
         var DESCRIPTORS = __webpack_require__3(3724);
         var fails = __webpack_require__3(9039);
-        var createElement15 = __webpack_require__3(4055);
+        var createElement16 = __webpack_require__3(4055);
         module2.exports = !DESCRIPTORS && !fails(function() {
-          return Object.defineProperty(createElement15("div"), "a", {
+          return Object.defineProperty(createElement16("div"), "a", {
             get: function() {
               return 7;
             }
@@ -2609,14 +2609,14 @@ var init_pdf = __esm({
       /***/
       3167(module2, __unused_webpack_exports, __webpack_require__3) {
         var isCallable = __webpack_require__3(4901);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var setPrototypeOf = __webpack_require__3(2967);
         module2.exports = function($this, dummy, Wrapper) {
           var NewTarget, NewTargetPrototype;
           if (
             // it can work only with native `setPrototypeOf`
             setPrototypeOf && // we haven't completely correct pre-ES6 way for getting `new.target`, so use this
-            isCallable(NewTarget = dummy.constructor) && NewTarget !== Wrapper && isObject2(NewTargetPrototype = NewTarget.prototype) && NewTargetPrototype !== Wrapper.prototype
+            isCallable(NewTarget = dummy.constructor) && NewTarget !== Wrapper && isObject3(NewTargetPrototype = NewTarget.prototype) && NewTargetPrototype !== Wrapper.prototype
           ) setPrototypeOf($this, NewTargetPrototype);
           return $this;
         };
@@ -2638,7 +2638,7 @@ var init_pdf = __esm({
       1181(module2, __unused_webpack_exports, __webpack_require__3) {
         var NATIVE_WEAK_MAP = __webpack_require__3(8622);
         var globalThis2 = __webpack_require__3(4576);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var createNonEnumerableProperty = __webpack_require__3(6699);
         var hasOwn = __webpack_require__3(9297);
         var shared = __webpack_require__3(7629);
@@ -2654,7 +2654,7 @@ var init_pdf = __esm({
         var getterFor = function(TYPE) {
           return function(it) {
             var state;
-            if (!isObject2(it) || (state = get(it)).type !== TYPE) {
+            if (!isObject3(it) || (state = get(it)).type !== TYPE) {
               throw new TypeError2("Incompatible receiver, " + TYPE + " required");
             }
             return state;
@@ -2767,9 +2767,9 @@ var init_pdf = __esm({
       },
       /***/
       3925(module2, __unused_webpack_exports, __webpack_require__3) {
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         module2.exports = function(argument) {
-          return isObject2(argument) || argument === null;
+          return isObject3(argument) || argument === null;
         };
       },
       /***/
@@ -2778,10 +2778,10 @@ var init_pdf = __esm({
       },
       /***/
       5810(module2, __unused_webpack_exports, __webpack_require__3) {
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var getInternalState = __webpack_require__3(1181).get;
         module2.exports = function isRawJSON(O) {
-          if (!isObject2(O)) return false;
+          if (!isObject3(O)) return false;
           var state = getInternalState(O);
           return !!state && state.type === "RawJSON";
         };
@@ -3042,7 +3042,7 @@ var init_pdf = __esm({
       7657(module2, __unused_webpack_exports, __webpack_require__3) {
         var fails = __webpack_require__3(9039);
         var isCallable = __webpack_require__3(4901);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var create = __webpack_require__3(2360);
         var getPrototypeOf = __webpack_require__3(2787);
         var defineBuiltIn = __webpack_require__3(6840);
@@ -3059,7 +3059,7 @@ var init_pdf = __esm({
             if (PrototypeOfArrayIteratorPrototype !== Object.prototype) IteratorPrototype = PrototypeOfArrayIteratorPrototype;
           }
         }
-        var NEW_ITERATOR_PROTOTYPE = !isObject2(IteratorPrototype) || fails(function() {
+        var NEW_ITERATOR_PROTOTYPE = !isObject3(IteratorPrototype) || fails(function() {
           var test = {};
           return IteratorPrototype[ITERATOR].call(test) !== test;
         });
@@ -3425,7 +3425,7 @@ var init_pdf = __esm({
       /***/
       2967(module2, __unused_webpack_exports, __webpack_require__3) {
         var uncurryThisAccessor = __webpack_require__3(6706);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var requireObjectCoercible = __webpack_require__3(7750);
         var aPossiblePrototype = __webpack_require__3(3506);
         module2.exports = Object.setPrototypeOf || ("__proto__" in {} ? (function() {
@@ -3441,7 +3441,7 @@ var init_pdf = __esm({
           return function setPrototypeOf(O, proto) {
             requireObjectCoercible(O);
             aPossiblePrototype(proto);
-            if (!isObject2(O)) return O;
+            if (!isObject3(O)) return O;
             if (CORRECT_SETTER) setter(O, proto);
             else O.__proto__ = proto;
             return O;
@@ -3452,13 +3452,13 @@ var init_pdf = __esm({
       4270(module2, __unused_webpack_exports, __webpack_require__3) {
         var call = __webpack_require__3(9565);
         var isCallable = __webpack_require__3(4901);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var $TypeError = TypeError;
         module2.exports = function(input, pref) {
           var fn, val;
-          if (pref === "string" && isCallable(fn = input.toString) && !isObject2(val = call(fn, input))) return val;
-          if (isCallable(fn = input.valueOf) && !isObject2(val = call(fn, input))) return val;
-          if (pref !== "string" && isCallable(fn = input.toString) && !isObject2(val = call(fn, input))) return val;
+          if (pref === "string" && isCallable(fn = input.toString) && !isObject3(val = call(fn, input))) return val;
+          if (isCallable(fn = input.valueOf) && !isObject3(val = call(fn, input))) return val;
+          if (pref !== "string" && isCallable(fn = input.toString) && !isObject3(val = call(fn, input))) return val;
           throw new $TypeError("Can't convert object to primitive value");
         };
       },
@@ -3929,7 +3929,7 @@ var init_pdf = __esm({
       /***/
       2777(module2, __unused_webpack_exports, __webpack_require__3) {
         var call = __webpack_require__3(9565);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var isSymbol = __webpack_require__3(757);
         var getMethod = __webpack_require__3(5966);
         var ordinaryToPrimitive = __webpack_require__3(4270);
@@ -3937,13 +3937,13 @@ var init_pdf = __esm({
         var $TypeError = TypeError;
         var TO_PRIMITIVE = wellKnownSymbol("toPrimitive");
         module2.exports = function(input, pref) {
-          if (!isObject2(input) || isSymbol(input)) return input;
+          if (!isObject3(input) || isSymbol(input)) return input;
           var exoticToPrim = getMethod(input, TO_PRIMITIVE);
           var result;
           if (exoticToPrim) {
             if (pref === void 0) pref = "default";
             result = call(exoticToPrim, input, pref);
-            if (!isObject2(result) || isSymbol(result)) return result;
+            if (!isObject3(result) || isSymbol(result)) return result;
             throw new $TypeError("Can't convert object to primitive value");
           }
           if (pref === void 0) pref = "number";
@@ -4725,7 +4725,7 @@ var init_pdf = __esm({
         var uncurryThis = __webpack_require__3(9504);
         var call = __webpack_require__3(9565);
         var isCallable = __webpack_require__3(4901);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var isArray = __webpack_require__3(4376);
         var hasOwn = __webpack_require__3(9297);
         var toString = __webpack_require__3(655);
@@ -4766,7 +4766,7 @@ var init_pdf = __esm({
           var unmodified = node && val === node.value;
           var context = unmodified && typeof node.source == "string" ? { source: node.source } : {};
           var elementRecordsLen, keys, len, i, P2;
-          if (isObject2(val)) {
+          if (isObject3(val)) {
             var nodeIsArray = isArray(val);
             var nodes = unmodified ? node.nodes : nodeIsArray ? [] : {};
             if (nodeIsArray) {
@@ -6948,18 +6948,18 @@ var init_pdf = __esm({
           editorType,
           _uiManager
         } = this.#editor;
-        const button = document.createElement("button");
-        button.classList.add("basic", "deleteButton");
-        button.tabIndex = 0;
-        button.setAttribute("data-l10n-id", _EditorToolbar.#l10nRemove[editorType]);
-        if (this.#addListenersToElement(button)) {
-          button.addEventListener("click", (e) => {
+        const button2 = document.createElement("button");
+        button2.classList.add("basic", "deleteButton");
+        button2.tabIndex = 0;
+        button2.setAttribute("data-l10n-id", _EditorToolbar.#l10nRemove[editorType]);
+        if (this.#addListenersToElement(button2)) {
+          button2.addEventListener("click", (e) => {
             _uiManager.delete();
           }, {
             signal: _uiManager._signal
           });
         }
-        this.#buttons.append(button);
+        this.#buttons.append(button2);
       }
       get #divider() {
         const divider = document.createElement("div");
@@ -6967,25 +6967,25 @@ var init_pdf = __esm({
         return divider;
       }
       async addAltText(altText) {
-        const button = await altText.render();
-        this.#addListenersToElement(button);
-        this.#buttons.append(button, this.#divider);
+        const button2 = await altText.render();
+        this.#addListenersToElement(button2);
+        this.#buttons.append(button2, this.#divider);
         this.#altText = altText;
       }
       addComment(comment, beforeElement = null) {
         if (this.#comment) {
           return;
         }
-        const button = comment.renderForToolbar();
-        if (!button) {
+        const button2 = comment.renderForToolbar();
+        if (!button2) {
           return;
         }
-        this.#addListenersToElement(button);
+        this.#addListenersToElement(button2);
         const divider = this.#commentButtonDivider = this.#divider;
         if (!beforeElement) {
-          this.#buttons.append(button, divider);
+          this.#buttons.append(button2, divider);
         } else {
-          this.#buttons.insertBefore(button, beforeElement);
+          this.#buttons.insertBefore(button2, beforeElement);
           this.#buttons.insertBefore(divider, beforeElement);
         }
         this.#comment = comment;
@@ -6996,14 +6996,14 @@ var init_pdf = __esm({
           return;
         }
         this.#colorPicker = colorPicker;
-        const button = colorPicker.renderButton();
-        this.#addListenersToElement(button);
-        this.#buttons.append(button, this.#divider);
+        const button2 = colorPicker.renderButton();
+        this.#addListenersToElement(button2);
+        this.#buttons.append(button2, this.#divider);
       }
       async addEditSignatureButton(signatureManager) {
-        const button = this.#signatureDescriptionButton = await signatureManager.renderEditButton(this.#editor);
-        this.#addListenersToElement(button);
-        this.#buttons.append(button, this.#divider);
+        const button2 = this.#signatureDescriptionButton = await signatureManager.renderEditButton(this.#editor);
+        this.#addListenersToElement(button2);
+        this.#buttons.append(button2, this.#divider);
       }
       removeButton(name) {
         switch (name) {
@@ -7132,24 +7132,24 @@ var init_pdf = __esm({
         this.#toolbar.remove();
       }
       #makeButton(buttonClass, l10nId, labelL10nId, clickHandler) {
-        const button = document.createElement("button");
-        button.classList.add("basic", buttonClass);
-        button.tabIndex = 0;
-        button.setAttribute("data-l10n-id", l10nId);
+        const button2 = document.createElement("button");
+        button2.classList.add("basic", buttonClass);
+        button2.tabIndex = 0;
+        button2.setAttribute("data-l10n-id", l10nId);
         const span = document.createElement("span");
-        button.append(span);
+        button2.append(span);
         span.className = "visuallyHidden";
         span.setAttribute("data-l10n-id", labelL10nId);
         const signal = this.#uiManager._signal;
         if (signal instanceof AbortSignal && !signal.aborted) {
-          button.addEventListener("contextmenu", noContextMenu, {
+          button2.addEventListener("contextmenu", noContextMenu, {
             signal
           });
-          button.addEventListener("click", clickHandler, {
+          button2.addEventListener("click", clickHandler, {
             signal
           });
         }
-        this.#buttons.append(button);
+        this.#buttons.append(button2);
       }
     };
     INTERNAL_EVT = "f63eb798-ea37-4556-98de-f8303ee5a694";
@@ -9225,35 +9225,35 @@ var init_pdf = __esm({
         let rotator;
         switch (textLayer.getAttribute("data-main-rotation")) {
           case "90":
-            rotator = (x, y, w, h14) => ({
+            rotator = (x, y, w, h15) => ({
               x: (y - layerY) / parentHeight,
               y: 1 - (x + w - layerX) / parentWidth,
-              width: h14 / parentHeight,
+              width: h15 / parentHeight,
               height: w / parentWidth
             });
             break;
           case "180":
-            rotator = (x, y, w, h14) => ({
+            rotator = (x, y, w, h15) => ({
               x: 1 - (x + w - layerX) / parentWidth,
-              y: 1 - (y + h14 - layerY) / parentHeight,
+              y: 1 - (y + h15 - layerY) / parentHeight,
               width: w / parentWidth,
-              height: h14 / parentHeight
+              height: h15 / parentHeight
             });
             break;
           case "270":
-            rotator = (x, y, w, h14) => ({
-              x: 1 - (y + h14 - layerY) / parentHeight,
+            rotator = (x, y, w, h15) => ({
+              x: 1 - (y + h15 - layerY) / parentHeight,
               y: (x - layerX) / parentWidth,
-              width: h14 / parentHeight,
+              width: h15 / parentHeight,
               height: w / parentWidth
             });
             break;
           default:
-            rotator = (x, y, w, h14) => ({
+            rotator = (x, y, w, h15) => ({
               x: (x - layerX) / parentWidth,
               y: (y - layerY) / parentHeight,
               width: w / parentWidth,
-              height: h14 / parentHeight
+              height: h15 / parentHeight
             });
             break;
         }
@@ -9507,13 +9507,13 @@ var init_pdf = __esm({
         this.#badge = null;
       }
       async #setState() {
-        const button = this.#altTextButton;
-        if (!button) {
+        const button2 = this.#altTextButton;
+        if (!button2) {
           return;
         }
         if (this.#useNewAltTextFlow) {
-          button.classList.toggle("done", !!this.#altText);
-          button.setAttribute("data-l10n-id", _AltText.#l10nNewButton[this.#label]);
+          button2.classList.toggle("done", !!this.#altText);
+          button2.setAttribute("data-l10n-id", _AltText.#l10nNewButton[this.#label]);
           this.#altTextButtonLabel?.setAttribute("data-l10n-id", _AltText.#l10nNewButton[`${this.#label}-label`]);
           if (!this.#altText) {
             this.#altTextTooltip?.remove();
@@ -9521,12 +9521,12 @@ var init_pdf = __esm({
           }
         } else {
           if (!this.#altText && !this.#altTextDecorative) {
-            button.classList.remove("done");
+            button2.classList.remove("done");
             this.#altTextTooltip?.remove();
             return;
           }
-          button.classList.add("done");
-          button.setAttribute("data-l10n-id", "pdfjs-editor-alt-text-edit-button");
+          button2.classList.add("done");
+          button2.setAttribute("data-l10n-id", "pdfjs-editor-alt-text-edit-button");
         }
         let tooltip = this.#altTextTooltip;
         if (!tooltip) {
@@ -9542,7 +9542,7 @@ var init_pdf = __esm({
           }, {
             once: true
           });
-          button.addEventListener("mouseenter", () => {
+          button2.addEventListener("mouseenter", () => {
             this.#altTextTooltipTimeout = setTimeout(() => {
               this.#altTextTooltipTimeout = null;
               this.#altTextTooltip.classList.add("show");
@@ -9553,7 +9553,7 @@ var init_pdf = __esm({
           }, {
             signal
           });
-          button.addEventListener("mouseleave", () => {
+          button2.addEventListener("mouseleave", () => {
             if (this.#altTextTooltipTimeout) {
               clearTimeout(this.#altTextTooltipTimeout);
               this.#altTextTooltipTimeout = null;
@@ -9570,7 +9570,7 @@ var init_pdf = __esm({
           tooltip.textContent = this.#altText;
         }
         if (!tooltip.parentNode) {
-          button.append(tooltip);
+          button2.append(tooltip);
         }
         const element = this.#editor.getElementForAltText();
         element?.setAttribute("aria-describedby", tooltip.id);
@@ -9591,18 +9591,18 @@ var init_pdf = __esm({
         this.#editor = editor;
       }
       renderForToolbar() {
-        const button = this.#commentToolbarButton = document.createElement("button");
-        button.className = "comment";
-        return this.#render(button, false);
+        const button2 = this.#commentToolbarButton = document.createElement("button");
+        button2.className = "comment";
+        return this.#render(button2, false);
       }
       renderForStandalone() {
-        const button = this.#commentStandaloneButton = document.createElement("button");
-        button.className = "annotationCommentButton";
+        const button2 = this.#commentStandaloneButton = document.createElement("button");
+        button2.className = "annotationCommentButton";
         const position = this.#editor.commentButtonPosition;
         if (position) {
           const {
             style
-          } = button;
+          } = button2;
           style.insetInlineEnd = `calc(${100 * (this.#editor._uiManager.direction === "ltr" ? 1 - position[0] : position[0])}% - var(--comment-button-dim))`;
           style.top = `calc(${100 * position[1]}% - var(--comment-button-dim))`;
           const color = this.#editor.commentButtonColor;
@@ -9610,7 +9610,7 @@ var init_pdf = __esm({
             style.backgroundColor = color;
           }
         }
-        return this.#render(button, true);
+        return this.#render(button2, true);
       }
       focusButton() {
         setTimeout(() => {
@@ -10623,41 +10623,41 @@ var init_pdf = __esm({
         switch (name) {
           case "topLeft":
             isDiagonal = true;
-            getPoint = (w, h14) => [0, 0];
-            getOpposite = (w, h14) => [w, h14];
+            getPoint = (w, h15) => [0, 0];
+            getOpposite = (w, h15) => [w, h15];
             break;
           case "topMiddle":
-            getPoint = (w, h14) => [w / 2, 0];
-            getOpposite = (w, h14) => [w / 2, h14];
+            getPoint = (w, h15) => [w / 2, 0];
+            getOpposite = (w, h15) => [w / 2, h15];
             break;
           case "topRight":
             isDiagonal = true;
-            getPoint = (w, h14) => [w, 0];
-            getOpposite = (w, h14) => [0, h14];
+            getPoint = (w, h15) => [w, 0];
+            getOpposite = (w, h15) => [0, h15];
             break;
           case "middleRight":
             isHorizontal = true;
-            getPoint = (w, h14) => [w, h14 / 2];
-            getOpposite = (w, h14) => [0, h14 / 2];
+            getPoint = (w, h15) => [w, h15 / 2];
+            getOpposite = (w, h15) => [0, h15 / 2];
             break;
           case "bottomRight":
             isDiagonal = true;
-            getPoint = (w, h14) => [w, h14];
-            getOpposite = (w, h14) => [0, 0];
+            getPoint = (w, h15) => [w, h15];
+            getOpposite = (w, h15) => [0, 0];
             break;
           case "bottomMiddle":
-            getPoint = (w, h14) => [w / 2, h14];
-            getOpposite = (w, h14) => [w / 2, 0];
+            getPoint = (w, h15) => [w / 2, h15];
+            getOpposite = (w, h15) => [w / 2, 0];
             break;
           case "bottomLeft":
             isDiagonal = true;
-            getPoint = (w, h14) => [0, h14];
-            getOpposite = (w, h14) => [w, 0];
+            getPoint = (w, h15) => [0, h15];
+            getOpposite = (w, h15) => [w, 0];
             break;
           case "middleLeft":
             isHorizontal = true;
-            getPoint = (w, h14) => [0, h14 / 2];
-            getOpposite = (w, h14) => [w, h14 / 2];
+            getPoint = (w, h15) => [0, h15 / 2];
+            getOpposite = (w, h15) => [w, h15 / 2];
             break;
         }
         const point = getPoint(savedWidth, savedHeight);
@@ -11980,9 +11980,9 @@ var init_pdf = __esm({
         }
         let hash = "";
         if (ids.length) {
-          const h14 = new MurmurHash3_64();
-          h14.update(ids.join(","));
-          hash = h14.hexdigest();
+          const h15 = new MurmurHash3_64();
+          h15.update(ids.join(","));
+          hash = h15.hexdigest();
         }
         return this.#modifiedIds = {
           ids: new Set(ids),
@@ -15714,22 +15714,22 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
         this.smaskPreparedOffsetY = offsetY;
         this.smaskPreparedOOBAlpha = !useLayerSize && filteredOOBAlpha !== 0 ? filteredOOBAlpha : null;
       }
-      _bakeSMaskCanvas(maskCanvas, drawX, drawY, w, h14, backdrop, filterSpec) {
+      _bakeSMaskCanvas(maskCanvas, drawX, drawY, w, h15, backdrop, filterSpec) {
         if (!backdrop && !filterSpec) {
           unreachable("_bakeSMaskCanvas with neither backdrop nor filter");
         }
-        const srcEntry = this.canvasFactory.create(w, h14);
+        const srcEntry = this.canvasFactory.create(w, h15);
         const sCtx = srcEntry.context;
         sCtx.drawImage(maskCanvas, drawX, drawY);
         if (backdrop) {
           sCtx.globalCompositeOperation = "destination-atop";
           sCtx.fillStyle = backdrop;
-          sCtx.fillRect(0, 0, w, h14);
+          sCtx.fillRect(0, 0, w, h15);
         }
         if (!filterSpec) {
           return srcEntry;
         }
-        const preparedEntry = this.canvasFactory.create(w, h14);
+        const preparedEntry = this.canvasFactory.create(w, h15);
         const pCtx = preparedEntry.context;
         pCtx.filter = filterSpec.url;
         const filterApplied = FeatureTest.isCanvasFilterSupported && pCtx.filter !== "none" && pCtx.filter !== "";
@@ -15738,7 +15738,7 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
           pCtx.filter = "none";
         }
         if (!filterApplied) {
-          const img = pCtx.getImageData(0, 0, w, h14);
+          const img = pCtx.getImageData(0, 0, w, h15);
           const {
             data
           } = img;
@@ -17373,8 +17373,8 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
           imgToPaint = imgData.bitmap;
         } else {
           const w = imgData.width;
-          const h14 = imgData.height;
-          const tmpCanvas = this.canvasFactory.create(w, h14);
+          const h15 = imgData.height;
+          const tmpCanvas = this.canvasFactory.create(w, h15);
           putBinaryImageData(tmpCanvas.context, imgData);
           imgToPaint = this.applyTransferMapsToCanvas(tmpCanvas.context);
           inlineImgCanvas = tmpCanvas;
@@ -21027,27 +21027,27 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
         });
       }
       renderButton() {
-        const button = this.#button = document.createElement("button");
-        button.className = "colorPicker";
-        button.tabIndex = "0";
-        button.setAttribute("data-l10n-id", "pdfjs-editor-colorpicker-button");
-        button.ariaHasPopup = "true";
+        const button2 = this.#button = document.createElement("button");
+        button2.className = "colorPicker";
+        button2.tabIndex = "0";
+        button2.setAttribute("data-l10n-id", "pdfjs-editor-colorpicker-button");
+        button2.ariaHasPopup = "true";
         if (this.#editor) {
-          button.ariaControls = `${this.#editor.id}_colorpicker_dropdown`;
+          button2.ariaControls = `${this.#editor.id}_colorpicker_dropdown`;
         }
         const signal = this.#uiManager._signal;
-        button.addEventListener("click", this.#openDropdown.bind(this), {
+        button2.addEventListener("click", this.#openDropdown.bind(this), {
           signal
         });
-        button.addEventListener("keydown", this.#keyDown.bind(this), {
+        button2.addEventListener("keydown", this.#keyDown.bind(this), {
           signal
         });
         const swatch = this.#buttonSwatch = document.createElement("span");
         swatch.className = "swatch";
         swatch.ariaHidden = "true";
         swatch.style.backgroundColor = this.#defaultColor;
-        button.append(swatch);
-        return button;
+        button2.append(swatch);
+        return button2;
       }
       renderMainDropdown() {
         const dropdown = this.#dropdown = this.#getDropdownRoot();
@@ -21070,21 +21070,21 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
           div.id = `${this.#editor.id}_colorpicker_dropdown`;
         }
         for (const [name, color] of this.#uiManager.highlightColors) {
-          const button = document.createElement("button");
-          button.tabIndex = "0";
-          button.role = "option";
-          button.setAttribute("data-color", color);
-          button.title = name;
-          button.setAttribute("data-l10n-id", _ColorPicker.#l10nColor[name]);
+          const button2 = document.createElement("button");
+          button2.tabIndex = "0";
+          button2.role = "option";
+          button2.setAttribute("data-color", color);
+          button2.title = name;
+          button2.setAttribute("data-l10n-id", _ColorPicker.#l10nColor[name]);
           const swatch = document.createElement("span");
-          button.append(swatch);
+          button2.append(swatch);
           swatch.className = "swatch";
           swatch.style.backgroundColor = color;
-          button.ariaSelected = color === this.#defaultColor;
-          button.addEventListener("click", this.#colorSelect.bind(this, color), {
+          button2.ariaSelected = color === this.#defaultColor;
+          button2.addEventListener("click", this.#colorSelect.bind(this, color), {
             signal
           });
-          div.append(button);
+          div.append(button2);
         }
         div.addEventListener("keydown", this.#keyDown.bind(this), {
           signal
@@ -23497,29 +23497,29 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
           this.#commentManager.toggleCommentPopup(this, false, false);
         };
         if (!hasOwnButton) {
-          const button = this.#commentButton = document.createElement("button");
-          button.className = "annotationCommentButton";
+          const button2 = this.#commentButton = document.createElement("button");
+          button2.className = "annotationCommentButton";
           const parentContainer = this.#firstElement.container;
-          button.style.zIndex = parseInt(parentContainer.style.zIndex, 10) + 1;
-          button.tabIndex = 0;
-          button.ariaHasPopup = "dialog";
-          button.ariaControls = "commentPopup";
-          button.setAttribute("data-l10n-id", "pdfjs-show-comment-button");
+          button2.style.zIndex = parseInt(parentContainer.style.zIndex, 10) + 1;
+          button2.tabIndex = 0;
+          button2.ariaHasPopup = "dialog";
+          button2.ariaControls = "commentPopup";
+          button2.setAttribute("data-l10n-id", "pdfjs-show-comment-button");
           this.#updateColor();
           this.#updateCommentButtonPosition();
-          button.addEventListener("keydown", this.#boundKeyDown, {
+          button2.addEventListener("keydown", this.#boundKeyDown, {
             signal
           });
-          button.addEventListener("click", togglePopup, {
+          button2.addEventListener("click", togglePopup, {
             signal
           });
-          button.addEventListener("pointerenter", showPopup, {
+          button2.addEventListener("pointerenter", showPopup, {
             signal
           });
-          button.addEventListener("pointerleave", hidePopup, {
+          button2.addEventListener("pointerleave", hidePopup, {
             signal
           });
-          parentContainer.after(button);
+          parentContainer.after(button2);
         } else {
           this.#commentButton = this.#firstElement.container;
           for (const element of this.trigger) {
@@ -24501,32 +24501,32 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
         const {
           filename
         } = this.data.richMedia;
-        const button = document.createElement("button");
-        button.className = "mediaPlayButton";
-        button.type = "button";
-        button.title = button.ariaLabel = filename;
-        button.addEventListener("click", () => this.#load(button), {
+        const button2 = document.createElement("button");
+        button2.className = "mediaPlayButton";
+        button2.type = "button";
+        button2.title = button2.ariaLabel = filename;
+        button2.addEventListener("click", () => this.#load(button2), {
           signal: this.#abortController.signal
         });
-        this.container.append(button);
+        this.container.append(button2);
         return this.container;
       }
-      async #load(button) {
+      async #load(button2) {
         const {
           fileId,
           filename,
           contentType
         } = this.data.richMedia;
-        button.disabled = true;
+        button2.disabled = true;
         let content;
         try {
           content = await this.linkService.getAttachmentContent(fileId);
         } catch {
           return;
         } finally {
-          button.disabled = false;
+          button2.disabled = false;
         }
-        if (!content || !button.isConnected) {
+        if (!content || !button2.isConnected) {
           return;
         }
         const {
@@ -24581,7 +24581,7 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
           once: true,
           signal
         });
-        button.replaceWith(media);
+        button2.replaceWith(media);
         media.play().catch(() => {
         });
       }
@@ -31362,11 +31362,11 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
           let rotator = rotators.get(textLayer);
           if (!rotator) {
             const clientRect = textLayer.getBoundingClientRect();
-            rotator = (x, y, w, h14) => ({
+            rotator = (x, y, w, h15) => ({
               x: (x - clientRect.x) / clientRect.width,
               y: (y - clientRect.y) / clientRect.height,
               width: w / clientRect.width,
-              height: h14 / clientRect.height
+              height: h15 / clientRect.height
             });
             rotators.set(textLayer, rotator);
           }
@@ -33065,7 +33065,7 @@ function decodeScan(data, view, offset, frame, components, resetInterval, spectr
   }
   let mcu = 0, fileMarker;
   const mcuExpected = componentsLength === 1 ? components[0].blocksPerLine * components[0].blocksPerColumn : mcusPerLine * frame.mcusPerColumn;
-  let h14, v;
+  let h15, v;
   while (mcu <= mcuExpected) {
     const mcuToRead = resetInterval ? Math.min(mcuExpected - mcu, resetInterval) : mcuExpected;
     if (mcuToRead > 0) {
@@ -33083,10 +33083,10 @@ function decodeScan(data, view, offset, frame, components, resetInterval, spectr
         for (n = 0; n < mcuToRead; n++) {
           for (i = 0; i < componentsLength; i++) {
             component = components[i];
-            h14 = component.h;
+            h15 = component.h;
             v = component.v;
             for (j = 0; j < v; j++) {
-              for (k = 0; k < h14; k++) {
+              for (k = 0; k < h15; k++) {
                 decodeMcu(component, decodeFn, mcu, j, k);
               }
             }
@@ -38821,11 +38821,11 @@ function flushHTML(node) {
 function addHTML(node, html, bbox) {
   const extra = node[$extra];
   const availableSpace = extra.availableSpace;
-  const [x, y, w, h14] = bbox;
+  const [x, y, w, h15] = bbox;
   switch (node.layout) {
     case "position": {
       extra.width = Math.max(extra.width, x + w);
-      extra.height = Math.max(extra.height, y + h14);
+      extra.height = Math.max(extra.height, y + h15);
       extra.children.push(html);
       break;
     }
@@ -38840,11 +38840,11 @@ function addHTML(node, html, bbox) {
       extra.line.children.push(html);
       if (extra.attempt === 0) {
         extra.currentWidth += w;
-        extra.height = Math.max(extra.height, extra.prevHeight + h14);
+        extra.height = Math.max(extra.height, extra.prevHeight + h15);
       } else {
         extra.currentWidth = w;
         extra.prevHeight = extra.height;
-        extra.height += h14;
+        extra.height += h15;
         extra.attempt = 0;
       }
       extra.width = Math.max(extra.width, extra.currentWidth);
@@ -38853,7 +38853,7 @@ function addHTML(node, html, bbox) {
     case "row": {
       extra.children.push(html);
       extra.width += w;
-      extra.height = Math.max(extra.height, h14);
+      extra.height = Math.max(extra.height, h15);
       const height = measureToString(extra.height);
       for (const child of extra.children) {
         child.attributes.style.height = height;
@@ -38862,13 +38862,13 @@ function addHTML(node, html, bbox) {
     }
     case "table": {
       extra.width = MathClamp2(w, extra.width, availableSpace.width);
-      extra.height += h14;
+      extra.height += h15;
       extra.children.push(html);
       break;
     }
     case "tb": {
       extra.width = MathClamp2(w, extra.width, availableSpace.width);
-      extra.height += h14;
+      extra.height += h15;
       extra.children.push(html);
       break;
     }
@@ -38911,26 +38911,26 @@ function getAvailableSpace(node) {
 }
 function getTransformedBBox(node) {
   let w = node.w === "" ? NaN : node.w;
-  let h14 = node.h === "" ? NaN : node.h;
+  let h15 = node.h === "" ? NaN : node.h;
   let [centerX, centerY] = [0, 0];
   switch (node.anchorType || "") {
     case "bottomCenter":
-      [centerX, centerY] = [w / 2, h14];
+      [centerX, centerY] = [w / 2, h15];
       break;
     case "bottomLeft":
-      [centerX, centerY] = [0, h14];
+      [centerX, centerY] = [0, h15];
       break;
     case "bottomRight":
-      [centerX, centerY] = [w, h14];
+      [centerX, centerY] = [w, h15];
       break;
     case "middleCenter":
-      [centerX, centerY] = [w / 2, h14 / 2];
+      [centerX, centerY] = [w / 2, h15 / 2];
       break;
     case "middleLeft":
-      [centerX, centerY] = [0, h14 / 2];
+      [centerX, centerY] = [0, h15 / 2];
       break;
     case "middleRight":
-      [centerX, centerY] = [w, h14 / 2];
+      [centerX, centerY] = [w, h15 / 2];
       break;
     case "topCenter":
       [centerX, centerY] = [w / 2, 0];
@@ -38946,18 +38946,18 @@ function getTransformedBBox(node) {
       break;
     case 90:
       [x, y] = [-centerY, centerX];
-      [w, h14] = [h14, -w];
+      [w, h15] = [h15, -w];
       break;
     case 180:
       [x, y] = [centerX, centerY];
-      [w, h14] = [-w, -h14];
+      [w, h15] = [-w, -h15];
       break;
     case 270:
       [x, y] = [centerY, -centerX];
-      [w, h14] = [-h14, w];
+      [w, h15] = [-h15, w];
       break;
   }
-  return [node.x + x + Math.min(0, w), node.y + y + Math.min(0, h14), Math.abs(w), Math.abs(h14)];
+  return [node.x + x + Math.min(0, w), node.y + y + Math.min(0, h15), Math.abs(w), Math.abs(h15)];
 }
 function checkDimensions(node, space) {
   if (node[$getTemplateRoot]()[$extra].firstUnsplittable === null) {
@@ -38969,13 +38969,13 @@ function checkDimensions(node, space) {
   const ERROR = 2;
   const parent = node[$getSubformParent]();
   const attempt = parent[$extra]?.attempt || 0;
-  const [, y, w, h14] = getTransformedBBox(node);
+  const [, y, w, h15] = getTransformedBBox(node);
   switch (parent.layout) {
     case "lr-tb":
     case "rl-tb":
       if (attempt === 0) {
         if (!node[$getTemplateRoot]()[$extra].noLayoutFailure) {
-          if (node.h !== "" && Math.round(h14 - space.height) > ERROR) {
+          if (node.h !== "" && Math.round(h15 - space.height) > ERROR) {
             return false;
           }
           if (node.w !== "") {
@@ -38997,7 +38997,7 @@ function checkDimensions(node, space) {
       if (node[$getTemplateRoot]()[$extra].noLayoutFailure) {
         return true;
       }
-      if (node.h !== "" && Math.round(h14 - space.height) > ERROR) {
+      if (node.h !== "" && Math.round(h15 - space.height) > ERROR) {
         return false;
       }
       if (node.w === "" || Math.round(w - space.width) <= ERROR) {
@@ -39013,7 +39013,7 @@ function checkDimensions(node, space) {
         return true;
       }
       if (node.h !== "" && !node[$isSplittable]()) {
-        return Math.round(h14 - space.height) <= ERROR;
+        return Math.round(h15 - space.height) <= ERROR;
       }
       if (node.w === "" || Math.round(w - space.width) <= ERROR) {
         return space.height > ERROR;
@@ -39026,18 +39026,18 @@ function checkDimensions(node, space) {
       if (node[$getTemplateRoot]()[$extra].noLayoutFailure) {
         return true;
       }
-      if (node.h === "" || Math.round(h14 + y - space.height) <= ERROR) {
+      if (node.h === "" || Math.round(h15 + y - space.height) <= ERROR) {
         return true;
       }
       const area = node[$getTemplateRoot]()[$extra].currentContentArea;
-      return h14 + y > area.h;
+      return h15 + y > area.h;
     case "rl-row":
     case "row":
       if (node[$getTemplateRoot]()[$extra].noLayoutFailure) {
         return true;
       }
       if (node.h !== "") {
-        return Math.round(h14 - space.height) <= ERROR;
+        return Math.round(h15 - space.height) <= ERROR;
       }
       return true;
     default:
@@ -39539,7 +39539,7 @@ function calculateSHA512(data, offset, length, mode384 = false) {
   } = calculate_sha_other_PARAMS;
   let a = new Word64(0, 0), b = new Word64(0, 0), c = new Word64(0, 0);
   let d = new Word64(0, 0), e = new Word64(0, 0), f = new Word64(0, 0);
-  let g = new Word64(0, 0), h14 = new Word64(0, 0);
+  let g = new Word64(0, 0), h15 = new Word64(0, 0);
   const t1 = new Word64(0, 0), t2 = new Word64(0, 0);
   const tmp1 = new Word64(0, 0), tmp2 = new Word64(0, 0);
   let tmp3;
@@ -39564,9 +39564,9 @@ function calculateSHA512(data, offset, length, mode384 = false) {
     e.assign(h42);
     f.assign(h52);
     g.assign(h62);
-    h14.assign(h72);
+    h15.assign(h72);
     for (j = 0; j < 80; ++j) {
-      t1.assign(h14);
+      t1.assign(h15);
       sigmaPrime(tmp1, e, tmp2);
       t1.add(tmp1);
       ch(tmp1, e, f, g, tmp2);
@@ -39576,8 +39576,8 @@ function calculateSHA512(data, offset, length, mode384 = false) {
       sigma(t2, a, tmp2);
       maj(tmp1, a, b, c, tmp2);
       t2.add(tmp1);
-      tmp3 = h14;
-      h14 = g;
+      tmp3 = h15;
+      h15 = g;
       g = f;
       f = e;
       d.add(t1);
@@ -39596,7 +39596,7 @@ function calculateSHA512(data, offset, length, mode384 = false) {
     h42.add(e);
     h52.add(f);
     h62.add(g);
-    h72.add(h14);
+    h72.add(h15);
   }
   let result;
   if (!mode384) {
@@ -39675,11 +39675,11 @@ function calculateSHA256(data, offset, length) {
     for (j = 16; j < 64; ++j) {
       w[j] = calculate_sha256_littleSigmaPrime(w[j - 2]) + w[j - 7] + calculate_sha256_littleSigma(w[j - 15]) + w[j - 16] | 0;
     }
-    let a = h0, b = h1, c = h22, d = h32, e = h42, f = h52, g = h62, h14 = h72, t1, t2;
+    let a = h0, b = h1, c = h22, d = h32, e = h42, f = h52, g = h62, h15 = h72, t1, t2;
     for (j = 0; j < 64; ++j) {
-      t1 = h14 + calculate_sha256_sigmaPrime(e) + calculate_sha256_ch(e, f, g) + k[j] + w[j];
+      t1 = h15 + calculate_sha256_sigmaPrime(e) + calculate_sha256_ch(e, f, g) + k[j] + w[j];
       t2 = calculate_sha256_sigma(a) + calculate_sha256_maj(a, b, c);
-      h14 = g;
+      h15 = g;
       g = f;
       f = e;
       e = d + t1 | 0;
@@ -39695,7 +39695,7 @@ function calculateSHA256(data, offset, length) {
     h42 = h42 + e | 0;
     h52 = h52 + f | 0;
     h62 = h62 + g | 0;
-    h72 = h72 + h14 | 0;
+    h72 = h72 + h15 | 0;
   }
   return new Uint8Array([h0 >> 24 & 255, h0 >> 16 & 255, h0 >> 8 & 255, h0 & 255, h1 >> 24 & 255, h1 >> 16 & 255, h1 >> 8 & 255, h1 & 255, h22 >> 24 & 255, h22 >> 16 & 255, h22 >> 8 & 255, h22 & 255, h32 >> 24 & 255, h32 >> 16 & 255, h32 >> 8 & 255, h32 & 255, h42 >> 24 & 255, h42 >> 16 & 255, h42 >> 8 & 255, h42 & 255, h52 >> 24 & 255, h52 >> 16 & 255, h52 >> 8 & 255, h52 & 255, h62 >> 24 & 255, h62 >> 16 & 255, h62 >> 8 & 255, h62 & 255, h72 >> 24 & 255, h72 >> 16 & 255, h72 >> 8 & 255, h72 & 255]);
 }
@@ -40285,21 +40285,21 @@ var init_pdf_worker = __esm({
       },
       /***/
       3972(module2, __unused_webpack_exports, __webpack_require__3) {
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var $String = String;
         var $TypeError = TypeError;
         module2.exports = function(argument) {
-          if (argument === void 0 || isObject2(argument)) return argument;
+          if (argument === void 0 || isObject3(argument)) return argument;
           throw new $TypeError($String(argument) + " is not an object or undefined");
         };
       },
       /***/
       8551(module2, __unused_webpack_exports, __webpack_require__3) {
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var $String = String;
         var $TypeError = TypeError;
         module2.exports = function(argument) {
-          if (isObject2(argument)) return argument;
+          if (isObject3(argument)) return argument;
           throw new $TypeError($String(argument) + " is not an object");
         };
       },
@@ -40359,7 +40359,7 @@ var init_pdf_worker = __esm({
         var DESCRIPTORS = __webpack_require__3(3724);
         var globalThis2 = __webpack_require__3(4576);
         var isCallable = __webpack_require__3(4901);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var hasOwn = __webpack_require__3(9297);
         var classof = __webpack_require__3(6955);
         var tryToString = __webpack_require__3(6823);
@@ -40404,18 +40404,18 @@ var init_pdf_worker = __esm({
           BigUint64Array: 8
         };
         var isView = function isView2(it) {
-          if (!isObject2(it)) return false;
+          if (!isObject3(it)) return false;
           var klass = classof(it);
           return klass === "DataView" || hasOwn(TypedArrayConstructorsList, klass) || hasOwn(BigIntArrayConstructorsList, klass);
         };
         var getTypedArrayConstructor = function(it) {
           var proto = getPrototypeOf(it);
-          if (!isObject2(proto)) return;
+          if (!isObject3(proto)) return;
           var state = getInternalState(proto);
           return state && hasOwn(state, TYPED_ARRAY_CONSTRUCTOR) ? state[TYPED_ARRAY_CONSTRUCTOR] : getTypedArrayConstructor(proto);
         };
         var isTypedArray = function(it) {
-          if (!isObject2(it)) return false;
+          if (!isObject3(it)) return false;
           var klass = classof(it);
           return hasOwn(TypedArrayConstructorsList, klass) || hasOwn(BigIntArrayConstructorsList, klass);
         };
@@ -40502,7 +40502,7 @@ var init_pdf_worker = __esm({
           defineBuiltInAccessor(TypedArrayPrototype, TO_STRING_TAG, {
             configurable: true,
             get: function() {
-              return isObject2(this) ? this[TYPED_ARRAY_TAG] : void 0;
+              return isObject3(this) ? this[TYPED_ARRAY_TAG] : void 0;
             }
           });
           for (NAME in TypedArrayConstructorsList) if (globalThis2[NAME]) {
@@ -40795,9 +40795,9 @@ var init_pdf_worker = __esm({
       /***/
       4055(module2, __unused_webpack_exports, __webpack_require__3) {
         var globalThis2 = __webpack_require__3(4576);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var document2 = globalThis2.document;
-        var EXISTS = isObject2(document2) && isObject2(document2.createElement);
+        var EXISTS = isObject3(document2) && isObject3(document2.createElement);
         module2.exports = function(it) {
           return EXISTS ? document2.createElement(it) : {};
         };
@@ -41133,9 +41133,9 @@ var init_pdf_worker = __esm({
       5917(module2, __unused_webpack_exports, __webpack_require__3) {
         var DESCRIPTORS = __webpack_require__3(3724);
         var fails = __webpack_require__3(9039);
-        var createElement15 = __webpack_require__3(4055);
+        var createElement16 = __webpack_require__3(4055);
         module2.exports = !DESCRIPTORS && !fails(function() {
-          return Object.defineProperty(createElement15("div"), "a", {
+          return Object.defineProperty(createElement16("div"), "a", {
             get: function() {
               return 7;
             }
@@ -41172,7 +41172,7 @@ var init_pdf_worker = __esm({
       1181(module2, __unused_webpack_exports, __webpack_require__3) {
         var NATIVE_WEAK_MAP = __webpack_require__3(8622);
         var globalThis2 = __webpack_require__3(4576);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var createNonEnumerableProperty = __webpack_require__3(6699);
         var hasOwn = __webpack_require__3(9297);
         var shared = __webpack_require__3(7629);
@@ -41188,7 +41188,7 @@ var init_pdf_worker = __esm({
         var getterFor = function(TYPE) {
           return function(it) {
             var state;
-            if (!isObject2(it) || (state = get(it)).type !== TYPE) {
+            if (!isObject3(it) || (state = get(it)).type !== TYPE) {
               throw new TypeError2("Incompatible receiver, " + TYPE + " required");
             }
             return state;
@@ -41301,9 +41301,9 @@ var init_pdf_worker = __esm({
       },
       /***/
       3925(module2, __unused_webpack_exports, __webpack_require__3) {
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         module2.exports = function(argument) {
-          return isObject2(argument) || argument === null;
+          return isObject3(argument) || argument === null;
         };
       },
       /***/
@@ -41312,10 +41312,10 @@ var init_pdf_worker = __esm({
       },
       /***/
       5810(module2, __unused_webpack_exports, __webpack_require__3) {
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var getInternalState = __webpack_require__3(1181).get;
         module2.exports = function isRawJSON(O) {
-          if (!isObject2(O)) return false;
+          if (!isObject3(O)) return false;
           var state = getInternalState(O);
           return !!state && state.type === "RawJSON";
         };
@@ -41576,7 +41576,7 @@ var init_pdf_worker = __esm({
       7657(module2, __unused_webpack_exports, __webpack_require__3) {
         var fails = __webpack_require__3(9039);
         var isCallable = __webpack_require__3(4901);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var create = __webpack_require__3(2360);
         var getPrototypeOf = __webpack_require__3(2787);
         var defineBuiltIn = __webpack_require__3(6840);
@@ -41593,7 +41593,7 @@ var init_pdf_worker = __esm({
             if (PrototypeOfArrayIteratorPrototype !== Object.prototype) IteratorPrototype = PrototypeOfArrayIteratorPrototype;
           }
         }
-        var NEW_ITERATOR_PROTOTYPE = !isObject2(IteratorPrototype) || fails(function() {
+        var NEW_ITERATOR_PROTOTYPE = !isObject3(IteratorPrototype) || fails(function() {
           var test = {};
           return IteratorPrototype[ITERATOR].call(test) !== test;
         });
@@ -41944,7 +41944,7 @@ var init_pdf_worker = __esm({
       /***/
       2967(module2, __unused_webpack_exports, __webpack_require__3) {
         var uncurryThisAccessor = __webpack_require__3(6706);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var requireObjectCoercible = __webpack_require__3(7750);
         var aPossiblePrototype = __webpack_require__3(3506);
         module2.exports = Object.setPrototypeOf || ("__proto__" in {} ? (function() {
@@ -41960,7 +41960,7 @@ var init_pdf_worker = __esm({
           return function setPrototypeOf(O, proto) {
             requireObjectCoercible(O);
             aPossiblePrototype(proto);
-            if (!isObject2(O)) return O;
+            if (!isObject3(O)) return O;
             if (CORRECT_SETTER) setter(O, proto);
             else O.__proto__ = proto;
             return O;
@@ -41971,13 +41971,13 @@ var init_pdf_worker = __esm({
       4270(module2, __unused_webpack_exports, __webpack_require__3) {
         var call = __webpack_require__3(9565);
         var isCallable = __webpack_require__3(4901);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var $TypeError = TypeError;
         module2.exports = function(input, pref) {
           var fn, val;
-          if (pref === "string" && isCallable(fn = input.toString) && !isObject2(val = call(fn, input))) return val;
-          if (isCallable(fn = input.valueOf) && !isObject2(val = call(fn, input))) return val;
-          if (pref !== "string" && isCallable(fn = input.toString) && !isObject2(val = call(fn, input))) return val;
+          if (pref === "string" && isCallable(fn = input.toString) && !isObject3(val = call(fn, input))) return val;
+          if (isCallable(fn = input.valueOf) && !isObject3(val = call(fn, input))) return val;
+          if (pref !== "string" && isCallable(fn = input.toString) && !isObject3(val = call(fn, input))) return val;
           throw new $TypeError("Can't convert object to primitive value");
         };
       },
@@ -42438,7 +42438,7 @@ var init_pdf_worker = __esm({
       /***/
       2777(module2, __unused_webpack_exports, __webpack_require__3) {
         var call = __webpack_require__3(9565);
-        var isObject2 = __webpack_require__3(34);
+        var isObject3 = __webpack_require__3(34);
         var isSymbol = __webpack_require__3(757);
         var getMethod = __webpack_require__3(5966);
         var ordinaryToPrimitive = __webpack_require__3(4270);
@@ -42446,13 +42446,13 @@ var init_pdf_worker = __esm({
         var $TypeError = TypeError;
         var TO_PRIMITIVE = wellKnownSymbol("toPrimitive");
         module2.exports = function(input, pref) {
-          if (!isObject2(input) || isSymbol(input)) return input;
+          if (!isObject3(input) || isSymbol(input)) return input;
           var exoticToPrim = getMethod(input, TO_PRIMITIVE);
           var result;
           if (exoticToPrim) {
             if (pref === void 0) pref = "default";
             result = call(exoticToPrim, input, pref);
-            if (!isObject2(result) || isSymbol(result)) return result;
+            if (!isObject3(result) || isSymbol(result)) return result;
             throw new $TypeError("Can't convert object to primitive value");
           }
           if (pref === void 0) pref = "number";
@@ -46348,7 +46348,7 @@ var init_pdf_worker = __esm({
         const step = Math.ceil(height / maxHeight);
         const remainder = height % maxHeight === 0 ? height : height % maxHeight;
         for (let k = 0; k < step; k++) {
-          const h14 = k < step - 1 ? maxHeight : remainder;
+          const h15 = k < step - 1 ? maxHeight : remainder;
           ({
             srcPos
           } = convertToRGBA({
@@ -46356,11 +46356,11 @@ var init_pdf_worker = __esm({
             src: data,
             dest: src32,
             width,
-            height: h14,
+            height: h15,
             inverseDecode: this._isMask,
             srcPos
           }));
-          for (let i = 0, ii = h14 >> K; i < ii; i++) {
+          for (let i = 0, ii = h15 >> K; i < ii; i++) {
             const buf = src32.subarray((i << K) * width);
             for (let j = 0; j < newWidth; j++) {
               dest32[newIndex++] = buf[j << K];
@@ -47124,17 +47124,17 @@ var init_pdf_worker = __esm({
               let maxH = 0, maxV = 0;
               for (i = 0; i < componentsCount; i++) {
                 const componentId = data[offset];
-                const h14 = data[offset + 1] >> 4;
+                const h15 = data[offset + 1] >> 4;
                 const v = data[offset + 1] & 15;
-                if (maxH < h14) {
-                  maxH = h14;
+                if (maxH < h15) {
+                  maxH = h15;
                 }
                 if (maxV < v) {
                   maxV = v;
                 }
                 const qId = data[offset + 2];
                 l = frame.components.push({
-                  h: h14,
+                  h: h15,
                   v,
                   quantizationId: qId,
                   quantizationTable: null
@@ -71823,12 +71823,12 @@ var init_pdf_worker = __esm({
         } = image;
         const imageRef = dict.objId;
         const w = dict.get("W", "Width");
-        const h14 = dict.get("H", "Height");
-        if (!(w && typeof w === "number") || !(h14 && typeof h14 === "number")) {
+        const h15 = dict.get("H", "Height");
+        if (!(w && typeof w === "number") || !(h15 && typeof h15 === "number")) {
           warn2("Image dimensions are missing, or not numbers.");
           return;
         }
-        if (maxImageSize !== -1 && w * h14 > maxImageSize) {
+        if (maxImageSize !== -1 && w * h15 > maxImageSize) {
           const msg = "Image exceeded maximum allowed size and was removed.";
           if (!ignoreErrors) {
             throw new Error(msg);
@@ -71903,7 +71903,7 @@ var init_pdf_worker = __esm({
         }
         const SMALL_IMAGE_DIMENSIONS = 200;
         const hasMask = dict.has("SMask") || dict.has("Mask");
-        if (isInline && w + h14 < SMALL_IMAGE_DIMENSIONS && !hasMask) {
+        if (isInline && w + h15 < SMALL_IMAGE_DIMENSIONS && !hasMask) {
           try {
             const imageObj = new PDFImage({
               xref: this.xref,
@@ -71937,7 +71937,7 @@ var init_pdf_worker = __esm({
         }
         operatorList.addDependency(objId);
         fn = OPS2.paintImageXObject;
-        args = [objId, w, h14];
+        args = [objId, w, h15];
         operatorList.addImageOps(fn, args, optionalContent, hasMask);
         if (cacheGlobally) {
           globalCacheData = {
@@ -71953,7 +71953,7 @@ var init_pdf_worker = __esm({
             this._sendImgData(objId, null, cacheGlobally);
             return;
           }
-          if (w * h14 > 25e4 || hasMask) {
+          if (w * h15 > 25e4 || hasMask) {
             const localLength = await this.handler.sendWithPromise("commonobj", [objId, "CopyLocalImage", {
               imageRef
             }]);
@@ -75798,9 +75798,9 @@ var init_pdf_worker = __esm({
       static getFirstPositionInfo(rect, rotation, fontSize) {
         const [x1, y1, x2, y2] = rect;
         let w = x2 - x1;
-        let h14 = y2 - y1;
+        let h15 = y2 - y1;
         if (rotation % 180 !== 0) {
-          [w, h14] = [h14, w];
+          [w, h15] = [h15, w];
         }
         const lineHeight = (
           /* inlined export .LINE_FACTOR */
@@ -75811,9 +75811,9 @@ var init_pdf_worker = __esm({
           0.35 * fontSize
         );
         return {
-          coords: [0, h14 + lineDescent - lineHeight],
-          bbox: [0, 0, w, h14],
-          matrix: rotation !== 0 ? getRotationMatrix(rotation, h14, lineHeight) : void 0
+          coords: [0, h15 + lineDescent - lineHeight],
+          bbox: [0, 0, w, h15],
+          matrix: rotation !== 0 ? getRotationMatrix(rotation, h15, lineHeight) : void 0
         };
       }
       createAppearance(text2, rect, rotation, fontSize, bgColor, strokeAlpha) {
@@ -75839,9 +75839,9 @@ var init_pdf_worker = __esm({
         maxWidth *= fontSize / 1e3;
         const [x1, y1, x2, y2] = rect;
         let w = x2 - x1;
-        let h14 = y2 - y1;
+        let h15 = y2 - y1;
         if (rotation % 180 !== 0) {
-          [w, h14] = [h14, w];
+          [w, h15] = [h15, w];
         }
         const hscale = maxWidth > w ? w / maxWidth : 1;
         let vscale = 1;
@@ -75854,12 +75854,12 @@ var init_pdf_worker = __esm({
           0.35 * fontSize
         );
         const maxHeight = lineHeight * lines.length;
-        if (maxHeight > h14) {
-          vscale = h14 / maxHeight;
+        if (maxHeight > h15) {
+          vscale = h15 / maxHeight;
         }
         const fscale = Math.min(hscale, vscale);
         const newFontSize = fontSize * fscale;
-        const buffer = ["q", `0 0 ${numberToString(w)} ${numberToString(h14)} re W n`, `BT`, `1 0 0 1 0 ${numberToString(h14 + lineDescent)} Tm 0 Tc ${getPdfColor(bgColor, true)}`, `/${this.fontName.name} ${numberToString(newFontSize)} Tf`];
+        const buffer = ["q", `0 0 ${numberToString(w)} ${numberToString(h15)} re W n`, `BT`, `1 0 0 1 0 ${numberToString(h15 + lineDescent)} Tm 0 Tc ${getPdfColor(bgColor, true)}`, `/${this.fontName.name} ${numberToString(newFontSize)} Tf`];
         const {
           resources
         } = this;
@@ -75883,11 +75883,11 @@ var init_pdf_worker = __esm({
         const appearanceStreamDict = new Dict(this.xref);
         appearanceStreamDict.setIfName("Subtype", "Form");
         appearanceStreamDict.setIfName("Type", "XObject");
-        appearanceStreamDict.set("BBox", [0, 0, w, h14]);
+        appearanceStreamDict.set("BBox", [0, 0, w, h15]);
         appearanceStreamDict.set("Length", appearance.length);
         appearanceStreamDict.set("Resources", resources);
         if (rotation) {
-          const matrix = getRotationMatrix(rotation, w, h14);
+          const matrix = getRotationMatrix(rotation, w, h15);
           appearanceStreamDict.set("Matrix", matrix);
         }
         return new StringStream(appearance, appearanceStreamDict);
@@ -80564,9 +80564,9 @@ var init_pdf_worker = __esm({
         return true;
       }
       [$addHTML](html, bbox) {
-        const [x, y, w, h14] = bbox;
+        const [x, y, w, h15] = bbox;
         this[$extra].width = Math.max(this[$extra].width, x + w);
-        this[$extra].height = Math.max(this[$extra].height, y + h14);
+        this[$extra].height = Math.max(this[$extra].height, y + h15);
         this[$extra].children.push(html);
       }
       [$getAvailableSpace]() {
@@ -80987,7 +80987,7 @@ var init_pdf_worker = __esm({
         if (this.reserve <= 0) {
           const {
             w,
-            h: h14
+            h: h15
           } = this[$getExtra](availableSpace);
           switch (this.placement) {
             case "left":
@@ -80997,7 +80997,7 @@ var init_pdf_worker = __esm({
               break;
             case "top":
             case "bottom":
-              this.reserve = h14;
+              this.reserve = h15;
               break;
           }
         }
@@ -81535,7 +81535,7 @@ var init_pdf_worker = __esm({
         const savedH = this.h;
         const {
           w,
-          h: h14,
+          h: h15,
           isBroken
         } = layoutNode(this, availableSpace);
         if (w && this.w === "") {
@@ -81545,8 +81545,8 @@ var init_pdf_worker = __esm({
           }
           this.w = w;
         }
-        if (h14 && this.h === "") {
-          this.h = h14;
+        if (h15 && this.h === "") {
+          this.h = h15;
         }
         setFirstUnsplittable(this);
         if (!checkDimensions(this, availableSpace)) {
@@ -82149,11 +82149,11 @@ var init_pdf_worker = __esm({
           } else {
             const {
               w,
-              h: h14
+              h: h15
             } = layoutNode(this, availableSpace);
             if (w !== null) {
               uiW = w;
-              uiH = h14;
+              uiH = h15;
             } else {
               uiH = fonts_getMetrics(this.font, true).lineNoGap;
             }
@@ -82164,7 +82164,7 @@ var init_pdf_worker = __esm({
           if (this.caption) {
             const {
               w,
-              h: h14,
+              h: h15,
               isBroken
             } = this.caption[$getExtra](availableSpace);
             if (isBroken && this[$getSubformParent]()[$isThereMoreWidth]()) {
@@ -82172,7 +82172,7 @@ var init_pdf_worker = __esm({
               return HTMLResult.FAILURE;
             }
             width = w;
-            height = h14;
+            height = h15;
             switch (this.caption.placement) {
               case "left":
               case "right":
@@ -90956,9 +90956,9 @@ var init_pdf_worker = __esm({
         }, resources);
         const [x1, y1, x2, y2] = rect;
         let w = x2 - x1;
-        let h14 = y2 - y1;
+        let h15 = y2 - y1;
         if (rotation % 180 !== 0) {
-          [w, h14] = [h14, w];
+          [w, h15] = [h15, w];
         }
         const lines = value.split("\n");
         const scale = fontSize / 1e3;
@@ -90990,8 +90990,8 @@ var init_pdf_worker = __esm({
           0.35) * fontSize
         );
         const totalHeight = lineHeight * lines.length;
-        if (totalHeight > h14) {
-          vscale = h14 / totalHeight;
+        if (totalHeight > h15) {
+          vscale = h15 / totalHeight;
         }
         const fscale = Math.min(hscale, vscale);
         const newFontSize = fontSize * fscale;
@@ -90999,22 +90999,22 @@ var init_pdf_worker = __esm({
         switch (rotation) {
           case 0:
             matrix = [1, 0, 0, 1];
-            clipBox = [rect[0], rect[1], w, h14];
+            clipBox = [rect[0], rect[1], w, h15];
             firstPoint = [rect[0], rect[3] - lineAscent];
             break;
           case 90:
             matrix = [0, 1, -1, 0];
-            clipBox = [rect[1], -rect[2], w, h14];
+            clipBox = [rect[1], -rect[2], w, h15];
             firstPoint = [rect[1], -rect[0] - lineAscent];
             break;
           case 180:
             matrix = [-1, 0, 0, -1];
-            clipBox = [-rect[2], -rect[3], w, h14];
+            clipBox = [-rect[2], -rect[3], w, h15];
             firstPoint = [-rect[2], -rect[1] - lineAscent];
             break;
           case 270:
             matrix = [0, -1, 1, 0];
-            clipBox = [-rect[3], rect[0], w, h14];
+            clipBox = [-rect[3], rect[0], w, h15];
             firstPoint = [-rect[3], rect[2] - lineAscent];
             break;
         }
@@ -92208,8 +92208,8 @@ var init_pdf_worker = __esm({
           const iMin = this.#getGridIndex(intersector.minX, intersector.minY);
           const iMax = this.#getGridIndex(intersector.maxX, intersector.maxY);
           const w = (iMax - iMin) % STEPS;
-          const h14 = Math.floor((iMax - iMin) / STEPS);
-          for (let i = iMin; i <= iMin + h14 * STEPS; i += STEPS) {
+          const h15 = Math.floor((iMax - iMin) / STEPS);
+          for (let i = iMin; i <= iMin + h15 * STEPS; i += STEPS) {
             for (let j = 0; j <= w; j++) {
               (this.#grid[i + j] ??= []).push(intersector);
             }
@@ -100942,10 +100942,64 @@ __export(client_entry_exports, {
 module.exports = __toCommonJS(client_entry_exports);
 
 // src/ui/library-locale.js
+function flattenMessages(messages, prefix = "") {
+  return Object.fromEntries(Object.entries(messages).flatMap(([key, value]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    return typeof value === "string" ? [[path, value]] : Object.entries(flattenMessages(value, path));
+  }));
+}
 var LIBRARY_MESSAGES = {
   "zh": {
     "reader": { "zoom": "\u7F29\u653E", "zoomIn": "\u653E\u5927\uFF08Ctrl\uFF0B\u6EDA\u8F6E\u5411\u4E0A\uFF09", "zoomOut": "\u7F29\u5C0F\uFF08Ctrl\uFF0B\u6EDA\u8F6E\u5411\u4E0B\uFF09" },
     "catalog": {
+      "tags": {
+        "filter": "\u6807\u7B7E\u7B5B\u9009",
+        "search": "\u641C\u7D22\u5DF2\u6709\u6807\u7B7E",
+        "untagged": "\u65E0\u6807\u7B7E",
+        "match": "\u5339\u914D\u65B9\u5F0F",
+        "any": "\u4EFB\u4E00\u6807\u7B7E",
+        "all": "\u5168\u90E8\u6807\u7B7E",
+        "clearTags": "\u6E05\u7A7A\u6807\u7B7E\u7B5B\u9009",
+        "done": "\u5B8C\u6210",
+        "close": "\u5173\u95ED",
+        "noneFound": "\u6CA1\u6709\u5339\u914D\u7684\u6807\u7B7E",
+        "moreTags": "\u53E6\u6709 {count} \u4E2A\u6807\u7B7E",
+        "edit": "\u7F16\u8F91\u6807\u7B7E",
+        "bulkAdd": "\u6279\u91CF\u6DFB\u52A0\u6807\u7B7E",
+        "bulkRemove": "\u6279\u91CF\u79FB\u9664\u6807\u7B7E",
+        "bookCount": "\u5C06\u4FEE\u6539 {count} \u672C\u4E66",
+        "cancel": "\u53D6\u6D88",
+        "save": "\u4FDD\u5B58",
+        "saving": "\u4FDD\u5B58\u4E2D\u2026",
+        "failed": "\u6807\u7B7E\u64CD\u4F5C\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5",
+        "cacheWarning": "\u6807\u7B7E\u5DF2\u4FDD\u5B58\u5230\u4E66\u5E93\uFF0C\u4F46\u6D4F\u89C8\u5668\u7F13\u5B58\u66F4\u65B0\u5931\u8D25\uFF1B\u79BB\u7EBF\u5206\u7C7B\u53EF\u80FD\u4E0D\u662F\u6700\u65B0\u72B6\u6001",
+        "offline": "\u79BB\u7EBF\u65F6\u65E0\u6CD5\u7F16\u8F91\u6807\u7B7E\uFF1B\u8FDE\u63A5\u4E66\u5E93\u540E\u53EF\u6DFB\u52A0\u6216\u79FB\u9664\u6807\u7B7E",
+        "nameControls": "\u6807\u7B7E\u540D\u79F0\u4E0D\u80FD\u5305\u542B\u63A7\u5236\u5B57\u7B26\u3002",
+        "nameRequired": "\u8BF7\u8F93\u5165\u6807\u7B7E\u540D\u79F0\u3002",
+        "nameLong": "\u6807\u7B7E\u540D\u79F0\u6700\u591A 40 \u4E2A\u5B57\u7B26\u3002",
+        "activeFilters": "\u5F53\u524D\u7B5B\u9009",
+        "removeFilter": "\u79FB\u9664\u6807\u7B7E\u7B5B\u9009 {name}",
+        "clearAll": "\u6E05\u7A7A\u5168\u90E8\u7B5B\u9009",
+        "select": "\u9009\u62E9\u4E66\u7C4D",
+        "selected": "\u5DF2\u9009 {count} \u672C",
+        "selectResults": "\u9009\u62E9\u5168\u90E8 {count} \u672C\u7B5B\u9009\u7ED3\u679C",
+        "selectBook": "\u9009\u62E9\u300A{title}\u300B",
+        "input": "\u8F93\u5165\u6807\u7B7E\uFF0C\u6309 Enter \u6DFB\u52A0",
+        "removeInput": "\u641C\u7D22\u8981\u79FB\u9664\u7684\u6807\u7B7E",
+        "existing": "\u5DF2\u6709\u6807\u7B7E",
+        "createHint": "\u6309 Enter \u521B\u5EFA\u300C{name}\u300D",
+        "enterFirst": "\u8BF7\u6309 Enter \u6DFB\u52A0\u8F93\u5165\u7684\u6807\u7B7E\uFF0C\u6216\u6E05\u7A7A\u8F93\u5165",
+        "addTitle": "\u7ED9 {count} \u672C\u4E66\u6DFB\u52A0\u6807\u7B7E",
+        "removeTitle": "\u4ECE {count} \u672C\u4E66\u79FB\u9664\u6807\u7B7E",
+        "keepExisting": "\u539F\u6709\u6807\u7B7E\u5C06\u4FDD\u7559",
+        "removeHint": "\u4EC5\u79FB\u9664\u6240\u9009\u4E66\u7C4D\u7684\u6807\u7B7E\uFF0C\u4E66\u7C4D\u4E0E\u9605\u8BFB\u6570\u636E\u4E0D\u53D7\u5F71\u54CD",
+        "confirmAdd": "\u786E\u8BA4\u6DFB\u52A0",
+        "confirmRemove": "\u786E\u8BA4\u79FB\u9664",
+        "clearSelection": "\u6E05\u7A7A\u9009\u62E9",
+        "exitSelection": "\u9000\u51FA\u9009\u62E9",
+        "chooseBooks": "\u8BF7\u9009\u62E9\u9700\u8981\u6574\u7406\u7684\u4E66\u7C4D",
+        "removeSelected": "\u53D6\u6D88\u9009\u62E9\u6807\u7B7E {name}"
+      },
       "queue": {
         "title": "\u5BFC\u5165\u961F\u5217",
         "add": "\u8FFD\u52A0\u6587\u4EF6",
@@ -101028,6 +101082,54 @@ var LIBRARY_MESSAGES = {
   "en": {
     "reader": { "zoom": "Zoom", "zoomIn": "Zoom in (Ctrl + wheel up)", "zoomOut": "Zoom out (Ctrl + wheel down)" },
     "catalog": {
+      "tags": {
+        "filter": "Tag filter",
+        "search": "Search existing tags",
+        "untagged": "No tags",
+        "match": "Match",
+        "any": "Any tag",
+        "all": "All tags",
+        "clearTags": "Clear tag filter",
+        "done": "Done",
+        "close": "Close",
+        "noneFound": "No matching tags",
+        "moreTags": "{count} more tags",
+        "edit": "Edit tags",
+        "bulkAdd": "Add tags in bulk",
+        "bulkRemove": "Remove tags in bulk",
+        "bookCount": "Changing {count} books",
+        "cancel": "Cancel",
+        "save": "Save",
+        "saving": "Saving\u2026",
+        "failed": "Tag operation failed. Please retry.",
+        "cacheWarning": "Tags were saved to the library, but the browser cache could not be updated. Offline tags may be outdated.",
+        "offline": "Tag editing is unavailable offline. Connect to add or remove tags.",
+        "nameControls": "Tag names cannot contain control characters.",
+        "nameRequired": "Enter a tag name.",
+        "nameLong": "Tag names can contain up to 40 characters.",
+        "activeFilters": "Active filters",
+        "removeFilter": "Remove tag filter {name}",
+        "clearAll": "Clear all filters",
+        "select": "Select books",
+        "selected": "{count} selected",
+        "selectResults": "Select all {count} matching books",
+        "selectBook": "Select \u201C{title}\u201D",
+        "input": "Enter a tag and press Enter",
+        "removeInput": "Search tags to remove",
+        "existing": "Existing tags",
+        "createHint": "Press Enter to create \u201C{name}\u201D",
+        "enterFirst": "Press Enter to add the typed tag, or clear the input.",
+        "addTitle": "Add tags to {count} books",
+        "removeTitle": "Remove tags from {count} books",
+        "keepExisting": "Existing tags will be kept",
+        "removeHint": "Only tags on selected books are removed. Books and reading data are kept.",
+        "confirmAdd": "Confirm add",
+        "confirmRemove": "Confirm remove",
+        "clearSelection": "Clear selection",
+        "exitSelection": "Exit selection",
+        "chooseBooks": "Select books to organize",
+        "removeSelected": "Deselect tag {name}"
+      },
       "queue": {
         "title": "Import queue",
         "add": "Add files",
@@ -101110,7 +101212,7 @@ var LIBRARY_MESSAGES = {
 };
 
 // src/client/index.js
-var React15 = __toESM(require("react"), 1);
+var React16 = __toESM(require("react"), 1);
 
 // src/core/reader-input.js
 var FONT_MIN = 12;
@@ -101180,6 +101282,50 @@ function createWheelIntent() {
   };
 }
 
+// src/core/tags.js
+var RESERVED_IDS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
+var CONTROLS = new RegExp("\\p{Cc}", "u");
+var isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var validId = (id) => typeof id === "string" && id.length > 0 && id === id.trim() && !CONTROLS.test(id) && !RESERVED_IDS.has(id);
+function normalizeTagName(name) {
+  if (typeof name !== "string" || CONTROLS.test(name)) throw new Error("Invalid tag name");
+  const normalized = name.normalize("NFC").trim();
+  if ([...normalized].length < 1 || [...normalized].length > 40) throw new Error("Tag name must contain 1\u201340 characters");
+  return normalized;
+}
+function tagNameKey(name) {
+  return normalizeTagName(name).toLowerCase().normalize("NFC");
+}
+function normalizeTagModel(raw) {
+  const source = isObject(raw) ? raw : {};
+  const tags = [], names = /* @__PURE__ */ new Map(), aliases = /* @__PURE__ */ new Map();
+  for (const tag of Array.isArray(source.tags) ? source.tags : []) {
+    if (!isObject(tag) || !validId(tag.id) || aliases.has(tag.id)) continue;
+    let name;
+    try {
+      name = normalizeTagName(tag.name);
+    } catch (error) {
+      continue;
+    }
+    const key = tagNameKey(name);
+    const id = names.get(key) ?? tag.id;
+    aliases.set(tag.id, id);
+    if (!names.has(key)) {
+      names.set(key, id);
+      tags.push({ id, name });
+    }
+  }
+  const bookTags = {};
+  if (isObject(source.bookTags)) {
+    for (const [id, assigned] of Object.entries(source.bookTags)) {
+      if (!validId(id) || !Array.isArray(assigned)) continue;
+      const clean = [...new Set(assigned.filter(validId).map((tagId) => aliases.get(tagId)).filter(Boolean))];
+      if (clean.length) bookTags[id] = clean;
+    }
+  }
+  return { tags, bookTags };
+}
+
 // src/core/state.js
 var DEFAULT_READER_SETTINGS = Object.freeze({
   theme: "paper",
@@ -101199,7 +101345,7 @@ var DEFAULT_LOCATOR = Object.freeze({
   textQuote: ""
 });
 var FLOW_MODES = Object.freeze(["paginated", "scroll"]);
-function isObject(value) {
+function isObject2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function str(value) {
@@ -101249,7 +101395,7 @@ function normKey(value) {
   return str(value).replace(/\s+/g, " ").trim();
 }
 function normalizeLocator(raw) {
-  const source = isObject(raw) ? raw : {};
+  const source = isObject2(raw) ? raw : {};
   const chapterIndex = num(source.chapterIndex, DEFAULT_LOCATOR.chapterIndex);
   return {
     ...DEFAULT_LOCATOR,
@@ -101261,7 +101407,7 @@ function normalizeLocator(raw) {
   };
 }
 function normalizeSettings(raw) {
-  const source = isObject(raw) ? raw : {};
+  const source = isObject2(raw) ? raw : {};
   const flow = str(source.flow).toLowerCase();
   return {
     ...DEFAULT_READER_SETTINGS,
@@ -101282,7 +101428,7 @@ function isDefaultSettings(settings) {
   );
 }
 function normalizeHighlight(raw, bookId) {
-  if (!isObject(raw)) return null;
+  if (!isObject2(raw)) return null;
   const chapterHref = str(raw.chapterHref);
   const text2 = str(raw.text).trim();
   if (!chapterHref && !text2) return null;
@@ -101299,7 +101445,7 @@ function normalizeHighlight(raw, bookId) {
   };
 }
 function normalizeBookmark(raw, bookId) {
-  if (!isObject(raw)) return null;
+  if (!isObject2(raw)) return null;
   const chapterHref = str(raw.chapterHref);
   const label = str(raw.label).trim();
   if (!chapterHref && !label) return null;
@@ -101315,7 +101461,7 @@ function normalizeBookmark(raw, bookId) {
   };
 }
 function normalizeBook(raw) {
-  if (!isObject(raw)) return null;
+  if (!isObject2(raw)) return null;
   const file = str(raw.file);
   const source = str(raw.source);
   return {
@@ -101335,17 +101481,18 @@ function normalizeBook(raw) {
   };
 }
 function normalizeLibrary(raw) {
-  const source = isObject(raw) ? raw : {};
+  const source = isObject2(raw) ? raw : {};
   const books = Array.isArray(source.books) ? source.books.map((book) => normalizeBook(book)).filter(Boolean) : [];
   return {
     ...source,
     version: toNonNegativeInt(source.version) || 1,
     updatedAt: toTimestamp(source.updatedAt),
+    ...normalizeTagModel(source),
     books
   };
 }
 function normalizeState(raw, bookId) {
-  const source = isObject(raw) ? raw : {};
+  const source = isObject2(raw) ? raw : {};
   const id = str(source.bookId) || str(bookId);
   const highlights = Array.isArray(source.highlights) ? source.highlights.map((item) => normalizeHighlight(item, id)).filter(Boolean) : [];
   const bookmarks = Array.isArray(source.bookmarks) ? source.bookmarks.map((item) => normalizeBookmark(item, id)).filter(Boolean) : [];
@@ -101376,8 +101523,8 @@ function stableId(...parts) {
   return `${fnv.toString(36)}-${djb.toString(36)}`;
 }
 function addHighlight(state, input) {
-  const source = isObject(input) ? input : {};
-  const original = isObject(state) ? state : null;
+  const source = isObject2(input) ? input : {};
+  const original = isObject2(state) ? state : null;
   const base = normalizeState(state, original?.bookId);
   const chapterHref = str(source.chapterHref);
   const text2 = str(source.text).trim();
@@ -101412,7 +101559,7 @@ function addHighlight(state, input) {
   };
 }
 function removeHighlight(state, id) {
-  const original = isObject(state) ? state : null;
+  const original = isObject2(state) ? state : null;
   const base = normalizeState(state, original?.bookId);
   const target = str(id);
   if (!target) return { state: original || base, removed: false };
@@ -101425,7 +101572,7 @@ function removeHighlight(state, id) {
   };
 }
 function updateHighlightNote(state, id, note) {
-  const original = isObject(state) ? state : null;
+  const original = isObject2(state) ? state : null;
   const base = normalizeState(state, original?.bookId);
   const target = str(id);
   const text2 = str(note).trim();
@@ -101435,8 +101582,8 @@ function updateHighlightNote(state, id, note) {
   return { ...base, highlights, updatedAt: Math.max(base.updatedAt, Date.now()) };
 }
 function addBookmark(state, input) {
-  const source = isObject(input) ? input : {};
-  const original = isObject(state) ? state : null;
+  const source = isObject2(input) ? input : {};
+  const original = isObject2(state) ? state : null;
   const base = normalizeState(state, original?.bookId);
   const chapterHref = str(source.chapterHref);
   const label = str(source.label).trim();
@@ -101464,7 +101611,7 @@ function addBookmark(state, input) {
   };
 }
 function removeBookmark(state, id) {
-  const original = isObject(state) ? state : null;
+  const original = isObject2(state) ? state : null;
   const base = normalizeState(state, original?.bookId);
   const target = str(id);
   const index = target ? base.bookmarks.findIndex((item) => item.id === target) : -1;
@@ -101475,7 +101622,7 @@ function removeBookmark(state, id) {
 function progressOf(state, chapterCount) {
   const total = toNonNegativeInt(chapterCount);
   if (total <= 0) return 0;
-  const locator = normalizeLocator(isObject(state) ? state.locator : null);
+  const locator = normalizeLocator(isObject2(state) ? state.locator : null);
   const chapterIndex = Math.min(Math.max(locator.chapterIndex, 0), total - 1);
   return clamp01((chapterIndex + clamp01(locator.scroll)) / total);
 }
@@ -102056,6 +102203,8 @@ function createDataLayer(options = {}) {
   const listeners = /* @__PURE__ */ new Set();
   let status = "idle";
   let lastError = "";
+  let tagsOnline = false;
+  let disposed = false;
   let libraryOperations = Promise.resolve();
   const serializeLibrary = (operation) => {
     const result = libraryOperations.then(operation);
@@ -102063,6 +102212,7 @@ function createDataLayer(options = {}) {
     return result;
   };
   function emit() {
+    if (disposed) return;
     for (const listener of listeners) {
       try {
         listener();
@@ -102102,6 +102252,7 @@ function createDataLayer(options = {}) {
           await api.saveState(nextId, merged);
           states.set(nextId, merged);
         }
+        await migrateTags(book.id, nextId, cached);
         await saveBookBytes(nextId, bytes).catch(() => void 0);
         migratedLocalIds.add(book.id);
       } catch (error) {
@@ -102141,6 +102292,7 @@ function createDataLayer(options = {}) {
     } catch {
       cached = null;
     }
+    tagsOnline = Boolean(fetched && Array.isArray(fetched.tags) && fetched.bookTags && typeof host?.updateBookTags === "function");
     const remoteBooks = Array.isArray(fetched?.books) ? fetched.books : [];
     const remoteIds = new Set(remoteBooks.map((book) => book.id));
     const localOnly = Array.isArray(cached?.books) ? cached.books.filter((book) => book && (book.source === "local" || book.source === "local-offline") && !STARTER_BY_ID.has(book.id) && !remoteIds.has(book.id) && !migratedLocalIds.has(book.id)) : [];
@@ -102332,6 +102484,7 @@ function createDataLayer(options = {}) {
           states.set(book.id, merged);
           await saveLocalState(book.id, merged);
         }
+        await migrateTags(fallbackId, book.id);
         migratedFrom = fallbackId;
         migratedLocalIds.add(fallbackId);
         const parsed = engines.get(fallbackId);
@@ -102373,7 +102526,9 @@ function createDataLayer(options = {}) {
         hostError = error instanceof Error ? error.message : String(error);
       }
     }
-    library = normalizeLibrary({ ...library, books: library.books.filter((book) => book.id !== bookId) });
+    const bookTags = { ...library.bookTags };
+    delete bookTags[bookId];
+    library = normalizeLibrary({ ...library, bookTags, books: library.books.filter((book) => book.id !== bookId) });
     states.delete(bookId);
     engines.delete(bookId);
     await saveLocalLibrary(library).catch(() => void 0);
@@ -102381,6 +102536,32 @@ function createDataLayer(options = {}) {
     await removeBookBytes(bookId).catch(() => void 0);
     emit();
     return { ok: true, hostError };
+  }
+  async function editTags(method, request) {
+    if (disposed) return { ok: false, error: "TAG_DISPOSED" };
+    if (!tagsOnline || host === null) return { ok: false, error: "TAG_OFFLINE" };
+    if (typeof host[method] !== "function") return { ok: false, error: "TAG_UNSUPPORTED" };
+    try {
+      const snapshot = await host[method](request);
+      if (!Array.isArray(snapshot?.tags) || !snapshot?.bookTags) throw new Error("TAG_INVALID_RESPONSE");
+      if (disposed) return { ok: false, error: "TAG_DISPOSED" };
+      library = normalizeLibrary({ ...library, tags: snapshot.tags, bookTags: snapshot.bookTags });
+      const cached = await saveLocalLibrary(library).catch(() => false);
+      emit();
+      return { ok: true, warning: cached ? "" : "TAG_CACHE_FAILED" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  async function migrateTags(fromId, toId, catalog = library) {
+    if (fromId === toId) return;
+    if (typeof host?.migrateBookTags !== "function") {
+      if (catalog.bookTags?.[fromId]?.length) throw new Error("TAG_UNSUPPORTED");
+      return;
+    }
+    const snapshot = await host.migrateBookTags({ fromId, toId });
+    if (!Array.isArray(snapshot?.tags) || !snapshot?.bookTags) throw new Error("TAG_INVALID_RESPONSE");
+    library = normalizeLibrary({ ...library, tags: snapshot.tags, bookTags: snapshot.bookTags });
   }
   async function exportNotes(bookId) {
     const book = library.books.find((entry) => entry.id === bookId);
@@ -102399,6 +102580,11 @@ function createDataLayer(options = {}) {
     setHost: (api) => serializeLibrary(() => setHost(api)),
     /* --- 读取 --- */
     getLibrary: () => library,
+    canEditTags: () => !disposed && tagsOnline,
+    dispose: () => {
+      disposed = true;
+      listeners.clear();
+    },
     getStatus: () => ({ status, error: lastError }),
     getState: (bookId) => states.get(bookId),
     getEngine: (bookId) => engines.get(bookId)?.engine,
@@ -102409,6 +102595,10 @@ function createDataLayer(options = {}) {
     },
     /* --- 操作 --- */
     refreshLibrary: () => serializeLibrary(refreshLibrary),
+    createTag: (request) => serializeLibrary(() => editTags("createTag", request)),
+    renameTag: (request) => serializeLibrary(() => editTags("renameTag", request)),
+    deleteTag: (request) => serializeLibrary(() => editTags("deleteTag", request)),
+    updateBookTags: (request) => serializeLibrary(() => editTags("updateBookTags", request)),
     ensureState,
     openBook,
     importBook: (file) => serializeLibrary(() => importBook(file)),
@@ -102612,6 +102802,11 @@ function remoteHostApi(ctx) {
   return {
     info: () => call("info"),
     library: () => call("library"),
+    createTag: (request) => call("createTag", request),
+    renameTag: (request) => call("renameTag", request),
+    deleteTag: (request) => call("deleteTag", request),
+    updateBookTags: (request) => call("updateBookTags", request),
+    migrateBookTags: (request) => call("migrateBookTags", request),
     import: (request) => call("importBook", request),
     remove: (bookId) => call("removeBook", { bookId }),
     loadState: (bookId) => call("loadState", { bookId }),
@@ -102719,7 +102914,7 @@ __export(shell_exports, {
   ReaderOverlay: () => ReaderOverlay,
   default: () => shell_default
 });
-var React14 = __toESM(require("react"), 1);
+var React15 = __toESM(require("react"), 1);
 
 // src/ui/hooks.js
 var React = __toESM(require("react"), 1);
@@ -102971,6 +103166,39 @@ function readerThemeVars(themeId) {
   };
 }
 var UI_CSS = `
+.qmr-tag-backdrop.qmr-overlay{z-index:9100;display:flex;align-items:center;justify-content:center;padding:16px;background:color-mix(in srgb,var(--dsw-alias-bg-base) 80%,transparent)}
+.qmr-tag-dialog{box-sizing:border-box;display:flex;flex-direction:column;gap:14px;width:440px;max-width:100%;max-height:calc(100dvh - 32px);overflow:auto;padding:20px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-weight:400}
+.qmr-tag-dialog *{box-sizing:border-box}
+.qmr-tag-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.qmr-tag-heading h2{margin:0;font-size:17px;font-weight:500;overflow-wrap:anywhere}
+.qmr-tag-dialog p{margin:0;overflow-wrap:anywhere}
+.qmr-tag-dialog .qmr-actions{justify-content:flex-end}
+.qmr-tag-choices{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px;max-height:220px;overflow:auto;padding:2px;flex-shrink:1}
+.qmr-tag-choice{display:flex;align-items:center;gap:10px;padding:8px 0;min-height:40px;overflow-wrap:anywhere}
+.qmr-tag-choice input,.qmr-book-primary>input{flex:none;accent-color:var(--dsw-alias-brand-primary)}
+.qmr-tag-error{color:var(--dsw-alias-state-error-primary)}
+.qmr-book-primary{display:flex;align-items:center;gap:10px;min-width:0}
+.qmr-book-primary .qmr-book-open{flex:1;min-width:0}
+.qmr-book-tags{display:flex;gap:5px;min-width:0;overflow:hidden}
+.qmr-tag-badge{display:inline-block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 9px;border:1px solid var(--dsw-alias-border-l1);border-radius:999px;font-size:12px;line-height:1.5;font-weight:400;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2)}
+.qmr-tag-badge[data-tone="brand"]{--qmr-tag-tone:var(--dsw-alias-brand-primary)}
+.qmr-tag-badge[data-tone="success"]{--qmr-tag-tone:var(--dsw-alias-state-success-primary)}
+.qmr-tag-badge[data-tone="warn"]{--qmr-tag-tone:var(--dsw-alias-state-warn-primary)}
+.qmr-tag-badge[data-tone="error"]{--qmr-tag-tone:var(--dsw-alias-state-error-primary)}
+.qmr-tag-badge[data-tone="idle"]{--qmr-tag-tone:var(--dsw-alias-state-idle-primary)}
+.qmr-tag-badge[data-tone]{color:color-mix(in srgb,var(--qmr-tag-tone) 25%,var(--dsw-alias-label-primary));background:color-mix(in srgb,var(--qmr-tag-tone) 18%,var(--dsw-alias-bg-layer-1));border-color:color-mix(in srgb,var(--qmr-tag-tone) 35%,var(--dsw-alias-border-l1))}
+button.qmr-tag-badge{cursor:pointer}
+button.qmr-tag-badge:hover:not(:disabled){border-color:var(--qmr-tag-tone,var(--dsw-alias-brand-primary))}
+.qmr-tag-selected{display:flex;gap:6px;flex-wrap:wrap}
+.qmr-tag-choice-button{display:flex;gap:6px;align-items:center;background:transparent;border:0;padding:2px;cursor:pointer;color:var(--dsw-alias-label-primary)}
+.qmr-tag-primary{background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-base)}
+.qmr-book-row.is-selected{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 7%,var(--dsw-alias-bg-layer-1))}
+.qmr-selection-add{margin-left:auto}
+.qmr-tag-summary,.qmr-tag-selection{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;font-size:12px}
+.qmr-tag-selection{padding:10px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px}
+.qmr-tag-dialog .qmr-book-menu{position:static;width:100%;padding:0;border:0;box-shadow:none;background:transparent}
+@media(max-width:700px){.qmr-library-tools{flex-wrap:wrap}.qmr-library-search{min-width:120px}.qmr-library-toolbar{flex-wrap:wrap}.qmr-tag-dialog{padding:14px}.qmr-tag-badge{max-width:100px}}
+
 .qmr-import-queue{margin-bottom:20px;padding:12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}
 .qmr-import-head,.qmr-import-item{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .qmr-import-head{flex-wrap:wrap;margin-bottom:8px}
@@ -103043,10 +103271,10 @@ var UI_CSS = `
 /* Library C: a quiet catalogue with aligned rows, no card chrome. */
 .qmr-library{display:flex;flex:1 1 auto;min-width:0;min-height:0;--qmr-lib-line:var(--dsw-alias-border-l1);--qmr-lib-muted:var(--dsw-alias-label-secondary);--qmr-lib-focus:var(--dsw-alias-brand-primary,var(--dsw-alias-label-secondary));--qmr-lib-hover:color-mix(in srgb,var(--dsw-alias-label-primary) 4%,var(--dsw-alias-bg-base));--qmr-lib-active:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,var(--dsw-alias-bg-base));background:var(--dsw-alias-bg-base)}
 .qmr-library-sidebar{display:flex;flex-direction:column;flex:0 0 196px;min-height:0;padding:28px 16px 20px;border-right:1px solid var(--qmr-lib-line);background:color-mix(in srgb,var(--dsw-alias-label-primary) 2%,var(--dsw-alias-bg-base))}
-.qmr-library-brand{display:flex;align-items:center;gap:10px;padding:0 12px;margin-bottom:30px;font-size:19px;font-weight:600}
+.qmr-library-brand{display:flex;align-items:center;gap:10px;padding:0 12px;margin-bottom:30px;font-size:19px;font-weight:500}
 .qmr-library-nav,.qmr-library-formats{display:flex;flex-direction:column;gap:4px}
 .qmr-library-nav button,.qmr-library-formats button{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:42px;padding:8px 12px;border:0;border-radius:6px;background:transparent;color:var(--qmr-lib-muted);font-size:14px;text-align:left;cursor:pointer}
-.qmr-library-nav button.is-active,.qmr-library-formats button.is-active{background:var(--qmr-lib-active);color:var(--dsw-alias-label-primary);font-weight:600}
+.qmr-library-nav button.is-active,.qmr-library-formats button.is-active{background:var(--qmr-lib-active);color:var(--dsw-alias-label-primary);font-weight:500}
 .qmr-library-count{font-size:12px;font-weight:400;font-variant-numeric:tabular-nums;opacity:.8}
 .qmr-library-formats{margin-top:30px}
 .qmr-library-section-label{font-size:12px;font-weight:400;color:var(--qmr-lib-muted)}
@@ -103058,7 +103286,7 @@ var UI_CSS = `
 .qmr-library-main{display:flex;flex-direction:column;flex:1 1 auto;min-width:0;min-height:0}
 .qmr-library-header{display:flex;align-items:center;justify-content:space-between;gap:24px;flex:none;padding:24px 32px;border-bottom:1px solid var(--qmr-lib-line)}
 .qmr-library-heading{min-width:0;display:flex;align-items:baseline;gap:12px}
-.qmr-library-heading h1{margin:0;font-size:22px;line-height:1.4;font-weight:600;white-space:nowrap}
+.qmr-library-heading h1{margin:0;font-size:22px;line-height:1.4;font-weight:500;white-space:nowrap}
 .qmr-library-total{color:var(--qmr-lib-muted);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
 .qmr-library-tools{display:flex;align-items:center;gap:4px;min-width:0}
 .qmr-library-search{display:flex;align-items:center;gap:8px;width:260px;min-width:0;height:42px;padding:0 12px;margin-right:8px;border:1px solid var(--qmr-lib-line);border-radius:6px;color:var(--qmr-lib-muted);background:transparent}
@@ -104181,6 +104409,12 @@ function createController(getProps, store) {
     props,
     actions,
     books,
+    tagCatalog: () => {
+      const library = props().data?.getLibrary?.();
+      return { tags: library?.tags || [], bookTags: library?.bookTags || {} };
+    },
+    canEditTags: () => Boolean(props().data?.canEditTags?.()),
+    updateBookTags: (request) => callAction("updateBookTags", request),
     status,
     libraryLoading,
     bookOf,
@@ -104370,7 +104604,7 @@ var IconSort = makeIcon("Sort", [
 ]);
 
 // src/ui/library.js
-var React5 = __toESM(require("react"), 1);
+var React6 = __toESM(require("react"), 1);
 
 // src/ui/import-queue.js
 var React4 = __toESM(require("react"), 1);
@@ -104385,12 +104619,12 @@ function ImportQueueView({ ui, compact = false }) {
   const active = queue.items.find((item) => item.status === "processing");
   const done = queue.items.length - (counts.waiting || 0) - (counts.processing || 0);
   const summary = text(ui, "summary", { done, total: queue.items.length, host: counts.host || 0, browser: counts.browser || 0, failed: counts.failed || 0, waiting: counts.waiting || 0, cancelled: counts.cancelled || 0 });
-  const button = (key, onClick, disabled = false) => h3("button", { type: "button", className: "qmr-btn qmr-btn-sm", onClick, disabled }, text(ui, key));
+  const button2 = (key, onClick, disabled = false) => h3("button", { type: "button", className: "qmr-btn qmr-btn-sm", onClick, disabled }, text(ui, key));
   if (compact) return h3(
     "div",
     { className: "qmr-import-compact" },
     h3("span", { role: "status" }, text(ui, queue.mode), " \xB7 ", summary),
-    button("show", () => ui.backToLibrary())
+    button2("show", () => ui.backToLibrary())
   );
   return h3(
     "section",
@@ -104402,10 +104636,10 @@ function ImportQueueView({ ui, compact = false }) {
       h3(
         "div",
         { className: "qmr-actions" },
-        queue.mode === "running" ? button("stop", () => ui.stopImports()) : null,
-        ["paused", "stopping"].includes(queue.mode) ? button("resume", () => ui.resumeImports()) : null,
-        button("retryAll", () => ui.retryFailedImports(), !counts.failed),
-        button("clear", () => ui.clearImports(), done === 0)
+        queue.mode === "running" ? button2("stop", () => ui.stopImports()) : null,
+        ["paused", "stopping"].includes(queue.mode) ? button2("resume", () => ui.resumeImports()) : null,
+        button2("retryAll", () => ui.retryFailedImports(), !counts.failed),
+        button2("clear", () => ui.clearImports(), done === 0)
       )
     ),
     h3("div", { className: "qmr-import-summary", role: "status", "aria-live": "polite" }, summary),
@@ -104422,55 +104656,237 @@ function ImportQueueView({ ui, compact = false }) {
         h3("span", { className: "qmr-muted qmr-small" }, text(ui, item.status), item.existing ? ` \xB7 ${text(ui, "existing")}` : "", item.attempts ? ` \xB7 ${text(ui, "attempts", { count: item.attempts })}` : ""),
         item.error || item.warning ? h3("span", { className: "qmr-import-message" }, item.error || item.warning) : null
       ),
-      item.status === "waiting" ? button("cancel", () => ui.cancelImport(item.id)) : null,
-      item.status === "failed" ? button("retry", () => ui.retryImport(item.id)) : null,
-      item.status === "browser" ? button("saveHost", () => ui.retryImport(item.id)) : null
+      item.status === "waiting" ? button2("cancel", () => ui.cancelImport(item.id)) : null,
+      item.status === "failed" ? button2("retry", () => ui.retryImport(item.id)) : null,
+      item.status === "browser" ? button2("saveHost", () => ui.retryImport(item.id)) : null
     ))) : null
   );
 }
 
-// src/ui/library.js
+// src/ui/library-tags.js
+var React5 = __toESM(require("react"), 1);
+var ReactDOM = __toESM(require("react-dom"), 1);
 var h4 = React5.createElement;
+var tagText = (ui, key, values = {}) => ui.t(`catalog.tags.${key}`, LIBRARY_MESSAGES.zh.catalog.tags[key] || key).replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ""));
+var catalogOf = (ui) => ui.tagCatalog?.() || { tags: [], bookTags: {} };
+var editableTags = (ui) => ui.canEditTags?.() === true;
+function matchesTags(ids, selected, mode, untagged) {
+  return untagged ? ids.length === 0 : !selected.length || (mode === "all" ? selected.every((id) => ids.includes(id)) : selected.some((id) => ids.includes(id)));
+}
+var toggle = (ids, id) => ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id];
+var normalizedName = (value) => value.trim().normalize("NFC");
+var nameKey = (value) => normalizedName(value).toLowerCase();
+var nameError = (ui, name) => new RegExp("\\p{Cc}", "u").test(name) ? tagText(ui, "nameControls") : !normalizedName(name) ? tagText(ui, "nameRequired") : [...normalizedName(name)].length > 40 ? tagText(ui, "nameLong") : "";
+var button = (ui, key, onClick, disabled = false, primary = false) => h4("button", { type: "button", className: `qmr-btn${primary ? " qmr-tag-primary" : ""}`, onClick, disabled }, tagText(ui, key));
+function tagColor(id) {
+  let hash = 0;
+  for (const character of String(id)) hash = hash * 31 + character.codePointAt(0) >>> 0;
+  return ["brand", "success", "warn", "error", "idle"][hash % 5];
+}
+function TagChip({ tag, onClick, disabled = false, remove = false, label }) {
+  const props = { className: "qmr-tag-badge", "data-tone": tagColor(tag.id), title: tag.name };
+  return onClick ? h4("button", { ...props, type: "button", onClick, disabled, "aria-label": label || tag.name }, tag.name, remove ? h4("span", { "aria-hidden": true }, " \xD7") : null) : h4("span", props, tag.name);
+}
+function TagOverlay({ ui, title, onClose, children, busy = false }) {
+  const ref = React5.useRef(null);
+  const options = React5.useRef({ busy, onClose });
+  options.current = { busy, onClose };
+  React5.useEffect(() => {
+    const previous = document.activeElement;
+    const controls = () => [...ref.current?.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),[tabindex="0"]') || []];
+    const list = controls();
+    (list.find((control) => control.tagName === "INPUT") || list[0])?.focus();
+    const keydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!options.current.busy) options.current.onClose();
+      }
+      if (event.key === "Tab") {
+        const list2 = controls();
+        const first = list2[0];
+        const last = list2[list2.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", keydown, true);
+    return () => {
+      document.removeEventListener("keydown", keydown, true);
+      previous?.focus();
+    };
+  }, []);
+  const node = h4(
+    "div",
+    { className: "qmr-tag-backdrop qmr-overlay", onPointerDown: (event) => {
+      if (event.target === event.currentTarget && !busy) onClose();
+    } },
+    h4(
+      "section",
+      { ref, className: "qmr-tag-dialog", role: "dialog", "aria-modal": true, "aria-label": title },
+      h4("header", { className: "qmr-tag-heading" }, h4("h2", null, title), h4("button", { type: "button", className: "qmr-icon-btn", onClick: onClose, disabled: busy, "aria-label": tagText(ui, "close"), title: tagText(ui, "close") }, h4(IconClose, { width: 18, height: 18 }))),
+      children
+    )
+  );
+  return typeof document !== "undefined" && typeof ReactDOM.createPortal === "function" ? ReactDOM.createPortal(node, document.body) : node;
+}
+function TagChoices({ ui, tags, ids, setIds }) {
+  const [query, setQuery] = React5.useState("");
+  const visible = tags.filter((tag) => nameKey(tag.name).includes(nameKey(query)));
+  return h4(
+    React5.Fragment,
+    null,
+    h4("input", { type: "search", className: "qmr-input", value: query, placeholder: tagText(ui, "search"), "aria-label": tagText(ui, "search"), onChange: (event) => setQuery(event.target.value) }),
+    h4("div", { className: "qmr-tag-choices" }, visible.length ? visible.map((tag) => h4(
+      "button",
+      { key: tag.id, type: "button", className: "qmr-tag-choice-button", "aria-pressed": ids.includes(tag.id), onClick: () => setIds(toggle(ids, tag.id)) },
+      h4("span", { "aria-hidden": true }, ids.includes(tag.id) ? "\u2713" : "+"),
+      h4(TagChip, { tag })
+    )) : h4("p", { className: "qmr-muted" }, tagText(ui, "noneFound")))
+  );
+}
+function TagFilter({ ui, ids, mode, untagged, onClose }) {
+  const { tags } = catalogOf(ui);
+  return h4(
+    TagOverlay,
+    { ui, title: tagText(ui, "filter"), onClose },
+    h4(TagChoices, { ui, tags, ids, setIds: (values) => ui.store.set({ libraryTagIds: values, libraryUntagged: false }) }),
+    h4("label", { className: "qmr-tag-choice" }, h4("input", { type: "checkbox", checked: untagged, onChange: (event) => ui.store.set({ libraryUntagged: event.target.checked, libraryTagIds: [] }) }), tagText(ui, "untagged")),
+    h4("label", { className: "qmr-tag-choice" }, tagText(ui, "match"), h4(
+      "select",
+      { className: "qmr-select", value: mode, disabled: untagged, onChange: (event) => ui.store.set({ libraryTagMode: event.target.value }) },
+      h4("option", { value: "any" }, tagText(ui, "any")),
+      h4("option", { value: "all" }, tagText(ui, "all"))
+    )),
+    h4("footer", { className: "qmr-actions" }, button(ui, "clearTags", () => ui.store.set({ libraryTagIds: [], libraryUntagged: false })), button(ui, "done", onClose))
+  );
+}
+function BookTagChips({ ui, bookId }) {
+  const { tags, bookTags } = catalogOf(ui);
+  const assigned = tags.filter((tag) => (bookTags[bookId] || []).includes(tag.id));
+  return assigned.length ? h4(
+    "span",
+    { className: "qmr-book-tags", title: assigned.map((tag) => tag.name).join(" \xB7 ") },
+    assigned.slice(0, 2).map((tag) => h4(TagChip, { key: tag.id, tag })),
+    assigned.length > 2 ? h4("span", { className: "qmr-tag-badge", "aria-label": tagText(ui, "moreTags", { count: assigned.length - 2 }) }, `+${assigned.length - 2}`) : null
+  ) : null;
+}
+function BookTagEditor({ ui, bookIds, mode, onClose, onSuccess }) {
+  const { tags, bookTags } = catalogOf(ui);
+  const candidates = mode === "remove" ? tags.filter((tag) => bookIds.some((id) => (bookTags[id] || []).includes(tag.id))) : tags;
+  const [ids, setIds] = React5.useState(mode === "replace" ? [...bookTags[bookIds[0]] || []] : []);
+  const [names, setNames] = React5.useState([]);
+  const [query, setQuery] = React5.useState("");
+  const [error, setError] = React5.useState("");
+  const [busy, setBusy] = React5.useState(false);
+  const composing = React5.useRef(false);
+  const editable = editableTags(ui);
+  const selectedTags = tags.filter((tag) => ids.includes(tag.id));
+  const visible = candidates.filter((tag) => !ids.includes(tag.id) && nameKey(tag.name).includes(nameKey(query)));
+  const exact = candidates.find((tag) => nameKey(tag.name) === nameKey(query));
+  const enter = (event) => {
+    if (event.key !== "Enter" || event.isComposing || composing.current || event.keyCode === 229) return;
+    event.preventDefault();
+    if (!editable || busy) return;
+    const problem = nameError(ui, query);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    if (exact) setIds(ids.includes(exact.id) ? ids : [...ids, exact.id]);
+    else if (mode !== "remove" && !names.some((name) => nameKey(name) === nameKey(query))) setNames([...names, normalizedName(query)]);
+    else if (mode === "remove") {
+      setError(tagText(ui, "noneFound"));
+      return;
+    }
+    setQuery("");
+    setError("");
+  };
+  const save = async () => {
+    if (!editable || busy) return;
+    if (mode !== "remove" && query.trim()) {
+      setError(tagText(ui, "enterFirst"));
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const result = await ui.updateBookTags({ bookIds, tagIds: ids.filter((id) => candidates.some((tag) => tag.id === id)), operation: mode, ...mode !== "remove" && names.length ? { newTagNames: names } : {} });
+      if (!result.ok) {
+        setError(tagText(ui, result.error === "TAG_OFFLINE" ? "offline" : "failed"));
+        return;
+      }
+      if (result.warning) ui.toast?.(tagText(ui, "cacheWarning"), "warn");
+      onSuccess?.();
+      onClose();
+    } catch (_error) {
+      setError(tagText(ui, "failed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const disabled = busy || !editable;
+  const title = tagText(ui, mode === "replace" ? "edit" : mode === "add" ? "addTitle" : "removeTitle", { count: bookIds.length });
+  return h4(
+    TagOverlay,
+    { ui, title, onClose, busy },
+    mode !== "replace" ? h4("p", { className: "qmr-muted" }, tagText(ui, mode === "add" ? "keepExisting" : "removeHint")) : null,
+    !editable ? h4("p", { className: "qmr-muted", role: "status" }, tagText(ui, "offline")) : null,
+    ids.length || names.length ? h4(
+      "div",
+      { className: "qmr-tag-selected" },
+      selectedTags.map((tag) => h4(TagChip, { key: tag.id, tag, remove: true, disabled, label: tagText(ui, "removeSelected", { name: tag.name }), onClick: () => setIds(ids.filter((id) => id !== tag.id)) })),
+      names.map((name) => h4(TagChip, { key: `new:${name}`, tag: { id: `new:${name}`, name }, remove: true, disabled, label: tagText(ui, "removeSelected", { name }), onClick: () => setNames(names.filter((value) => value !== name)) }))
+    ) : null,
+    h4("input", { type: "text", className: "qmr-input", value: query, disabled, placeholder: tagText(ui, mode === "remove" ? "removeInput" : "input"), "aria-label": tagText(ui, mode === "remove" ? "removeInput" : "input"), onChange: (event) => {
+      setQuery(event.target.value);
+      setError("");
+    }, onKeyDown: enter, onCompositionStart: () => {
+      composing.current = true;
+    }, onCompositionEnd: () => {
+      composing.current = false;
+    } }),
+    mode !== "remove" && query.trim() && !exact && !names.some((name) => nameKey(name) === nameKey(query)) && !nameError(ui, query) ? h4("p", { className: "qmr-muted qmr-small" }, tagText(ui, "createHint", { name: normalizedName(query) })) : null,
+    h4("span", { className: "qmr-muted qmr-small" }, tagText(ui, "existing")),
+    h4("div", { className: "qmr-tag-choices" }, visible.length ? visible.map((tag) => h4(TagChip, { key: tag.id, tag, disabled, onClick: () => {
+      setIds([...ids, tag.id]);
+      setQuery("");
+      setError("");
+    } })) : h4("p", { className: "qmr-muted qmr-small" }, tagText(ui, "noneFound"))),
+    error ? h4("p", { className: "qmr-tag-error", role: "alert" }, error) : null,
+    h4("footer", { className: "qmr-actions" }, button(ui, "cancel", onClose, busy), button(ui, busy ? "saving" : mode === "add" ? "confirmAdd" : mode === "remove" ? "confirmRemove" : "save", save, disabled || mode !== "replace" && !ids.length && !names.length, true))
+  );
+}
+
+// src/ui/library.js
+var h5 = React6.createElement;
 var MAX_STATE_LOADS = 80;
 var FILTERS = [["all", "\u5168\u90E8\u4E66\u7C4D"], ["reading", "\u6B63\u5728\u9605\u8BFB"], ["finished", "\u5DF2\u8BFB\u5B8C"], ["highlighted", "\u6709\u5212\u7EBF"]];
 var tr = (ui, key, fallback, values = {}) => ui.t(`catalog.${key}`, fallback).replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ""));
 function Cover({ book }) {
   const cover = typeof book.cover === "string" && /^data:image\//i.test(book.cover) ? book.cover : null;
-  return h4(
+  return h5(
     "span",
     { className: "qmr-book-cover", "aria-hidden": "true" },
-    h4(IconBook, { width: 20, height: 20 }),
-    cover ? h4("img", { src: cover, alt: "", loading: "lazy", onError: (event) => {
+    h5(IconBook, { width: 20, height: 20 }),
+    cover ? h5("img", { src: cover, alt: "", loading: "lazy", onError: (event) => {
       event.currentTarget.hidden = true;
     } }) : null
   );
 }
-function BookRow({ ui, book, busy }) {
+function BookRow({ ui, book, busy, selecting, selected, onSelect, onEdit }) {
   const id = book.id;
   const progress = ui.progressOfBook(id);
   const state = ui.readingStateOf(id);
   const highlights = ui.highlightCountOf(id);
-  const [menu, setMenu] = React5.useState(false);
-  const menuRef = React5.useRef(null);
-  const triggerRef = React5.useRef(null);
-  React5.useEffect(() => {
-    if (!menu) return void 0;
-    const dismiss = (event) => {
-      if (event.type === "keydown") {
-        if (event.key !== "Escape") return;
-        event.preventDefault();
-        triggerRef.current?.focus();
-      } else if (menuRef.current?.contains(event.target)) return;
-      setMenu(false);
-    };
-    document.addEventListener("pointerdown", dismiss);
-    document.addEventListener("keydown", dismiss);
-    menuRef.current?.querySelector(".qmr-book-menu button")?.focus();
-    return () => {
-      document.removeEventListener("pointerdown", dismiss);
-      document.removeEventListener("keydown", dismiss);
-    };
-  }, [menu]);
+  const [menu, setMenu] = React6.useState(false);
+  const triggerRef = React6.useRef(null);
+  const closeMenu = React6.useMemo(() => () => setMenu(false), []);
   const openPanel = async (panel) => {
     setMenu(false);
     if (await ui.openBook(id)) {
@@ -104484,46 +104900,57 @@ function BookRow({ ui, book, busy }) {
     if (confirmed) ui.removeBook(id);
   };
   const progressText = state === "finished" ? tr(ui, "finished", "\u5DF2\u8BFB\u5B8C") : progress > 0 ? formatPercent(progress) : state === "reading" ? tr(ui, "justStarted", "\u521A\u5F00\u59CB") : tr(ui, "unread", "\u672A\u8BFB");
-  const action = (Icon, key, fallback, onClick, danger = false) => h4("button", {
+  const action = (Icon, key, fallback, onClick, danger = false) => h5("button", {
     type: "button",
     className: danger ? "is-danger" : "",
     onClick
-  }, h4(Icon, { width: 16, height: 16 }), tr(ui, key, fallback));
-  return h4(
+  }, h5(Icon, { width: 16, height: 16 }), tr(ui, key, fallback));
+  return h5(
     "div",
-    { className: `qmr-book-row${menu ? " is-menu-open" : ""}`, role: "listitem" },
-    h4("button", {
-      type: "button",
-      className: "qmr-book-open",
-      disabled: busy,
-      title: book.title || id,
-      "aria-label": tr(ui, "openBook", "\u6253\u5F00\u300A{title}\u300B", { title: book.title || id }),
-      onClick: () => ui.openBook(id)
-    }, h4(Cover, { book }), h4(
-      "span",
-      { className: "qmr-book-copy" },
-      h4("span", { className: "qmr-book-title" }, book.title || id),
-      h4("span", { className: "qmr-book-author" }, book.author || tr(ui, "unknownAuthor", "\u672A\u77E5\u4F5C\u8005"))
-    )),
-    h4("span", { className: "qmr-book-format", title: formatBytes(book.bytes) || void 0 }, String(book.format || "epub").toUpperCase()),
-    h4(
+    { className: `qmr-book-row${menu ? " is-menu-open" : ""}${selecting && selected ? " is-selected" : ""}`, role: "listitem" },
+    h5(
+      "div",
+      { className: "qmr-book-primary" },
+      selecting ? h5("input", {
+        type: "checkbox",
+        checked: selected,
+        "aria-label": tagText(ui, "selectBook", { title: book.title || id }),
+        onChange: onSelect
+      }) : null,
+      h5("button", {
+        type: "button",
+        className: "qmr-book-open",
+        disabled: busy,
+        title: book.title || id,
+        "aria-label": tr(ui, "openBook", "\u6253\u5F00\u300A{title}\u300B", { title: book.title || id }),
+        onClick: () => ui.openBook(id)
+      }, h5(Cover, { book }), h5(
+        "span",
+        { className: "qmr-book-copy" },
+        h5("span", { className: "qmr-book-title" }, book.title || id),
+        h5("span", { className: "qmr-book-author" }, book.author || tr(ui, "unknownAuthor", "\u672A\u77E5\u4F5C\u8005")),
+        h5(BookTagChips, { ui, bookId: id })
+      ))
+    ),
+    h5("span", { className: "qmr-book-format", title: formatBytes(book.bytes) || void 0 }, String(book.format || "epub").toUpperCase()),
+    h5(
       "div",
       { className: `qmr-book-progress${state === "new" ? " is-unread" : ""}` },
-      h4("span", null, busy ? tr(ui, "opening", "\u6253\u5F00\u4E2D\u2026") : progressText),
-      state !== "new" ? h4("span", { className: "qmr-book-track", "aria-hidden": "true" }, h4("span", { style: { width: `${Math.round(progress * 100)}%` } })) : null
+      h5("span", null, busy ? tr(ui, "opening", "\u6253\u5F00\u4E2D\u2026") : progressText),
+      state !== "new" ? h5("span", { className: "qmr-book-track", "aria-hidden": "true" }, h5("span", { style: { width: `${Math.round(progress * 100)}%` } })) : null
     ),
-    h4("button", {
+    h5("button", {
       type: "button",
       className: "qmr-book-highlights",
       disabled: busy,
       onClick: () => openPanel("highlights"),
       title: tr(ui, "highlightsCount", "{count} \u6761\u5212\u7EBF", { count: highlights }),
       "aria-label": tr(ui, "bookHighlights", "\u67E5\u770B\u300A{title}\u300B\u7684 {count} \u6761\u5212\u7EBF", { title: book.title || id, count: highlights })
-    }, highlights > 0 ? h4(React5.Fragment, null, h4(IconHighlight, { width: 14, height: 14 }), highlights) : h4("span", { "aria-hidden": "true" }, "\u2014")),
-    h4(
+    }, highlights > 0 ? h5(React6.Fragment, null, h5(IconHighlight, { width: 14, height: 14 }), highlights) : h5("span", { "aria-hidden": "true" }, "\u2014")),
+    h5(
       "div",
-      { className: "qmr-book-more", ref: menuRef },
-      h4("button", {
+      { className: "qmr-book-more" },
+      h5("button", {
         ref: triggerRef,
         type: "button",
         className: "qmr-lib-icon",
@@ -104532,14 +104959,24 @@ function BookRow({ ui, book, busy }) {
         "aria-label": tr(ui, "bookActions", "\u300A{title}\u300B\u7684\u66F4\u591A\u64CD\u4F5C", { title: book.title || id }),
         title: tr(ui, "more", "\u66F4\u591A\u64CD\u4F5C"),
         onClick: () => setMenu(!menu)
-      }, h4(IconMore, { width: 18, height: 18 })),
-      menu ? h4(
-        "div",
-        { className: "qmr-book-menu", role: "group", "aria-label": tr(ui, "more", "\u66F4\u591A\u64CD\u4F5C") },
-        action(IconNote, "notes", "\u9605\u8BFB\u7B14\u8BB0", () => openPanel("notes")),
-        action(IconHighlight, "highlights", "\u67E5\u770B\u5212\u7EBF", () => openPanel("highlights")),
-        h4("div", { className: "qmr-book-menu-meta" }, `${String(book.format || "epub").toUpperCase()}${formatBytes(book.bytes) ? ` \xB7 ${formatBytes(book.bytes)}` : ""}`),
-        action(IconTrash, "delete", "\u4ECE\u4E66\u5E93\u5220\u9664", remove, true)
+      }, h5(IconMore, { width: 18, height: 18 })),
+      menu ? h5(
+        TagOverlay,
+        { ui, title: tr(ui, "bookActions", "\u300A{title}\u300B\u7684\u66F4\u591A\u64CD\u4F5C", { title: book.title || id }), onClose: closeMenu },
+        h5(
+          "div",
+          { className: "qmr-book-menu" },
+          h5("button", { type: "button", disabled: !editableTags(ui), title: !editableTags(ui) ? tagText(ui, "offline") : void 0, onClick: () => {
+            triggerRef.current?.focus();
+            setMenu(false);
+            onEdit(id);
+          } }, tagText(ui, "edit")),
+          !editableTags(ui) ? h5("p", { className: "qmr-muted" }, tagText(ui, "offline")) : null,
+          action(IconNote, "notes", "\u9605\u8BFB\u7B14\u8BB0", () => openPanel("notes")),
+          action(IconHighlight, "highlights", "\u67E5\u770B\u5212\u7EBF", () => openPanel("highlights")),
+          h5("div", { className: "qmr-book-menu-meta" }, `${String(book.format || "epub").toUpperCase()}${formatBytes(book.bytes) ? ` \xB7 ${formatBytes(book.bytes)}` : ""}`),
+          action(IconTrash, "delete", "\u4ECE\u4E66\u5E93\u5220\u9664", remove, true)
+        )
       ) : null
     )
   );
@@ -104555,10 +104992,31 @@ function LibraryView({ ui }) {
   const queue = ui.useSel((state) => state.importQueue);
   const importing = queue && ["running", "stopping", "paused"].includes(queue.mode);
   const busyBookId = ui.useSel((state) => state.busyBookId);
-  const fileRef = React5.useRef(null);
+  const fileRef = React6.useRef(null);
   const status = ui.status();
   const books = ui.books();
-  React5.useEffect(() => {
+  const tagIds = ui.useSel((state) => state.libraryTagIds) || [];
+  const tagMode = ui.useSel((state) => state.libraryTagMode) || "any";
+  const untagged = !!ui.useSel((state) => state.libraryUntagged);
+  const catalog = catalogOf(ui);
+  const [dialog, setDialog] = React6.useState(null);
+  const [selecting, setSelecting] = React6.useState(false);
+  const [selected, setSelected] = React6.useState([]);
+  const closeDialog = React6.useMemo(() => () => setDialog(null), []);
+  const finishSelection = React6.useMemo(() => () => {
+    setSelected([]);
+    setSelecting(false);
+  }, []);
+  const filterKey = JSON.stringify([query, filter, format, tagIds, tagMode, untagged]);
+  React6.useEffect(() => {
+    setSelected([]);
+  }, [filterKey]);
+  React6.useEffect(() => {
+    setSelected((ids) => ids.filter((id) => books.some((book) => book.id === id)));
+    const retained = tagIds.filter((id) => catalog.tags.some((tag) => tag.id === id));
+    if (retained.length !== tagIds.length) ui.store.set({ libraryTagIds: retained });
+  }, [dataRevision]);
+  React6.useEffect(() => {
     let cancelled = false;
     (async () => {
       for (const book of ui.books().slice(0, MAX_STATE_LOADS)) {
@@ -104574,11 +105032,11 @@ function LibraryView({ ui }) {
     };
   }, [ui, dataRevision, statesVersion]);
   const matchesFilter = (book, key) => key === "reading" ? ui.readingStateOf(book.id) === "reading" : key === "finished" ? ui.readingStateOf(book.id) === "finished" : key === "highlighted" ? ui.highlightCountOf(book.id) > 0 : true;
-  const visibleBooks = React5.useMemo(() => {
+  const visibleBooks = React6.useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const list = books.filter((book) => book && matchesFilter(book, filter) && (format === "all" || String(book.format || "epub").toLowerCase() === format) && (!needle || `${book.title || ""} ${book.author || ""}`.toLowerCase().includes(needle)));
+    const list = books.filter((book) => book && matchesFilter(book, filter) && matchesTags(catalog.bookTags[book.id] || [], tagIds, tagMode, untagged) && (format === "all" || String(book.format || "epub").toLowerCase() === format) && (!needle || `${book.title || ""} ${book.author || ""}`.toLowerCase().includes(needle)));
     return list.sort((a, b) => sort === "title" ? String(a.title || "").localeCompare(String(b.title || ""), "zh-Hans-CN") : sort === "added" ? (Number(b.addedAt) || 0) - (Number(a.addedAt) || 0) : (Number(b.openedAt) || Number(b.addedAt) || 0) - (Number(a.openedAt) || Number(a.addedAt) || 0));
-  }, [books, query, sort, filter, format, statesVersion, ui]);
+  }, [books, query, sort, filter, format, statesVersion, dataRevision, tagIds, tagMode, untagged, ui]);
   const pickFile = () => {
     try {
       fileRef.current?.click();
@@ -104586,49 +105044,50 @@ function LibraryView({ ui }) {
       ui.toast(tr(ui, "pickerError", "\u5F53\u524D\u73AF\u5883\u65E0\u6CD5\u6253\u5F00\u6587\u4EF6\u9009\u62E9\u5668"), "warn");
     }
   };
-  const clearFilters = () => ui.store.set({ libraryQuery: "", libraryFilter: "all", libraryFormat: "all" });
+  const clearFilters = () => ui.store.set({ libraryQuery: "", libraryFilter: "all", libraryFormat: "all", libraryTagIds: [], libraryTagMode: "any", libraryUntagged: false });
+  const hasFilters = filter !== "all" || format !== "all" || !!query.trim() || tagIds.length > 0 || untagged;
   const showLoading = (loading || status.status === "loading") && !books.length;
-  const resumeBook = filter === "all" && format === "all" && !query.trim() ? [...books].filter((book) => ui.readingStateOf(book.id) === "reading").sort((a, b) => (Number(b.openedAt) || 0) - (Number(a.openedAt) || 0))[0] : null;
+  const resumeBook = !hasFilters ? [...books].filter((book) => ui.readingStateOf(book.id) === "reading").sort((a, b) => (Number(b.openedAt) || 0) - (Number(a.openedAt) || 0))[0] : null;
   const selectedLabel = tr(ui, filter, FILTERS.find(([key]) => key === filter)?.[1] || "\u5168\u90E8\u4E66\u7C4D");
-  const iconButton = (Icon, key, fallback, onClick, disabled = false) => h4("button", {
+  const iconButton = (Icon, key, fallback, onClick, disabled = false) => h5("button", {
     type: "button",
     className: "qmr-lib-icon",
     title: tr(ui, key, fallback),
     "aria-label": tr(ui, key, fallback),
     onClick,
     disabled
-  }, h4(Icon, { width: 18, height: 18 }));
-  const importButton = h4(
+  }, h5(Icon, { width: 18, height: 18 }));
+  const importButton = h5(
     "button",
     { type: "button", className: "qmr-lib-import", onClick: pickFile },
-    h4(IconImport, { width: 17, height: 17 }),
+    h5(IconImport, { width: 17, height: 17 }),
     importing ? tr(ui, "queue.add", "\u8FFD\u52A0\u6587\u4EF6") : tr(ui, "import", "\u5BFC\u5165\u4E66\u7C4D")
   );
   const error = status.error;
-  return h4(
+  return h5(
     "div",
     { className: "qmr-library" },
-    h4("input", { ref: fileRef, type: "file", accept: ".epub,.pdf,.txt", multiple: true, hidden: true, tabIndex: -1, onChange: (event) => {
+    h5("input", { ref: fileRef, type: "file", accept: ".epub,.pdf,.txt", multiple: true, hidden: true, tabIndex: -1, onChange: (event) => {
       const files = Array.from(event.target.files || []);
       event.target.value = "";
       if (files.length) ui.enqueueImports(files);
     } }),
-    h4(
+    h5(
       "aside",
       { className: "qmr-library-sidebar", "aria-label": tr(ui, "categories", "\u4E66\u5E93\u5206\u7C7B") },
-      h4("div", { className: "qmr-library-brand" }, h4(IconLibrary, { width: 22, height: 22 }), h4("span", null, ui.t("library", "\u4E66\u5E93"))),
-      h4("nav", { className: "qmr-library-nav", "aria-label": tr(ui, "filter", "\u9605\u8BFB\u72B6\u6001") }, FILTERS.map(([key, fallback]) => h4("button", {
+      h5("div", { className: "qmr-library-brand" }, h5(IconLibrary, { width: 22, height: 22 }), h5("span", null, ui.t("library", "\u4E66\u5E93"))),
+      h5("nav", { className: "qmr-library-nav", "aria-label": tr(ui, "filter", "\u9605\u8BFB\u72B6\u6001") }, FILTERS.map(([key, fallback]) => h5("button", {
         key,
         type: "button",
         className: filter === key ? "is-active" : "",
         "aria-pressed": filter === key,
         onClick: () => ui.store.set({ libraryFilter: key })
-      }, h4("span", null, tr(ui, key, fallback)), h4("span", { className: "qmr-library-count" }, books.filter((book) => matchesFilter(book, key)).length)))),
-      h4(
+      }, h5("span", null, tr(ui, key, fallback)), h5("span", { className: "qmr-library-count" }, books.filter((book) => matchesFilter(book, key)).length)))),
+      h5(
         "div",
         { className: "qmr-library-formats" },
-        h4("div", { className: "qmr-library-section-label" }, tr(ui, "formats", "\u6587\u4EF6\u683C\u5F0F")),
-        ["all", "epub", "pdf", "txt"].map((key) => h4(
+        h5("div", { className: "qmr-library-section-label" }, tr(ui, "formats", "\u6587\u4EF6\u683C\u5F0F")),
+        ["all", "epub", "pdf", "txt"].map((key) => h5(
           "button",
           {
             key,
@@ -104637,104 +105096,130 @@ function LibraryView({ ui }) {
             "aria-pressed": format === key,
             onClick: () => ui.store.set({ libraryFormat: key })
           },
-          h4("span", null, key === "all" ? tr(ui, "allFormats", "\u5168\u90E8\u683C\u5F0F") : key.toUpperCase()),
-          h4("span", { className: "qmr-library-count" }, books.filter((book) => key === "all" || String(book.format || "epub").toLowerCase() === key).length)
+          h5("span", null, key === "all" ? tr(ui, "allFormats", "\u5168\u90E8\u683C\u5F0F") : key.toUpperCase()),
+          h5("span", { className: "qmr-library-count" }, books.filter((book) => key === "all" || String(book.format || "epub").toLowerCase() === key).length)
         ))
       ),
-      h4("div", { className: "qmr-library-sidebar-foot" }, importButton, h4("span", null, "EPUB \xB7 PDF \xB7 TXT"))
+      h5("div", { className: "qmr-library-sidebar-foot" }, importButton, h5("span", null, "EPUB \xB7 PDF \xB7 TXT"))
     ),
-    h4(
+    h5(
       "main",
       { className: "qmr-library-main", "aria-label": selectedLabel },
-      h4(
+      h5(
         "header",
         { className: "qmr-library-header" },
-        h4("div", { className: "qmr-library-heading" }, h4("h1", null, selectedLabel), h4("span", { className: "qmr-library-total", role: "status" }, tr(ui, "bookCount", "{count} \u672C\u4E66", { count: visibleBooks.length }))),
-        h4(
+        h5("div", { className: "qmr-library-heading" }, h5("h1", null, selectedLabel), h5("span", { className: "qmr-library-total", role: "status" }, tr(ui, "bookCount", "{count} \u672C\u4E66", { count: visibleBooks.length }))),
+        h5(
           "div",
           { className: "qmr-library-tools" },
-          h4("label", { className: "qmr-library-search" }, h4(IconSearch, { width: 17, height: 17 }), h4("input", {
+          h5("label", { className: "qmr-library-search" }, h5(IconSearch, { width: 17, height: 17 }), h5("input", {
             type: "search",
             value: query,
             placeholder: tr(ui, "searchPlaceholder", "\u641C\u7D22\u4E66\u540D\u6216\u4F5C\u8005"),
             "aria-label": tr(ui, "search", "\u641C\u7D22\u4E66\u5E93"),
             onChange: (event) => ui.store.set({ libraryQuery: event.target.value })
           })),
+          h5("button", { type: "button", className: `qmr-btn${tagIds.length || untagged ? " is-active" : ""}`, "aria-expanded": dialog?.kind === "filter", onClick: () => setDialog({ kind: "filter" }) }, tagText(ui, "filter")),
           iconButton(IconRefresh, "refresh", "\u5237\u65B0\u4E66\u5E93", () => ui.refreshLibrary(), !!loading),
           iconButton(IconFullscreen, "fullscreen", "\u5168\u5C4F", () => ui.toggleFullscreen()),
           iconButton(IconClose, "close", "\u5173\u95ED\u9605\u8BFB\u5668", () => ui.closeOverlay())
         )
       ),
-      h4(
+      h5(
         "div",
         { className: "qmr-lib-scroll" },
-        h4(ImportQueueView, { ui }),
-        queue?.items.length && (filter !== "all" || format !== "all" || query.trim()) ? h4("div", { className: "qmr-muted qmr-small" }, tr(ui, "queue.filtered", "\u65B0\u5BFC\u5165\u7684\u4E66\u53EF\u80FD\u88AB\u5F53\u524D\u7B5B\u9009\u9690\u85CF")) : null,
-        error ? h4(
+        h5(ImportQueueView, { ui }),
+        hasFilters ? h5(
+          "div",
+          { className: "qmr-tag-summary", "aria-label": tagText(ui, "activeFilters") },
+          query.trim() ? h5("span", { className: "qmr-tag-badge" }, query.trim()) : null,
+          filter !== "all" ? h5("span", { className: "qmr-tag-badge" }, selectedLabel) : null,
+          format !== "all" ? h5("span", { className: "qmr-tag-badge" }, format.toUpperCase()) : null,
+          catalog.tags.filter((tag) => tagIds.includes(tag.id)).map((tag) => h5(TagChip, { key: tag.id, tag, remove: true, label: tagText(ui, "removeFilter", { name: tag.name }), onClick: () => ui.store.set({ libraryTagIds: tagIds.filter((id) => id !== tag.id) }) })),
+          untagged ? h5("button", { type: "button", className: "qmr-chip", onClick: () => ui.store.set({ libraryUntagged: false }) }, tagText(ui, "untagged"), " \xD7") : null,
+          tagIds.length ? h5("span", { className: "qmr-muted" }, tagText(ui, tagMode === "all" ? "all" : "any")) : null,
+          h5("button", { type: "button", className: "qmr-btn", onClick: clearFilters }, tagText(ui, "clearAll"))
+        ) : null,
+        queue?.items.length && hasFilters ? h5("div", { className: "qmr-muted qmr-small" }, tr(ui, "queue.filtered", "\u65B0\u5BFC\u5165\u7684\u4E66\u53EF\u80FD\u88AB\u5F53\u524D\u7B5B\u9009\u9690\u85CF")) : null,
+        error ? h5(
           "div",
           { className: "qmr-errorbox", role: "alert" },
-          h4("div", { className: "qmr-errorbox-title" }, tr(ui, "error", "\u4E66\u5E93\u64CD\u4F5C\u5931\u8D25")),
-          h4("div", { className: "qmr-errorbox-text" }, String(error)),
-          h4("button", { type: "button", className: "qmr-btn", onClick: () => ui.refreshLibrary() }, tr(ui, "retry", "\u91CD\u8BD5"))
+          h5("div", { className: "qmr-errorbox-title" }, tr(ui, "error", "\u4E66\u5E93\u64CD\u4F5C\u5931\u8D25")),
+          h5("div", { className: "qmr-errorbox-text" }, String(error)),
+          h5("button", { type: "button", className: "qmr-btn", onClick: () => ui.refreshLibrary() }, tr(ui, "retry", "\u91CD\u8BD5"))
         ) : null,
-        resumeBook ? h4(
+        resumeBook ? h5(
           "section",
           { className: "qmr-library-resume", "aria-label": tr(ui, "continue", "\u7EE7\u7EED\u9605\u8BFB") },
-          h4(Cover, { book: resumeBook }),
-          h4(
+          h5(Cover, { book: resumeBook }),
+          h5(
             "div",
             { className: "qmr-library-resume-copy" },
-            h4("span", { className: "qmr-library-section-label" }, tr(ui, "continue", "\u7EE7\u7EED\u9605\u8BFB")),
-            h4("span", { className: "qmr-library-resume-title" }, resumeBook.title || resumeBook.id)
+            h5("span", { className: "qmr-library-section-label" }, tr(ui, "continue", "\u7EE7\u7EED\u9605\u8BFB")),
+            h5("span", { className: "qmr-library-resume-title" }, resumeBook.title || resumeBook.id)
           ),
-          h4("span", { className: "qmr-library-resume-progress" }, ui.progressOfBook(resumeBook.id) > 0 ? formatPercent(ui.progressOfBook(resumeBook.id)) : tr(ui, "justStarted", "\u521A\u5F00\u59CB")),
-          h4(
+          h5("span", { className: "qmr-library-resume-progress" }, ui.progressOfBook(resumeBook.id) > 0 ? formatPercent(ui.progressOfBook(resumeBook.id)) : tr(ui, "justStarted", "\u521A\u5F00\u59CB")),
+          h5(
             "button",
             { type: "button", className: "qmr-library-continue", disabled: busyBookId === resumeBook.id, onClick: () => ui.openBook(resumeBook.id) },
             tr(ui, "continue", "\u7EE7\u7EED\u9605\u8BFB"),
-            h4(IconNext, { width: 16, height: 16 })
+            h5(IconNext, { width: 16, height: 16 })
           )
         ) : null,
-        h4(
+        h5(
           "div",
           { className: "qmr-library-toolbar" },
-          h4("span", null, format === "all" ? tr(ui, "collection", "\u6211\u7684\u4E66\u76EE") : format.toUpperCase()),
-          h4(
+          !selecting ? h5("button", { type: "button", className: "qmr-btn qmr-selection-toggle", disabled: !editableTags(ui), title: !editableTags(ui) ? tagText(ui, "offline") : void 0, onClick: () => setSelecting(true) }, tagText(ui, "select")) : null,
+          h5(
             "select",
             { className: "qmr-library-mobile-format", value: format, "aria-label": tr(ui, "formats", "\u6587\u4EF6\u683C\u5F0F"), onChange: (event) => ui.store.set({ libraryFormat: event.target.value }) },
-            ["all", "epub", "pdf", "txt"].map((key) => h4("option", { key, value: key }, key === "all" ? tr(ui, "allFormats", "\u5168\u90E8\u683C\u5F0F") : key.toUpperCase()))
+            ["all", "epub", "pdf", "txt"].map((key) => h5("option", { key, value: key }, key === "all" ? tr(ui, "allFormats", "\u5168\u90E8\u683C\u5F0F") : key.toUpperCase()))
           ),
-          h4(
+          h5(
             "select",
             { className: "qmr-library-sort", value: sort, "aria-label": tr(ui, "sort", "\u6392\u5E8F\u65B9\u5F0F"), onChange: (event) => ui.store.set({ librarySort: event.target.value }) },
-            h4("option", { value: "recent" }, tr(ui, "recent", "\u6700\u8FD1\u9605\u8BFB")),
-            h4("option", { value: "added" }, tr(ui, "added", "\u52A0\u5165\u65F6\u95F4")),
-            h4("option", { value: "title" }, tr(ui, "title", "\u4E66\u540D"))
+            h5("option", { value: "recent" }, tr(ui, "recent", "\u6700\u8FD1\u9605\u8BFB")),
+            h5("option", { value: "added" }, tr(ui, "added", "\u52A0\u5165\u65F6\u95F4")),
+            h5("option", { value: "title" }, tr(ui, "title", "\u4E66\u540D"))
           )
         ),
-        showLoading ? h4("div", { className: "qmr-busy", role: "status" }, tr(ui, "loading", "\u4E66\u5E93\u6B63\u5728\u52A0\u8F7D\u2026")) : !visibleBooks.length ? h4(
+        !editableTags(ui) ? h5("p", { className: "qmr-muted qmr-small" }, tagText(ui, "offline")) : null,
+        selecting ? h5(
+          "div",
+          { className: "qmr-tag-selection" },
+          h5("span", { role: "status" }, tagText(ui, "selected", { count: selected.length })),
+          h5("button", { type: "button", className: "qmr-btn", onClick: () => setSelected(visibleBooks.map((book) => book.id)) }, tagText(ui, "selectResults", { count: visibleBooks.length })),
+          h5("button", { type: "button", className: "qmr-btn", disabled: !selected.length, onClick: () => setSelected([]) }, tagText(ui, "clearSelection")),
+          !selected.length ? h5("span", { className: "qmr-muted" }, tagText(ui, "chooseBooks")) : null,
+          h5("button", { type: "button", className: "qmr-btn qmr-selection-add", disabled: !selected.length || !editableTags(ui), onClick: () => setDialog({ kind: "edit", mode: "add", bookIds: [...selected] }) }, tagText(ui, "bulkAdd")),
+          h5("button", { type: "button", className: "qmr-btn", disabled: !selected.length || !editableTags(ui), onClick: () => setDialog({ kind: "edit", mode: "remove", bookIds: [...selected] }) }, tagText(ui, "bulkRemove")),
+          h5("button", { type: "button", className: "qmr-btn", onClick: finishSelection }, tagText(ui, "exitSelection"))
+        ) : null,
+        showLoading ? h5("div", { className: "qmr-busy", role: "status" }, tr(ui, "loading", "\u4E66\u5E93\u6B63\u5728\u52A0\u8F7D\u2026")) : !visibleBooks.length ? h5(
           "div",
           { className: "qmr-empty" },
-          h4(IconBook, { width: 32, height: 32 }),
-          h4("div", { className: "qmr-empty-title" }, books.length ? tr(ui, "noResults", "\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u4E66") : tr(ui, "empty", "\u4ECE\u7B2C\u4E00\u672C\u4E66\u5F00\u59CB")),
-          h4("p", null, books.length ? tr(ui, "noResultsHelp", "\u6362\u4E2A\u5173\u952E\u8BCD\uFF0C\u6216\u6E05\u7A7A\u7B5B\u9009\u3002") : tr(ui, "emptyHelp", "\u5BFC\u5165 EPUB\u3001PDF \u6216 TXT\uFF0C\u5F00\u59CB\u9605\u8BFB\u3002")),
-          h4("div", { className: "qmr-empty-actions" }, books.length ? h4("button", { type: "button", className: "qmr-btn", onClick: clearFilters }, tr(ui, "clear", "\u6E05\u7A7A\u7B5B\u9009")) : importButton)
-        ) : h4(
-          React5.Fragment,
+          h5(IconBook, { width: 32, height: 32 }),
+          h5("div", { className: "qmr-empty-title" }, books.length ? tr(ui, "noResults", "\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u4E66") : tr(ui, "empty", "\u4ECE\u7B2C\u4E00\u672C\u4E66\u5F00\u59CB")),
+          h5("p", null, books.length ? tr(ui, "noResultsHelp", "\u6362\u4E2A\u5173\u952E\u8BCD\uFF0C\u6216\u6E05\u7A7A\u7B5B\u9009\u3002") : tr(ui, "emptyHelp", "\u5BFC\u5165 EPUB\u3001PDF \u6216 TXT\uFF0C\u5F00\u59CB\u9605\u8BFB\u3002")),
+          h5("div", { className: "qmr-empty-actions" }, books.length ? h5("button", { type: "button", className: "qmr-btn", onClick: clearFilters }, tr(ui, "clear", "\u6E05\u7A7A\u7B5B\u9009")) : importButton)
+        ) : h5(
+          React6.Fragment,
           null,
-          h4("div", { className: "qmr-library-columns", "aria-hidden": "true" }, h4("span", null, tr(ui, "titleAuthor", "\u4E66\u540D / \u4F5C\u8005")), h4("span", null, tr(ui, "format", "\u683C\u5F0F")), h4("span", null, tr(ui, "progress", "\u9605\u8BFB\u8FDB\u5EA6")), h4("span", null, tr(ui, "annotations", "\u5212\u7EBF")), h4("span")),
-          h4("div", { className: "qmr-book-list", role: "list", "aria-label": tr(ui, "collection", "\u6211\u7684\u4E66\u76EE") }, visibleBooks.map((book) => h4(BookRow, { key: book.id, ui, book, busy: busyBookId === String(book.id) })))
+          h5("div", { className: "qmr-library-columns", "aria-hidden": "true" }, h5("span", null, tr(ui, "titleAuthor", "\u4E66\u540D / \u4F5C\u8005")), h5("span", null, tr(ui, "format", "\u683C\u5F0F")), h5("span", null, tr(ui, "progress", "\u9605\u8BFB\u8FDB\u5EA6")), h5("span", null, tr(ui, "annotations", "\u5212\u7EBF")), h5("span")),
+          h5("div", { className: "qmr-book-list", role: "list", "aria-label": tr(ui, "collection", "\u6211\u7684\u4E66\u76EE") }, visibleBooks.map((book) => h5(BookRow, { key: book.id, ui, book, busy: busyBookId === String(book.id), selecting, selected: selected.includes(book.id), onSelect: () => setSelected((ids) => ids.includes(book.id) ? ids.filter((id) => id !== book.id) : [...ids, book.id]), onEdit: (id) => setDialog({ kind: "edit", mode: "replace", bookIds: [id] }) })))
         )
-      )
+      ),
+      dialog?.kind === "filter" ? h5(TagFilter, { ui, ids: tagIds, mode: tagMode, untagged, onClose: closeDialog }) : null,
+      dialog?.kind === "edit" ? h5(BookTagEditor, { key: `${dialog.mode}:${dialog.bookIds.join(",")}`, ui, bookIds: dialog.bookIds, mode: dialog.mode, onClose: closeDialog, onSuccess: dialog.mode === "add" ? finishSelection : void 0 }) : null
     )
   );
 }
 
 // src/ui/reader.js
-var React13 = __toESM(require("react"), 1);
+var React14 = __toESM(require("react"), 1);
 
 // src/ui/companion.js
-var React6 = __toESM(require("react"), 1);
+var React7 = __toESM(require("react"), 1);
 var import_react_dom = require("react-dom");
 
 // src/ui/quick-prompts.js
@@ -104758,36 +105243,36 @@ function saveQuickPrompts(items) {
 }
 
 // src/ui/companion.js
-var h5 = React6.createElement;
+var h6 = React7.createElement;
 function CompanionPanel({ ui, bookId, chapterIndex, engine, chatApi, SessionProvider, renderSlot }) {
   const book = ui.bookOf(bookId);
   const selection = ui.useSel((state) => state.companionSelection);
-  const [workspaceId, setWorkspaceId] = React6.useState(() => chatApi?.defaultWorkspace?.());
-  const [chat, setChat] = React6.useState(null);
-  const [chatBookId, setChatBookId] = React6.useState(null);
-  const [error, setError] = React6.useState("");
-  const [busy, setBusy] = React6.useState(false);
-  const [pageText, setPageText] = React6.useState("");
-  const [pageReady, setPageReady] = React6.useState(false);
-  const [attached, setAttached] = React6.useState("");
-  const [prompts, setPrompts] = React6.useState(readQuickPrompts);
-  const [promptMount, setPromptMount] = React6.useState(null);
-  const [sendingPrompt, setSendingPrompt] = React6.useState(false);
-  const generation = React6.useRef(0);
-  const owned = React6.useRef(null);
-  const chatRoot = React6.useRef(null);
-  const sending = React6.useRef(false);
-  const insertedQuote = React6.useRef("");
-  const insertedQuoteText = React6.useRef("");
-  const contextQueue = React6.useRef(Promise.resolve());
-  const shownChat = React6.useRef(false);
+  const [workspaceId, setWorkspaceId] = React7.useState(() => chatApi?.defaultWorkspace?.());
+  const [chat, setChat] = React7.useState(null);
+  const [chatBookId, setChatBookId] = React7.useState(null);
+  const [error, setError] = React7.useState("");
+  const [busy, setBusy] = React7.useState(false);
+  const [pageText, setPageText] = React7.useState("");
+  const [pageReady, setPageReady] = React7.useState(false);
+  const [attached, setAttached] = React7.useState("");
+  const [prompts, setPrompts] = React7.useState(readQuickPrompts);
+  const [promptMount, setPromptMount] = React7.useState(null);
+  const [sendingPrompt, setSendingPrompt] = React7.useState(false);
+  const generation = React7.useRef(0);
+  const owned = React7.useRef(null);
+  const chatRoot = React7.useRef(null);
+  const sending = React7.useRef(false);
+  const insertedQuote = React7.useRef("");
+  const insertedQuoteText = React7.useRef("");
+  const contextQueue = React7.useRef(Promise.resolve());
+  const shownChat = React7.useRef(false);
   const chapter = engine?.book?.chapters?.[chapterIndex]?.label || `\u7B2C ${chapterIndex + 1} \u7AE0`;
   const sourceLabel = `${[book?.title || "\u672A\u547D\u540D", chapter !== book?.title ? chapter : ""].filter(Boolean).join(" \xB7 ")}${selection?.text ? " \xB7 \u9009\u6BB5\u5DF2\u5173\u8054" : ""}`;
-  React6.useEffect(() => {
+  React7.useEffect(() => {
     if (workspaceId || !chatApi) return void 0;
     return chatApi.watchWorkspaces?.(() => setWorkspaceId(chatApi.defaultWorkspace?.()));
   }, [workspaceId, chatApi]);
-  React6.useEffect(() => {
+  React7.useEffect(() => {
     let cancelled = false;
     setPageText("");
     setPageReady(false);
@@ -104803,17 +105288,17 @@ function CompanionPanel({ ui, bookId, chapterIndex, engine, chatApi, SessionProv
       cancelled = true;
     };
   }, [engine, chapterIndex]);
-  React6.useEffect(() => () => {
+  React7.useEffect(() => () => {
     generation.current += 1;
     owned.current?.release();
     owned.current = null;
   }, []);
-  React6.useEffect(() => {
+  React7.useEffect(() => {
     const reload = () => setPrompts(readQuickPrompts());
     window.addEventListener("qmr-prompts-changed", reload);
     return () => window.removeEventListener("qmr-prompts-changed", reload);
   }, []);
-  const start = React6.useCallback(async (fresh = false) => {
+  const start = React7.useCallback(async (fresh = false) => {
     if (!workspaceId || !chatApi) return;
     const token = ++generation.current;
     setBusy(true);
@@ -104850,12 +105335,12 @@ function CompanionPanel({ ui, bookId, chapterIndex, engine, chatApi, SessionProv
       if (token === generation.current) setBusy(false);
     }
   }, [bookId, chatApi, workspaceId]);
-  React6.useEffect(() => {
+  React7.useEffect(() => {
     if (workspaceId) void start();
   }, [workspaceId, bookId, start]);
   const contextKey = `${bookId}|${chapterIndex}|${selection?.text || ""}|${pageText}`;
   const chatVisible = !!chat && chatBookId === bookId && (shownChat.current || attached === contextKey);
-  React6.useEffect(() => {
+  React7.useEffect(() => {
     if (!chat || chatBookId !== bookId || !pageReady) return void 0;
     let cancelled = false;
     setAttached("");
@@ -104882,7 +105367,7 @@ function CompanionPanel({ ui, bookId, chapterIndex, engine, chatApi, SessionProv
       cancelled = true;
     };
   }, [chat, chatApi, chatBookId, contextKey, pageReady]);
-  React6.useEffect(() => {
+  React7.useEffect(() => {
     if (!chatVisible || attached !== contextKey || !selection?.text || !selection.id) return;
     const id = `${chat.sessionId}:${selection.id}`;
     if (insertedQuote.current === id) return;
@@ -104897,7 +105382,7 @@ function CompanionPanel({ ui, bookId, chapterIndex, engine, chatApi, SessionProv
       setError(`\u9009\u6587\u672A\u52A0\u5165\u8F93\u5165\u6846\uFF1A${cause?.message || String(cause)}`);
     }
   }, [chat, chatVisible, selection, attached, contextKey]);
-  React6.useEffect(() => {
+  React7.useEffect(() => {
     if (!chat || !SessionProvider) return void 0;
     const root = chatRoot.current;
     if (!root) return void 0;
@@ -104938,29 +105423,29 @@ function CompanionPanel({ ui, bookId, chapterIndex, engine, chatApi, SessionProv
     }
   };
   if (chatVisible) shownChat.current = true;
-  return h5(
+  return h6(
     "div",
     { className: "qmr-companion" },
-    h5(
+    h6(
       "div",
       { className: "qmr-panel-head" },
-      h5("strong", { className: "qmr-panel-title" }, "AI \u4F34\u8BFB"),
-      h5("span", { className: "qmr-companion-source", title: sourceLabel }, sourceLabel),
-      h5("button", { type: "button", className: "qmr-icon-btn", title: "\u65B0\u4F34\u8BFB\u5BF9\u8BDD", "aria-label": "\u65B0\u4F34\u8BFB\u5BF9\u8BDD", disabled: busy || !workspaceId, onClick: () => void start(true) }, h5(IconPlus, { width: 16, height: 16 })),
-      h5("button", { type: "button", className: "qmr-icon-btn", title: "\u5173\u95ED\u4F34\u8BFB", "aria-label": "\u5173\u95ED\u4F34\u8BFB", onClick: () => ui.setPanel(null) }, h5(IconClose, { width: 16, height: 16 }))
+      h6("strong", { className: "qmr-panel-title" }, "AI \u4F34\u8BFB"),
+      h6("span", { className: "qmr-companion-source", title: sourceLabel }, sourceLabel),
+      h6("button", { type: "button", className: "qmr-icon-btn", title: "\u65B0\u4F34\u8BFB\u5BF9\u8BDD", "aria-label": "\u65B0\u4F34\u8BFB\u5BF9\u8BDD", disabled: busy || !workspaceId, onClick: () => void start(true) }, h6(IconPlus, { width: 16, height: 16 })),
+      h6("button", { type: "button", className: "qmr-icon-btn", title: "\u5173\u95ED\u4F34\u8BFB", "aria-label": "\u5173\u95ED\u4F34\u8BFB", onClick: () => ui.setPanel(null) }, h6(IconClose, { width: 16, height: 16 }))
     ),
-    error ? h5(
+    error ? h6(
       "div",
       { className: "qmr-companion-error", role: "alert" },
       error,
-      h5("button", { type: "button", onClick: () => void start() }, "\u91CD\u8BD5")
+      h6("button", { type: "button", onClick: () => void start() }, "\u91CD\u8BD5")
     ) : null,
-    !chatVisible && !error ? h5("div", { className: "qmr-busy" }, !workspaceId ? "\u6B63\u5728\u8FDE\u63A5\u9ED8\u8BA4\u5DE5\u4F5C\u533A\u2026" : !chat || chatBookId !== bookId ? "\u6B63\u5728\u6253\u5F00\u5BF9\u8BDD\u2026" : "\u6B63\u5728\u5173\u8054\u9605\u8BFB\u4E0A\u4E0B\u6587\u2026") : null,
-    chatVisible && SessionProvider && renderSlot ? h5("div", { className: "qmr-native-chat", ref: chatRoot }, h5(SessionProvider, { session: chat.reference }, renderSlot("qiaomu-reader.chat", {}))) : null,
-    promptMount ? (0, import_react_dom.createPortal)(h5(
+    !chatVisible && !error ? h6("div", { className: "qmr-busy" }, !workspaceId ? "\u6B63\u5728\u8FDE\u63A5\u9ED8\u8BA4\u5DE5\u4F5C\u533A\u2026" : !chat || chatBookId !== bookId ? "\u6B63\u5728\u6253\u5F00\u5BF9\u8BDD\u2026" : "\u6B63\u5728\u5173\u8054\u9605\u8BFB\u4E0A\u4E0B\u6587\u2026") : null,
+    chatVisible && SessionProvider && renderSlot ? h6("div", { className: "qmr-native-chat", ref: chatRoot }, h6(SessionProvider, { session: chat.reference }, renderSlot("qiaomu-reader.chat", {}))) : null,
+    promptMount ? (0, import_react_dom.createPortal)(h6(
       "div",
       { className: "qmr-companion-prompts", role: "group", "aria-label": "\u5FEB\u6377\u63D0\u793A\u8BCD" },
-      h5("div", { className: "qmr-companion-prompt-scroll" }, prompts.map((item) => h5("button", {
+      h6("div", { className: "qmr-companion-prompt-scroll" }, prompts.map((item) => h6("button", {
         key: item.id,
         type: "button",
         title: item.body,
@@ -104968,14 +105453,14 @@ function CompanionPanel({ ui, bookId, chapterIndex, engine, chatApi, SessionProv
         disabled: sendingPrompt || busy || attached !== contextKey,
         onClick: () => void quick(item)
       }, item.title))),
-      h5("button", { type: "button", className: "qmr-companion-add-prompt", title: "\u65B0\u589E\u5FEB\u6377\u63D0\u793A\u8BCD", "aria-label": "\u65B0\u589E\u5FEB\u6377\u63D0\u793A\u8BCD", onClick: () => ui.store.set({ promptManagerOpen: true }) }, h5(IconPlus, { width: 14, height: 14 }))
+      h6("button", { type: "button", className: "qmr-companion-add-prompt", title: "\u65B0\u589E\u5FEB\u6377\u63D0\u793A\u8BCD", "aria-label": "\u65B0\u589E\u5FEB\u6377\u63D0\u793A\u8BCD", onClick: () => ui.store.set({ promptManagerOpen: true }) }, h6(IconPlus, { width: 14, height: 14 }))
     ), promptMount) : null
   );
 }
 
 // src/ui/selection-menu.js
-var React7 = __toESM(require("react"), 1);
-var h6 = React7.createElement;
+var React8 = __toESM(require("react"), 1);
+var h7 = React8.createElement;
 function computeMenuPosition(anchor, size) {
   const width = Math.max(80, size && size.width || 250);
   const height = Math.max(28, size && size.height || 42);
@@ -104990,16 +105475,16 @@ function computeMenuPosition(anchor, size) {
   return { left, top };
 }
 function SelectionMenu({ ui, selection, onHighlight, onNote, onAsk }) {
-  const elementRef = React7.useRef(null);
-  const [position, setPosition] = React7.useState(() => computeMenuPosition(selection.anchor));
+  const elementRef = React8.useRef(null);
+  const [position, setPosition] = React8.useState(() => computeMenuPosition(selection.anchor));
   const themeId = ui.settingsOf(ui.useSel((state) => state.bookId)).theme;
-  React7.useLayoutEffect(() => {
+  React8.useLayoutEffect(() => {
     const element = elementRef.current;
     const size = element ? { width: element.offsetWidth, height: element.offsetHeight } : void 0;
     setPosition(computeMenuPosition(selection.anchor, size));
   }, [selection.anchor, selection.text]);
   if (!selection || !selection.anchor) return null;
-  const swatches = HIGHLIGHT_COLORS2.map((color) => h6("button", {
+  const swatches = HIGHLIGHT_COLORS2.map((color) => h7("button", {
     key: color,
     type: "button",
     className: "qmr-swatch",
@@ -105007,7 +105492,7 @@ function SelectionMenu({ ui, selection, onHighlight, onNote, onAsk }) {
     "aria-label": `${HIGHLIGHT_COLOR_LABELS2[color]}\u8272\u5212\u7EBF`,
     onClick: () => onHighlight(color)
   }));
-  return h6(
+  return h7(
     "div",
     {
       ref: elementRef,
@@ -105017,51 +105502,51 @@ function SelectionMenu({ ui, selection, onHighlight, onNote, onAsk }) {
       "aria-label": "\u9009\u4E2D\u6587\u5B57\u64CD\u4F5C",
       onMouseDown: (event) => event.preventDefault()
     },
-    h6("span", { className: "qmr-swatches", "aria-label": "\u5212\u7EBF\u989C\u8272" }, swatches),
-    h6("span", { className: "qmr-selmenu-sep", "aria-hidden": "true" }),
-    h6("button", {
+    h7("span", { className: "qmr-swatches", "aria-label": "\u5212\u7EBF\u989C\u8272" }, swatches),
+    h7("span", { className: "qmr-selmenu-sep", "aria-hidden": "true" }),
+    h7("button", {
       type: "button",
       className: "qmr-selmenu-btn",
       "aria-label": "\u590D\u5236",
       onClick: () => ui.copy(selection.text)
-    }, h6(IconCopy, { width: 16, height: 16 })),
-    h6("button", {
+    }, h7(IconCopy, { width: 16, height: 16 })),
+    h7("button", {
       type: "button",
       className: "qmr-selmenu-btn",
       "aria-label": "\u5199\u6279\u6CE8",
       onClick: () => onNote()
-    }, h6(IconNote, { width: 16, height: 16 })),
-    h6("button", {
+    }, h7(IconNote, { width: 16, height: 16 })),
+    h7("button", {
       type: "button",
       className: "qmr-selmenu-btn",
       "aria-label": "\u95EE AI",
       onClick: () => onAsk?.()
-    }, h6(IconSparkles, { width: 16, height: 16 })),
-    h6("button", {
+    }, h7(IconSparkles, { width: 16, height: 16 })),
+    h7("button", {
       type: "button",
       className: "qmr-selmenu-btn",
       "aria-label": "\u53D6\u6D88\u9009\u4E2D",
       onClick: () => ui.clearSelection()
-    }, h6(IconClose, { width: 16, height: 16 }))
+    }, h7(IconClose, { width: 16, height: 16 }))
   );
 }
 
 // src/ui/toc.js
-var React8 = __toESM(require("react"), 1);
-var h7 = React8.createElement;
+var React9 = __toESM(require("react"), 1);
+var h8 = React9.createElement;
 function TocPanel({ ui }) {
   const bookId = ui.useSel((state) => state.bookId);
   const chapterIndex = ui.useSel((state) => state.chapterIndex);
   const chapterCount = ui.useSel((state) => state.chapterCount);
   ui.useSel((state) => state.engineVersion);
-  const [collapsed, setCollapsed] = React8.useState({});
+  const [collapsed, setCollapsed] = React9.useState({});
   const engine = ui.engineOf(bookId);
-  const labels = React8.useMemo(() => chapterLabelMap(engine), [engine]);
-  const entries = React8.useMemo(() => {
+  const labels = React9.useMemo(() => chapterLabelMap(engine), [engine]);
+  const entries = React9.useMemo(() => {
     const toc = engine && engine.book && Array.isArray(engine.book.toc) ? engine.book.toc : [];
     return toc;
   }, [engine]);
-  const indexOfHref = React8.useCallback((href) => {
+  const indexOfHref = React9.useCallback((href) => {
     const direct = chapterIndexForHref(engine, href);
     if (direct >= 0) return direct;
     try {
@@ -105079,10 +105564,10 @@ function TocPanel({ ui }) {
       ui.toast("\u65E0\u6CD5\u5B9A\u4F4D\u8BE5\u76EE\u5F55\u9879", "warn");
     }
   };
-  const toggle = (key) => setCollapsed((previous) => ({ ...previous, [key]: !previous[key] }));
+  const toggle2 = (key) => setCollapsed((previous) => ({ ...previous, [key]: !previous[key] }));
   const renderEntries = (list, depth) => {
     if (!Array.isArray(list) || !list.length) return null;
-    return h7("div", { className: "qmr-toc-tree" }, list.map((entry, i) => {
+    return h8("div", { className: "qmr-toc-tree" }, list.map((entry, i) => {
       if (!entry) return null;
       const href = String(entry.href || "");
       const key = `${depth}-${i}-${href}`;
@@ -105090,68 +105575,68 @@ function TocPanel({ ui }) {
       const isOpen = !collapsed[key];
       const index = indexOfHref(href);
       const isCurrent = index >= 0 && index === chapterIndex;
-      return h7(
+      return h8(
         "div",
         { key },
-        h7(
+        h8(
           "div",
           { className: "qmr-toc-row" },
-          children.length ? h7("button", {
+          children.length ? h8("button", {
             type: "button",
             className: `qmr-toc-toggle${isOpen ? " is-open" : ""}`,
             "aria-label": isOpen ? "\u6298\u53E0" : "\u5C55\u5F00",
             "aria-expanded": isOpen,
-            onClick: () => toggle(key)
-          }, h7(IconNext, { width: 14, height: 14 })) : h7("span", { className: "qmr-toc-toggle", "aria-hidden": "true" }),
-          h7("button", {
+            onClick: () => toggle2(key)
+          }, h8(IconNext, { width: 14, height: 14 })) : h8("span", { className: "qmr-toc-toggle", "aria-hidden": "true" }),
+          h8("button", {
             type: "button",
             className: `qmr-toc-item${isCurrent ? " is-current" : ""}`,
             "aria-current": isCurrent ? "true" : void 0,
             onClick: () => jump(href)
           }, stripTags(entry.label) || href || "\u672A\u547D\u540D")
         ),
-        children.length && isOpen ? h7("div", { className: "qmr-toc-children" }, renderEntries(children, depth + 1)) : null
+        children.length && isOpen ? h8("div", { className: "qmr-toc-children" }, renderEntries(children, depth + 1)) : null
       );
     }));
   };
   const chapterLabel2 = labels.get(chapterIndex) || `\u7B2C ${chapterIndex + 1} \u7AE0`;
-  return h7(
-    React8.Fragment,
+  return h8(
+    React9.Fragment,
     null,
-    h7(
+    h8(
       "div",
       { className: "qmr-panel-head" },
-      h7(IconToc, { width: 16, height: 16 }),
-      h7("span", { className: "qmr-panel-title" }, "\u76EE\u5F55"),
-      h7("button", {
+      h8(IconToc, { width: 16, height: 16 }),
+      h8("span", { className: "qmr-panel-title" }, "\u76EE\u5F55"),
+      h8("button", {
         type: "button",
         className: "qmr-icon-btn",
         "aria-label": "\u5173\u95ED\u76EE\u5F55",
         onClick: () => ui.setPanel(null)
-      }, h7(IconClose, { width: 16, height: 16 }))
+      }, h8(IconClose, { width: 16, height: 16 }))
     ),
-    h7(
+    h8(
       "div",
       { className: "qmr-panel-body" },
-      h7(
+      h8(
         "div",
         { className: "qmr-group-title" },
         `\u7B2C ${chapterIndex + 1} / ${chapterCount || "?"} \u7AE0`,
-        h7("span", { className: "qmr-muted" }, chapterLabel2)
+        h8("span", { className: "qmr-muted" }, chapterLabel2)
       ),
-      entries.length ? renderEntries(entries, 0) : h7(
+      entries.length ? renderEntries(entries, 0) : h8(
         "div",
         { className: "qmr-empty" },
-        h7("div", { className: "qmr-empty-title" }, "\u8FD9\u672C\u4E66\u6CA1\u6709\u76EE\u5F55"),
-        h7("p", null, "\u53EF\u4EE5\u76F4\u63A5\u7528\u5E95\u90E8\u8FDB\u5EA6\u6761\u6216\u5DE6\u53F3\u7FFB\u9875\u6D4F\u89C8\u3002")
+        h8("div", { className: "qmr-empty-title" }, "\u8FD9\u672C\u4E66\u6CA1\u6709\u76EE\u5F55"),
+        h8("p", null, "\u53EF\u4EE5\u76F4\u63A5\u7528\u5E95\u90E8\u8FDB\u5EA6\u6761\u6216\u5DE6\u53F3\u7FFB\u9875\u6D4F\u89C8\u3002")
       )
     )
   );
 }
 
 // src/ui/panel-highlights.js
-var React9 = __toESM(require("react"), 1);
-var h8 = React9.createElement;
+var React10 = __toESM(require("react"), 1);
+var h9 = React10.createElement;
 function percentOfHighlight(highlight) {
   return formatPercent(highlight && highlight.percent);
 }
@@ -105170,11 +105655,11 @@ function groupByChapter(highlights, engine) {
   }));
 }
 function HighlightItem({ ui, highlight, bookId, editing }) {
-  const [draft, setDraft] = React9.useState(String(highlight.note || ""));
-  React9.useEffect(() => {
+  const [draft, setDraft] = React10.useState(String(highlight.note || ""));
+  React10.useEffect(() => {
     setDraft(String(highlight.note || ""));
   }, [highlight.id, highlight.note, editing]);
-  const swatches = HIGHLIGHT_COLORS2.map((color) => h8("button", {
+  const swatches = HIGHLIGHT_COLORS2.map((color) => h9("button", {
     key: color,
     type: "button",
     className: `qmr-swatch${highlight.color === color ? " is-active" : ""}`,
@@ -105194,14 +105679,14 @@ ${truncate(highlight.text, 60)}`);
     }
     if (confirmed) ui.removeHighlight(bookId, highlight.id);
   };
-  return h8(
+  return h9(
     "div",
     { className: "qmr-hl-item" },
-    h8(
+    h9(
       "div",
       { className: "qmr-hl-top" },
-      h8("span", { className: `qmr-dot qmr-dot-${highlight.color || "yellow"}`, "aria-hidden": "true" }),
-      h8("div", {
+      h9("span", { className: `qmr-dot qmr-dot-${highlight.color || "yellow"}`, "aria-hidden": "true" }),
+      h9("div", {
         className: "qmr-hl-quote",
         role: "button",
         tabIndex: 0,
@@ -105211,21 +105696,21 @@ ${truncate(highlight.text, 60)}`);
         }
       }, highlight.text || "\uFF08\u7A7A\u5F15\u6587\uFF09")
     ),
-    highlight.note && !editing ? h8("div", { className: "qmr-hl-note" }, highlight.note) : null,
-    editing ? h8(
+    highlight.note && !editing ? h9("div", { className: "qmr-hl-note" }, highlight.note) : null,
+    editing ? h9(
       "div",
       { style: { marginTop: 8 } },
-      h8("textarea", {
+      h9("textarea", {
         className: "qmr-textarea",
         value: draft,
         placeholder: "\u5199\u70B9\u4EC0\u4E48\u2026",
         "aria-label": "\u6279\u6CE8\u5185\u5BB9",
         onChange: (event) => setDraft(event.target.value)
       }),
-      h8(
+      h9(
         "div",
         { className: "qmr-hl-tools" },
-        h8("button", {
+        h9("button", {
           type: "button",
           className: "qmr-btn qmr-btn-sm qmr-btn-primary",
           onClick: () => {
@@ -105233,28 +105718,28 @@ ${truncate(highlight.text, 60)}`);
             ui.store.set({ editingHighlightId: null });
           }
         }, "\u4FDD\u5B58\u6279\u6CE8"),
-        h8("button", {
+        h9("button", {
           type: "button",
           className: "qmr-btn qmr-btn-sm",
           onClick: () => ui.store.set({ editingHighlightId: null })
         }, "\u53D6\u6D88")
       )
-    ) : h8(
+    ) : h9(
       "div",
       { className: "qmr-hl-tools" },
-      h8("span", { className: "qmr-swatches", "aria-label": "\u6539\u989C\u8272" }, swatches),
-      h8("button", {
+      h9("span", { className: "qmr-swatches", "aria-label": "\u6539\u989C\u8272" }, swatches),
+      h9("button", {
         type: "button",
         className: "qmr-btn qmr-btn-sm",
         onClick: () => ui.store.set({ editingHighlightId: highlight.id })
       }, highlight.note ? "\u7F16\u8F91\u6279\u6CE8" : "\u5199\u6279\u6CE8"),
-      h8("button", {
+      h9("button", {
         type: "button",
         className: "qmr-btn qmr-btn-sm",
         "aria-label": "\u5220\u9664\u5212\u7EBF",
         onClick: requestDelete
-      }, h8(IconTrash, { width: 14, height: 14 })),
-      h8("span", { className: "qmr-muted qmr-small" }, percentOfHighlight(highlight))
+      }, h9(IconTrash, { width: 14, height: 14 })),
+      h9("span", { className: "qmr-muted qmr-small" }, percentOfHighlight(highlight))
     )
   );
 }
@@ -105266,17 +105751,17 @@ function HighlightsPanel({ ui }) {
   const engineVersion = ui.useSel((state) => state.engineVersion);
   const engine = ui.engineOf(bookId);
   const book = ui.bookOf(bookId);
-  React9.useEffect(() => {
+  React10.useEffect(() => {
     if (bookId != null) ui.loadState(bookId);
   }, [bookId, ui]);
   const highlights = bookState && bookState.highlights || [];
-  const highlightsRef = React9.useRef(highlights);
+  const highlightsRef = React10.useRef(highlights);
   highlightsRef.current = highlights;
-  const engineRef = React9.useRef(engine);
+  const engineRef = React10.useRef(engine);
   engineRef.current = engine;
-  const labels = React9.useMemo(() => chapterLabelMap(engine), [engine, engineVersion]);
-  const groups = React9.useMemo(() => groupByChapter(highlights, engine), [highlights, engine]);
-  const markdown = React9.useMemo(
+  const labels = React10.useMemo(() => chapterLabelMap(engine), [engine, engineVersion]);
+  const groups = React10.useMemo(() => groupByChapter(highlights, engine), [highlights, engine]);
+  const markdown = React10.useMemo(
     () => toMarkdown(bookState || {}, book, engine),
     [bookState, book, engine]
   );
@@ -105294,101 +105779,101 @@ function HighlightsPanel({ ui }) {
       ui.toast("\u5BFC\u51FA\u5931\u8D25", "error");
     }
   };
-  return h8(
-    React9.Fragment,
+  return h9(
+    React10.Fragment,
     null,
-    h8(
+    h9(
       "div",
       { className: "qmr-panel-head" },
-      h8(IconHighlight, { width: 16, height: 16 }),
-      h8("span", { className: "qmr-panel-title" }, "\u5212\u7EBF\u4E0E\u7B14\u8BB0"),
-      h8(
+      h9(IconHighlight, { width: 16, height: 16 }),
+      h9("span", { className: "qmr-panel-title" }, "\u5212\u7EBF\u4E0E\u7B14\u8BB0"),
+      h9(
         "span",
         { className: "qmr-seg", role: "group", "aria-label": "\u9762\u677F\u89C6\u56FE" },
-        h8("button", {
+        h9("button", {
           type: "button",
           className: mode === "list" ? "is-active" : "",
           "aria-pressed": mode === "list",
           onClick: () => ui.store.set({ notesMode: "list" })
         }, "\u5212\u7EBF"),
-        h8("button", {
+        h9("button", {
           type: "button",
           className: mode === "notes" ? "is-active" : "",
           "aria-pressed": mode === "notes",
           onClick: () => ui.store.set({ notesMode: "notes" })
         }, "\u9605\u8BFB\u7B14\u8BB0")
       ),
-      h8("button", {
+      h9("button", {
         type: "button",
         className: "qmr-icon-btn",
         "aria-label": "\u5BFC\u51FA Markdown",
         onClick: exportMarkdown
-      }, h8(IconExport, { width: 16, height: 16 })),
-      h8("button", {
+      }, h9(IconExport, { width: 16, height: 16 })),
+      h9("button", {
         type: "button",
         className: "qmr-icon-btn",
         "aria-label": "\u5173\u95ED\u9762\u677F",
         onClick: () => ui.setPanel(null)
-      }, h8(IconClose, { width: 16, height: 16 }))
+      }, h9(IconClose, { width: 16, height: 16 }))
     ),
-    h8(
+    h9(
       "div",
       { className: "qmr-panel-body" },
-      mode === "notes" ? h8(
-        React9.Fragment,
+      mode === "notes" ? h9(
+        React10.Fragment,
         null,
-        h8(
+        h9(
           "div",
           { className: "qmr-hl-tools", style: { marginBottom: 8 } },
-          h8(
+          h9(
             "button",
             { type: "button", className: "qmr-btn qmr-btn-sm", onClick: copyMarkdown },
-            h8(IconCopy, { width: 14, height: 14 }),
+            h9(IconCopy, { width: 14, height: 14 }),
             "\u590D\u5236 Markdown"
           ),
-          h8(
+          h9(
             "button",
             { type: "button", className: "qmr-btn qmr-btn-sm", onClick: exportMarkdown },
-            h8(IconExport, { width: 14, height: 14 }),
+            h9(IconExport, { width: 14, height: 14 }),
             "\u5BFC\u51FA .md"
           )
         ),
-        h8(
+        h9(
           "div",
           { className: "qmr-md-preview" },
-          h8("h3", null, `\u300A${book?.title || "\u672A\u547D\u540D"}\u300B\u9605\u8BFB\u7B14\u8BB0`),
-          highlights.length ? groups.map((group) => h8(
+          h9("h3", null, `\u300A${book?.title || "\u672A\u547D\u540D"}\u300B\u9605\u8BFB\u7B14\u8BB0`),
+          highlights.length ? groups.map((group) => h9(
             "section",
             { key: String(group.index) },
-            h8("h4", null, group.index === Number.MAX_SAFE_INTEGER ? "\u5176\u4ED6\u4F4D\u7F6E" : labels.get(group.index) || `\u7B2C ${group.index + 1} \u7AE0`),
+            h9("h4", null, group.index === Number.MAX_SAFE_INTEGER ? "\u5176\u4ED6\u4F4D\u7F6E" : labels.get(group.index) || `\u7B2C ${group.index + 1} \u7AE0`),
             group.items.map(
-              (highlight) => h8(
+              (highlight) => h9(
                 "div",
                 { key: highlight.id, className: "qmr-md-quote" },
-                h8("blockquote", null, highlight.text),
-                highlight.note ? h8("p", null, highlight.note) : null,
-                h8("a", { href: highlightLink(bookId, highlight.id), className: "qmr-md-backlink" }, "\u21A9 \u56DE\u5230\u539F\u6587")
+                h9("blockquote", null, highlight.text),
+                highlight.note ? h9("p", null, highlight.note) : null,
+                h9("a", { href: highlightLink(bookId, highlight.id), className: "qmr-md-backlink" }, "\u21A9 \u56DE\u5230\u539F\u6587")
               )
             )
-          )) : h8("p", null, "\u6682\u65E0\u5212\u7EBF\u3002")
+          )) : h9("p", null, "\u6682\u65E0\u5212\u7EBF\u3002")
         )
-      ) : highlights.length ? h8(
-        React9.Fragment,
+      ) : highlights.length ? h9(
+        React10.Fragment,
         null,
-        h8(
+        h9(
           "div",
           { className: "qmr-group-title" },
           `\u5171 ${highlights.length} \u6761\u5212\u7EBF \xB7 ${noteCount} \u6761\u6279\u6CE8`
         ),
-        groups.map((group) => h8(
+        groups.map((group) => h9(
           "div",
           { key: String(group.index) },
-          h8(
+          h9(
             "div",
             { className: "qmr-group-title" },
             group.index === Number.MAX_SAFE_INTEGER ? "\u5176\u4ED6\u4F4D\u7F6E" : labels.get(group.index) || `\u7B2C ${group.index + 1} \u7AE0`
           ),
-          group.items.map((highlight) => h8(HighlightItem, {
+          group.items.map((highlight) => h9(HighlightItem, {
             key: highlight.id,
             ui,
             highlight,
@@ -105396,19 +105881,19 @@ function HighlightsPanel({ ui }) {
             editing: editingId === highlight.id
           }))
         ))
-      ) : h8(
+      ) : h9(
         "div",
         { className: "qmr-empty" },
-        h8("div", { className: "qmr-empty-title" }, "\u8FD8\u6CA1\u6709\u5212\u7EBF"),
-        h8("p", null, "\u5728\u6B63\u6587\u91CC\u9009\u4E2D\u6587\u5B57\uFF0C\u70B9\u300C\u5212\u7EBF\u300D\u6216\u300C\u5199\u6279\u6CE8\u300D\uFF0C\u8FD9\u91CC\u5C31\u4F1A\u6C47\u603B\u3002")
+        h9("div", { className: "qmr-empty-title" }, "\u8FD8\u6CA1\u6709\u5212\u7EBF"),
+        h9("p", null, "\u5728\u6B63\u6587\u91CC\u9009\u4E2D\u6587\u5B57\uFF0C\u70B9\u300C\u5212\u7EBF\u300D\u6216\u300C\u5199\u6279\u6CE8\u300D\uFF0C\u8FD9\u91CC\u5C31\u4F1A\u6C47\u603B\u3002")
       )
     )
   );
 }
 
 // src/ui/panel-search.js
-var React10 = __toESM(require("react"), 1);
-var h9 = React10.createElement;
+var React11 = __toESM(require("react"), 1);
+var h10 = React11.createElement;
 function renderSnippet(snippet, query) {
   const text2 = String(snippet || "");
   const needle = String(query || "").trim();
@@ -105422,7 +105907,7 @@ function renderSnippet(snippet, query) {
     const at = lowerText.indexOf(lowerNeedle, cursor);
     if (at < 0 || !lowerNeedle) break;
     if (at > cursor) parts.push(text2.slice(cursor, at));
-    parts.push(h9("mark", { className: "qm-hit", key: `m${key++}` }, text2.slice(at, at + needle.length)));
+    parts.push(h10("mark", { className: "qm-hit", key: `m${key++}` }, text2.slice(at, at + needle.length)));
     cursor = at + needle.length;
     if (key > 40) break;
   }
@@ -105436,17 +105921,17 @@ function SearchPanel({ ui }) {
   const current = ui.useSel((state) => state.searchIndex);
   const busy = ui.useSel((state) => state.searchBusy);
   const error = ui.useSel((state) => state.searchError);
-  const [text2, setText] = React10.useState(String(storeQuery || ""));
-  const inputRef = React10.useRef(null);
-  const listRef = React10.useRef(null);
+  const [text2, setText] = React11.useState(String(storeQuery || ""));
+  const inputRef = React11.useRef(null);
+  const listRef = React11.useRef(null);
   const debouncedSearch = useDebounced((value) => ui.search(bookId, value), 250);
-  React10.useEffect(() => {
+  React11.useEffect(() => {
     try {
       if (inputRef.current) inputRef.current.focus();
     } catch (_error) {
     }
   }, []);
-  React10.useEffect(() => {
+  React11.useEffect(() => {
     const element = listRef.current;
     if (!element || current < 0) return;
     try {
@@ -105481,25 +105966,25 @@ function SearchPanel({ ui }) {
       ui.closeSearch();
     }
   };
-  return h9(
-    React10.Fragment,
+  return h10(
+    React11.Fragment,
     null,
-    h9(
+    h10(
       "div",
       { className: "qmr-panel-head" },
-      h9(IconSearch, { width: 16, height: 16 }),
-      h9("span", { className: "qmr-panel-title" }, "\u4E66\u5185\u641C\u7D22"),
-      h9("button", {
+      h10(IconSearch, { width: 16, height: 16 }),
+      h10("span", { className: "qmr-panel-title" }, "\u4E66\u5185\u641C\u7D22"),
+      h10("button", {
         type: "button",
         className: "qmr-icon-btn",
         "aria-label": "\u5173\u95ED\u641C\u7D22",
         onClick: () => ui.closeSearch()
-      }, h9(IconClose, { width: 16, height: 16 }))
+      }, h10(IconClose, { width: 16, height: 16 }))
     ),
-    h9(
+    h10(
       "div",
       { className: "qmr-panel-body" },
-      h9("input", {
+      h10("input", {
         ref: inputRef,
         className: "qmr-input",
         style: { width: "100%" },
@@ -105510,36 +105995,36 @@ function SearchPanel({ ui }) {
         onChange,
         onKeyDown
       }),
-      h9(
+      h10(
         "div",
         { className: "qmr-hl-tools", style: { marginTop: 8 } },
-        h9("button", {
+        h10("button", {
           type: "button",
           className: "qmr-btn qmr-btn-sm",
           disabled: !results.length,
           onClick: () => ui.searchNext(-1)
-        }, h9(IconPrev, { width: 14, height: 14 }), "\u4E0A\u4E00\u4E2A"),
-        h9("button", {
+        }, h10(IconPrev, { width: 14, height: 14 }), "\u4E0A\u4E00\u4E2A"),
+        h10("button", {
           type: "button",
           className: "qmr-btn qmr-btn-sm",
           disabled: !results.length,
           onClick: () => ui.searchNext(1)
-        }, h9(IconNext, { width: 14, height: 14 }), "\u4E0B\u4E00\u4E2A"),
-        h9(
+        }, h10(IconNext, { width: 14, height: 14 }), "\u4E0B\u4E00\u4E2A"),
+        h10(
           "span",
           { className: "qmr-muted qmr-small" },
           results.length ? `${Math.max(1, current + 1)} / ${results.length}` : ""
         )
       ),
-      busy ? h9("div", { className: "qmr-busy" }, "\u641C\u7D22\u4E2D\u2026") : null,
-      error ? h9("div", { className: "qmr-errorbox-text", style: { marginTop: 8 } }, error) : null,
-      !busy && !results.length ? h9(
+      busy ? h10("div", { className: "qmr-busy" }, "\u641C\u7D22\u4E2D\u2026") : null,
+      error ? h10("div", { className: "qmr-errorbox-text", style: { marginTop: 8 } }, error) : null,
+      !busy && !results.length ? h10(
         "div",
         { className: "qmr-empty" },
-        h9("div", { className: "qmr-empty-title" }, text2.trim() ? "\u6CA1\u6709\u627E\u5230\u5339\u914D" : "\u8F93\u5165\u5173\u952E\u8BCD\u5F00\u59CB\u641C\u7D22"),
-        h9("p", null, "\u652F\u6301\u4E2D\u6587\u5355\u5B57\u4E0E\u82F1\u6587\u5B50\u4E32\uFF1BEnter \u4E0B\u4E00\u4E2A\uFF0CShift+Enter \u4E0A\u4E00\u4E2A\u3002")
+        h10("div", { className: "qmr-empty-title" }, text2.trim() ? "\u6CA1\u6709\u627E\u5230\u5339\u914D" : "\u8F93\u5165\u5173\u952E\u8BCD\u5F00\u59CB\u641C\u7D22"),
+        h10("p", null, "\u652F\u6301\u4E2D\u6587\u5355\u5B57\u4E0E\u82F1\u6587\u5B50\u4E32\uFF1BEnter \u4E0B\u4E00\u4E2A\uFF0CShift+Enter \u4E0A\u4E00\u4E2A\u3002")
       ) : null,
-      h9("div", { ref: listRef, style: { marginTop: 8 } }, results.map((hit, index) => h9(
+      h10("div", { ref: listRef, style: { marginTop: 8 } }, results.map((hit, index) => h10(
         "button",
         {
           key: `${hit.chapterIndex}-${hit.offset}-${index}`,
@@ -105547,25 +106032,25 @@ function SearchPanel({ ui }) {
           className: `qmr-search-item${index === current ? " is-current" : ""}`,
           onClick: () => ui.focusSearchHit(index, true)
         },
-        h9(
+        h10(
           "div",
           { className: "qmr-search-chapter" },
           `${hit.chapterLabel || `\u7B2C ${Number(hit.chapterIndex) + 1} \u7AE0`} \xB7 ${Math.round(Number(hit.percent || 0) > 1 ? Number(hit.percent) : Number(hit.percent || 0) * 100)}%`
         ),
-        h9("div", { className: "qmr-search-snippet" }, renderSnippet(hit.snippet, storeQuery))
+        h10("div", { className: "qmr-search-snippet" }, renderSnippet(hit.snippet, storeQuery))
       )))
     )
   );
 }
 
 // src/ui/panel-settings.js
-var React11 = __toESM(require("react"), 1);
-var h10 = React11.createElement;
+var React12 = __toESM(require("react"), 1);
+var h11 = React12.createElement;
 function SettingsPanel({ ui }) {
   const bookId = ui.useSel((state) => state.bookId);
   ui.useSel((state) => (state.states || {})[bookId] || null);
   const isLoaded = !!ui.useSel((state) => (state.states || {})[bookId] ? 1 : 0);
-  React11.useEffect(() => {
+  React12.useEffect(() => {
     if (bookId != null) ui.loadState(bookId);
   }, [bookId, ui]);
   const settings = ui.settingsOf(bookId);
@@ -105576,7 +106061,7 @@ function SettingsPanel({ ui }) {
   };
   const themeCards = READER_THEME_IDS.map((id) => {
     const theme = READER_THEMES[id];
-    return h10(
+    return h11(
       "button",
       {
         key: id,
@@ -105585,40 +106070,40 @@ function SettingsPanel({ ui }) {
         "aria-pressed": settings.theme === id,
         onClick: () => update({ theme: id })
       },
-      h10("span", {
+      h11("span", {
         className: "qmr-theme-swatch",
         style: { background: theme.bg, color: theme.text },
         "aria-hidden": "true"
       }, "\u6587"),
-      h10("span", null, id === "white" ? ui.t("themeWhite", theme.label) : theme.label)
+      h11("span", null, id === "white" ? ui.t("themeWhite", theme.label) : theme.label)
     );
   });
-  return h10(
-    React11.Fragment,
+  return h11(
+    React12.Fragment,
     null,
-    h10(
+    h11(
       "div",
       { className: "qmr-panel-head" },
-      h10(IconSettings, { width: 16, height: 16 }),
-      h10("span", { className: "qmr-panel-title" }, "\u9605\u8BFB\u8BBE\u7F6E"),
-      h10("button", {
+      h11(IconSettings, { width: 16, height: 16 }),
+      h11("span", { className: "qmr-panel-title" }, "\u9605\u8BFB\u8BBE\u7F6E"),
+      h11("button", {
         type: "button",
         className: "qmr-icon-btn",
         "aria-label": "\u5173\u95ED\u8BBE\u7F6E",
         onClick: () => ui.setPanel(null)
-      }, h10(IconClose, { width: 16, height: 16 }))
+      }, h11(IconClose, { width: 16, height: 16 }))
     ),
-    h10(
+    h11(
       "div",
       { className: "qmr-panel-body" },
-      !isLoaded ? h10("div", { className: "qmr-muted qmr-small", style: { marginBottom: 8 } }, "\u6B63\u5728\u8BFB\u53D6\u5DF2\u4FDD\u5B58\u7684\u8BBE\u7F6E\u2026") : null,
-      h10("div", { className: "qmr-group-title" }, "\u4E3B\u9898"),
-      h10("div", { className: "qmr-theme-grid" }, themeCards),
-      isPdf ? h10(
+      !isLoaded ? h11("div", { className: "qmr-muted qmr-small", style: { marginBottom: 8 } }, "\u6B63\u5728\u8BFB\u53D6\u5DF2\u4FDD\u5B58\u7684\u8BBE\u7F6E\u2026") : null,
+      h11("div", { className: "qmr-group-title" }, "\u4E3B\u9898"),
+      h11("div", { className: "qmr-theme-grid" }, themeCards),
+      isPdf ? h11(
         "div",
         { className: "qmr-field" },
-        h10("span", { className: "qmr-field-label" }, ui.t("reader.zoom", "\u7F29\u653E")),
-        h10("input", {
+        h11("span", { className: "qmr-field-label" }, ui.t("reader.zoom", "\u7F29\u653E")),
+        h11("input", {
           className: "qmr-range",
           type: "range",
           min: 50,
@@ -105628,19 +106113,19 @@ function SettingsPanel({ ui }) {
           "aria-label": ui.t("reader.zoom", "\u7F29\u653E"),
           onChange: (event) => update({ pdfZoom: Number(event.target.value) / 100 })
         }),
-        h10("span", { className: "qmr-field-value" }, `${Math.round(settings.pdfZoom * 100)}%`)
-      ) : h10(
-        React11.Fragment,
+        h11("span", { className: "qmr-field-value" }, `${Math.round(settings.pdfZoom * 100)}%`)
+      ) : h11(
+        React12.Fragment,
         null,
-        h10("div", { className: "qmr-group-title" }, "\u6392\u7248"),
-        h10(
+        h11("div", { className: "qmr-group-title" }, "\u6392\u7248"),
+        h11(
           "div",
           { className: "qmr-field" },
-          h10("span", { className: "qmr-field-label" }, "\u5B57\u53F7"),
-          h10(
+          h11("span", { className: "qmr-field-label" }, "\u5B57\u53F7"),
+          h11(
             "span",
             { className: "qmr-field-ctl" },
-            h10("input", {
+            h11("input", {
               className: "qmr-range",
               type: "range",
               min: FONT_MIN,
@@ -105651,16 +106136,16 @@ function SettingsPanel({ ui }) {
               onChange: (event) => update({ fontSize: Number(event.target.value) })
             })
           ),
-          h10("span", { className: "qmr-field-value" }, `${settings.fontSize}px`)
+          h11("span", { className: "qmr-field-value" }, `${settings.fontSize}px`)
         ),
-        h10(
+        h11(
           "div",
           { className: "qmr-field" },
-          h10("span", { className: "qmr-field-label" }, "\u884C\u9AD8"),
-          h10(
+          h11("span", { className: "qmr-field-label" }, "\u884C\u9AD8"),
+          h11(
             "span",
             { className: "qmr-field-ctl" },
-            h10("input", {
+            h11("input", {
               className: "qmr-range",
               type: "range",
               min: 1.4,
@@ -105671,32 +106156,32 @@ function SettingsPanel({ ui }) {
               onChange: (event) => update({ lineHeight: Number(event.target.value) })
             })
           ),
-          h10("span", { className: "qmr-field-value" }, Number(settings.lineHeight).toFixed(2))
+          h11("span", { className: "qmr-field-value" }, Number(settings.lineHeight).toFixed(2))
         ),
-        h10(
+        h11(
           "div",
           { className: "qmr-field" },
-          h10("span", { className: "qmr-field-label" }, "\u5B57\u4F53"),
-          h10(
+          h11("span", { className: "qmr-field-label" }, "\u5B57\u4F53"),
+          h11(
             "span",
             { className: "qmr-field-ctl" },
-            h10("select", {
+            h11("select", {
               className: "qmr-select",
               style: { flex: "1 1 auto" },
               value: settings.fontFamily,
               "aria-label": "\u5B57\u4F53",
               onChange: (event) => update({ fontFamily: event.target.value })
-            }, Object.keys(READER_FONT_LABELS).map((key) => h10("option", { key, value: key }, READER_FONT_LABELS[key])))
+            }, Object.keys(READER_FONT_LABELS).map((key) => h11("option", { key, value: key }, READER_FONT_LABELS[key])))
           )
         ),
-        h10(
+        h11(
           "div",
           { className: "qmr-field" },
-          h10("span", { className: "qmr-field-label" }, "\u9875\u8FB9\u8DDD"),
-          h10(
+          h11("span", { className: "qmr-field-label" }, "\u9875\u8FB9\u8DDD"),
+          h11(
             "span",
             { className: "qmr-field-ctl" },
-            h10("input", {
+            h11("input", {
               className: "qmr-range",
               type: "range",
               min: 32,
@@ -105707,26 +106192,26 @@ function SettingsPanel({ ui }) {
               onChange: (event) => update({ margin: Number(event.target.value) })
             })
           ),
-          h10("span", { className: "qmr-field-value" }, `${settings.margin}px`)
+          h11("span", { className: "qmr-field-value" }, `${settings.margin}px`)
         ),
-        h10("div", { className: "qmr-group-title" }, "\u7FFB\u9875"),
-        h10(
+        h11("div", { className: "qmr-group-title" }, "\u7FFB\u9875"),
+        h11(
           "div",
           { className: "qmr-field" },
-          h10("span", { className: "qmr-field-label" }, "\u65B9\u5F0F"),
-          h10(
+          h11("span", { className: "qmr-field-label" }, "\u65B9\u5F0F"),
+          h11(
             "span",
             { className: "qmr-field-ctl" },
-            h10(
+            h11(
               "span",
               { className: "qmr-seg", role: "group", "aria-label": "\u7FFB\u9875\u65B9\u5F0F" },
-              h10("button", {
+              h11("button", {
                 type: "button",
                 className: settings.flow === "paginated" ? "is-active" : "",
                 "aria-pressed": settings.flow === "paginated",
                 onClick: () => update({ flow: "paginated" })
               }, "\u5206\u9875"),
-              h10("button", {
+              h11("button", {
                 type: "button",
                 className: settings.flow === "scroll" ? "is-active" : "",
                 "aria-pressed": settings.flow === "scroll",
@@ -105735,17 +106220,17 @@ function SettingsPanel({ ui }) {
             )
           )
         ),
-        h10(
+        h11(
           "div",
           { className: "qmr-field" },
-          h10("span", { className: "qmr-field-label" }, "\u7248\u5F0F"),
-          h10(
+          h11("span", { className: "qmr-field-label" }, "\u7248\u5F0F"),
+          h11(
             "span",
             { className: "qmr-field-ctl" },
-            h10(
+            h11(
               "label",
               { className: "qmr-switch" },
-              h10("input", {
+              h11("input", {
                 type: "checkbox",
                 checked: settings.spread,
                 disabled: settings.flow !== "paginated",
@@ -105756,17 +106241,17 @@ function SettingsPanel({ ui }) {
             )
           )
         ),
-        h10(
+        h11(
           "div",
           { className: "qmr-field" },
-          h10("span", { className: "qmr-field-label" }, "\u5BF9\u9F50"),
-          h10(
+          h11("span", { className: "qmr-field-label" }, "\u5BF9\u9F50"),
+          h11(
             "span",
             { className: "qmr-field-ctl" },
-            h10(
+            h11(
               "label",
               { className: "qmr-switch" },
-              h10("input", {
+              h11("input", {
                 type: "checkbox",
                 checked: settings.justify,
                 "aria-label": "\u4E24\u7AEF\u5BF9\u9F50",
@@ -105777,17 +106262,17 @@ function SettingsPanel({ ui }) {
           )
         )
       ),
-      h10("div", { className: "qmr-divider" }),
-      h10(
+      h11("div", { className: "qmr-divider" }),
+      h11(
         "div",
         { className: "qmr-hl-tools" },
-        h10("button", {
+        h11("button", {
           type: "button",
           className: "qmr-btn qmr-btn-sm",
           onClick: () => update({ ...UI_SETTING_DEFAULTS })
         }, "\u6062\u590D\u9ED8\u8BA4")
       ),
-      h10(
+      h11(
         "p",
         { className: "qmr-muted qmr-small", style: { marginTop: 10 } },
         "\u4E3B\u9898\u5E94\u7528\u4E8E\u4E66\u9875\u3001\u9605\u8BFB\u5DE5\u5177\u680F\u4E0E AI \u4F34\u8BFB\uFF1B\u8BBE\u7F6E\u968F\u8FD9\u672C\u4E66\u4FDD\u5B58\u3002"
@@ -105797,11 +106282,11 @@ function SettingsPanel({ ui }) {
 }
 
 // src/ui/prompt-manager.js
-var React12 = __toESM(require("react"), 1);
-var h11 = React12.createElement;
+var React13 = __toESM(require("react"), 1);
+var h12 = React13.createElement;
 function PromptManager({ onClose }) {
-  const [items, setItems] = React12.useState(readQuickPrompts);
-  const [editing, setEditing] = React12.useState(null);
+  const [items, setItems] = React13.useState(readQuickPrompts);
+  const [editing, setEditing] = React13.useState(null);
   const save = (event) => {
     event.preventDefault();
     const title = editing.title.trim();
@@ -105812,40 +106297,40 @@ function PromptManager({ onClose }) {
     setItems(next);
     setEditing(null);
   };
-  return h11(
+  return h12(
     "div",
     { className: "qmr-prompt-backdrop", onClick: onClose },
-    h11(
+    h12(
       "section",
       { className: "qmr-prompt-dialog", role: "dialog", "aria-modal": "true", "aria-label": "\u7BA1\u7406\u5FEB\u6377\u63D0\u793A\u8BCD", onClick: (event) => event.stopPropagation(), onKeyDown: (event) => {
         if (event.key === "Escape") onClose();
       } },
-      h11("header", null, h11("strong", null, "\u5FEB\u6377\u63D0\u793A\u8BCD"), h11("button", { type: "button", className: "qmr-icon-btn", "aria-label": "\u5173\u95ED", onClick: onClose }, h11(IconClose, { width: 16, height: 16 }))),
-      h11("p", null, "\u663E\u793A\u5728\u4F34\u8BFB\u8F93\u5165\u6846\u4E0A\u65B9\u3002\u70B9\u51FB\u540E\u76F4\u63A5\u53D1\u9001\uFF1B\u5DF2\u6709\u624B\u5199\u8349\u7A3F\u65F6\u4F1A\u4FDD\u7559\u8349\u7A3F\u3002"),
-      h11("div", { className: "qmr-prompt-list" }, items.map((item) => h11(
+      h12("header", null, h12("strong", null, "\u5FEB\u6377\u63D0\u793A\u8BCD"), h12("button", { type: "button", className: "qmr-icon-btn", "aria-label": "\u5173\u95ED", onClick: onClose }, h12(IconClose, { width: 16, height: 16 }))),
+      h12("p", null, "\u663E\u793A\u5728\u4F34\u8BFB\u8F93\u5165\u6846\u4E0A\u65B9\u3002\u70B9\u51FB\u540E\u76F4\u63A5\u53D1\u9001\uFF1B\u5DF2\u6709\u624B\u5199\u8349\u7A3F\u65F6\u4F1A\u4FDD\u7559\u8349\u7A3F\u3002"),
+      h12("div", { className: "qmr-prompt-list" }, items.map((item) => h12(
         "div",
         { className: "qmr-prompt-row", key: item.id },
-        h11("div", null, h11("strong", null, item.title), h11("span", null, item.body)),
-        h11("button", { type: "button", "aria-label": `\u7F16\u8F91 ${item.title}`, onClick: () => setEditing(item) }, "\u7F16\u8F91"),
-        h11("button", { type: "button", "aria-label": `\u5220\u9664 ${item.title}`, onClick: () => {
+        h12("div", null, h12("strong", null, item.title), h12("span", null, item.body)),
+        h12("button", { type: "button", "aria-label": `\u7F16\u8F91 ${item.title}`, onClick: () => setEditing(item) }, "\u7F16\u8F91"),
+        h12("button", { type: "button", "aria-label": `\u5220\u9664 ${item.title}`, onClick: () => {
           const next = items.filter((prompt) => prompt.id !== item.id);
           saveQuickPrompts(next);
           setItems(next);
-        } }, h11(IconTrash, { width: 15, height: 15 }))
+        } }, h12(IconTrash, { width: 15, height: 15 }))
       ))),
-      editing ? h11(
+      editing ? h12(
         "form",
         { className: "qmr-prompt-editor", onSubmit: save },
-        h11("label", null, "\u540D\u79F0", h11("input", { autoFocus: true, maxLength: 60, value: editing.title, onChange: (event) => setEditing({ ...editing, title: event.target.value }) })),
-        h11("label", null, "\u63D0\u793A\u8BCD", h11("textarea", { rows: 5, maxLength: 5e3, value: editing.body, onChange: (event) => setEditing({ ...editing, body: event.target.value }) })),
-        h11("div", null, h11("button", { type: "button", onClick: () => setEditing(null) }, "\u53D6\u6D88"), h11("button", { type: "submit", disabled: !editing.title.trim() || !editing.body.trim() }, "\u4FDD\u5B58"))
-      ) : h11("button", { type: "button", className: "qmr-prompt-new", disabled: items.length >= 20, onClick: () => setEditing({ title: "", body: "" }) }, "+ \u65B0\u589E\u63D0\u793A\u8BCD")
+        h12("label", null, "\u540D\u79F0", h12("input", { autoFocus: true, maxLength: 60, value: editing.title, onChange: (event) => setEditing({ ...editing, title: event.target.value }) })),
+        h12("label", null, "\u63D0\u793A\u8BCD", h12("textarea", { rows: 5, maxLength: 5e3, value: editing.body, onChange: (event) => setEditing({ ...editing, body: event.target.value }) })),
+        h12("div", null, h12("button", { type: "button", onClick: () => setEditing(null) }, "\u53D6\u6D88"), h12("button", { type: "submit", disabled: !editing.title.trim() || !editing.body.trim() }, "\u4FDD\u5B58"))
+      ) : h12("button", { type: "button", className: "qmr-prompt-new", disabled: items.length >= 20, onClick: () => setEditing({ title: "", body: "" }) }, "+ \u65B0\u589E\u63D0\u793A\u8BCD")
     )
   );
 }
 
 // src/ui/reader.js
-var h12 = React13.createElement;
+var h13 = React14.createElement;
 var COLUMN_GAP = 56;
 function chapterHrefOf(engine, index) {
   try {
@@ -105984,25 +106469,25 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const chapterBusy = ui.useSel((state) => state.chapterBusy);
   const bookState = ui.useSel((state) => (state.states || {})[bookId] || null);
   const narrow = useMediaQuery("(max-width: 900px)");
-  const workareaRef = React13.useRef(null);
-  const companionDragging = React13.useRef(false);
-  const [companionWidth, setCompanionWidth] = React13.useState(() => {
+  const workareaRef = React14.useRef(null);
+  const companionDragging = React14.useRef(false);
+  const [companionWidth, setCompanionWidth] = React14.useState(() => {
     const saved = Number(localStorage.getItem("qmr.companionWidth"));
     return Number.isFinite(saved) && saved >= 25 && saved <= 75 ? saved : 44;
   });
-  const companionWidthRef = React13.useRef(companionWidth);
-  const [chromeVisible, setChromeVisible] = React13.useState(true);
-  const chromeTimerRef = React13.useRef(null);
-  const showChrome = React13.useCallback(() => {
+  const companionWidthRef = React14.useRef(companionWidth);
+  const [chromeVisible, setChromeVisible] = React14.useState(true);
+  const chromeTimerRef = React14.useRef(null);
+  const showChrome = React14.useCallback(() => {
     setChromeVisible(true);
     clearTimeout(chromeTimerRef.current);
     chromeTimerRef.current = setTimeout(() => setChromeVisible(false), 2800);
   }, []);
-  React13.useEffect(() => {
+  React14.useEffect(() => {
     showChrome();
     return () => clearTimeout(chromeTimerRef.current);
   }, [showChrome]);
-  React13.useEffect(() => {
+  React14.useEffect(() => {
     ui.store.set({ companionSelection: null });
   }, [bookId, chapterIndex]);
   const book = ui.bookOf(bookId);
@@ -106011,40 +106496,40 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const storedSettings = ui.settingsOf(bookId);
   const isPdf = book?.format === "pdf";
   const settings = isPdf ? { ...storedSettings, flow: "scroll" } : storedSettings;
-  const [pdfWidth, setPdfWidth] = React13.useState(0);
-  const pdfWidthRef = React13.useRef(0);
+  const [pdfWidth, setPdfWidth] = React14.useState(0);
+  const pdfWidthRef = React14.useRef(0);
   const themeVars = readerThemeVars(settings.theme);
-  const labels = React13.useMemo(() => chapterLabelMap(engine), [engine, engineVersion]);
-  const [rendered, setRendered] = React13.useState({ html: "", key: "" });
+  const labels = React14.useMemo(() => chapterLabelMap(engine), [engine, engineVersion]);
+  const [rendered, setRendered] = React14.useState({ html: "", key: "" });
   const html = rendered.html;
   const setHtml = (html2) => setRendered({ html: html2, key: `${bookId}:${chapterIndex}` });
-  const [renderError, setRenderError] = React13.useState(null);
-  const [page, setPageState] = React13.useState(0);
-  const [pageCount, setPageCount] = React13.useState(1);
-  const viewportRef = React13.useRef(null);
-  const flowRef = React13.useRef(null);
-  const measureRef = React13.useRef({ pages: 1, perPage: 1, columnWidth: 320, gap: COLUMN_GAP });
-  const lastHtmlRef = React13.useRef(null);
-  const decoratedRef = React13.useRef(null);
-  const pendingLandLastRef = React13.useRef(false);
-  const lastFocusRef = React13.useRef("");
-  const lastSearchFocusRef = React13.useRef(null);
-  const scrollTimerRef = React13.useRef(null);
-  const pdfAnchorRef = React13.useRef(null);
-  const pdfRenderedRef = React13.useRef(null);
-  const textAnchorRef = React13.useRef(null);
-  const wheelIntentRef = React13.useRef(createWheelIntent());
-  const zoomIntentRef = React13.useRef(createZoomIntent());
-  const highlights = React13.useMemo(
+  const [renderError, setRenderError] = React14.useState(null);
+  const [page, setPageState] = React14.useState(0);
+  const [pageCount, setPageCount] = React14.useState(1);
+  const viewportRef = React14.useRef(null);
+  const flowRef = React14.useRef(null);
+  const measureRef = React14.useRef({ pages: 1, perPage: 1, columnWidth: 320, gap: COLUMN_GAP });
+  const lastHtmlRef = React14.useRef(null);
+  const decoratedRef = React14.useRef(null);
+  const pendingLandLastRef = React14.useRef(false);
+  const lastFocusRef = React14.useRef("");
+  const lastSearchFocusRef = React14.useRef(null);
+  const scrollTimerRef = React14.useRef(null);
+  const pdfAnchorRef = React14.useRef(null);
+  const pdfRenderedRef = React14.useRef(null);
+  const textAnchorRef = React14.useRef(null);
+  const wheelIntentRef = React14.useRef(createWheelIntent());
+  const zoomIntentRef = React14.useRef(createZoomIntent());
+  const highlights = React14.useMemo(
     () => (bookState && bookState.highlights || []).filter(Boolean),
     [bookState]
   );
   const highlightSignature = highlights.map((item) => `${item.id}:${item.color}`).join("|");
-  const highlightsRef = React13.useRef(highlights);
+  const highlightsRef = React14.useRef(highlights);
   highlightsRef.current = highlights;
-  const searchResultsRef = React13.useRef(searchResults);
+  const searchResultsRef = React14.useRef(searchResults);
   searchResultsRef.current = searchResults;
-  const liveRef = React13.useRef({});
+  const liveRef = React14.useRef({});
   liveRef.current = {
     page,
     pageCount,
@@ -106061,7 +106546,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     focusHighlightId,
     restoreScroll
   };
-  React13.useLayoutEffect(() => {
+  React14.useLayoutEffect(() => {
     if (!isPdf || !viewportRef.current) return void 0;
     const viewport = viewportRef.current;
     const update = () => {
@@ -106084,7 +106569,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       window.removeEventListener("resize", update);
     };
   }, [isPdf, bookId]);
-  const captureTextAnchor = React13.useCallback(() => {
+  const captureTextAnchor = React14.useCallback(() => {
     const viewport = viewportRef.current;
     const flow = flowRef.current;
     if (!viewport || !flow || isPdf) return;
@@ -106122,7 +106607,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       }
     }
   }, [isPdf, bookId, chapterIndex]);
-  const adjustZoom = React13.useCallback((direction, point = null) => {
+  const adjustZoom = React14.useCallback((direction, point = null) => {
     const live = liveRef.current;
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -106146,7 +106631,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       ui.updateSettings(live.bookId, { fontSize: next });
     }
   }, [ui, captureTextAnchor]);
-  React13.useEffect(() => {
+  React14.useEffect(() => {
     const beforeSettings = () => {
       if (!isPdf) {
         captureTextAnchor();
@@ -106164,10 +106649,10 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       if (ui.beforeSettings === beforeSettings) delete ui.beforeSettings;
     };
   }, [ui, isPdf, captureTextAnchor]);
-  React13.useEffect(() => {
+  React14.useEffect(() => {
     if (bookId != null) ui.loadState(bookId);
   }, [bookId, ui]);
-  React13.useEffect(() => {
+  React14.useEffect(() => {
     let cancelled = false;
     const abort = new AbortController();
     if (!engine || bookId == null || isPdf && !pdfWidth) {
@@ -106200,7 +106685,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       abort.abort();
     };
   }, [engine, bookId, chapterIndex, engineVersion, imagesVersion, ui, isPdf, pdfWidth, settings.pdfZoom]);
-  const setPage = React13.useCallback((next) => {
+  const setPage = React14.useCallback((next) => {
     setPageState((previous) => {
       const max = Math.max(0, (measureRef.current.pages || 1) - 1);
       const raw = typeof next === "function" ? next(previous) : next;
@@ -106208,7 +106693,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       return value;
     });
   }, []);
-  const measure = React13.useCallback(() => {
+  const measure = React14.useCallback(() => {
     const viewport = viewportRef.current;
     const flow = flowRef.current;
     if (!viewport || !flow) return measureRef.current;
@@ -106253,7 +106738,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       return measureRef.current;
     }
   }, [settings.flow, settings.spread, settings.pdfZoom, isPdf, setPage]);
-  const revealNode = React13.useCallback((node) => {
+  const revealNode = React14.useCallback((node) => {
     if (!node) return;
     if (settings.flow === "scroll") {
       node.scrollIntoView?.({ block: "center", inline: "nearest" });
@@ -106267,7 +106752,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     const column = Math.floor((x + 1) / (meta.columnWidth + meta.gap));
     setPage(Math.floor(column / meta.perPage));
   }, [settings.flow, setPage]);
-  React13.useLayoutEffect(() => {
+  React14.useLayoutEffect(() => {
     const flow = flowRef.current;
     if (!flow || rendered.key !== `${bookId}:${chapterIndex}`) return;
     const isNewHtml = lastHtmlRef.current !== rendered;
@@ -106345,7 +106830,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     setPage,
     ui
   ]);
-  React13.useLayoutEffect(() => {
+  React14.useLayoutEffect(() => {
     const flow = flowRef.current;
     if (!flow) return;
     try {
@@ -106412,7 +106897,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     chapterBusy,
     revealNode
   ]);
-  React13.useEffect(() => {
+  React14.useEffect(() => {
     const flow = flowRef.current;
     if (!flow) return;
     if (settings.flow === "scroll") {
@@ -106424,7 +106909,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     flow.style.transform = `translateX(${-offset}px)`;
     flow.style.transition = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "none" : "transform .18s ease";
   }, [page, settings.flow, pageCount, settings.spread, settings.fontSize, settings.margin]);
-  React13.useEffect(() => {
+  React14.useEffect(() => {
     const measureNow = () => {
       try {
         measure();
@@ -106470,7 +106955,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       }
     };
   }, [measure, html, settings.fontSize, settings.fontFamily, settings.lineHeight, settings.justify, captureTextAnchor, bookId, chapterIndex, setPage]);
-  React13.useEffect(() => {
+  React14.useEffect(() => {
     if (isPdf) return void 0;
     const viewport = viewportRef.current;
     let frame;
@@ -106485,7 +106970,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       viewport?.removeEventListener("scroll", capture);
     };
   }, [isPdf, page, captureTextAnchor]);
-  const reportPosition = React13.useCallback(() => {
+  const reportPosition = React14.useCallback(() => {
     const live = liveRef.current;
     if (live.bookId == null) return;
     let scroll = 0;
@@ -106512,7 +106997,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       textQuote: quote
     });
   }, [ui]);
-  React13.useEffect(() => {
+  React14.useEffect(() => {
     ui.store.set({ page, pageCount });
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
     scrollTimerRef.current = setTimeout(() => {
@@ -106523,7 +107008,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
     };
   }, [page, pageCount, chapterIndex, ui, reportPosition]);
-  React13.useEffect(() => {
+  React14.useEffect(() => {
     const isScroll = () => {
       const live = liveRef.current;
       return !!(live.settings && live.settings.flow === "scroll");
@@ -106577,7 +107062,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       ui.registerPager({ next: () => ui.goChapter((ui.store.get().chapterIndex || 0) + 1), prev: () => ui.goChapter((ui.store.get().chapterIndex || 0) - 1) });
     };
   }, [ui, setPage]);
-  React13.useEffect(() => {
+  React14.useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return void 0;
     const onWheel = (event) => {
@@ -106624,13 +107109,13 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     viewport.addEventListener("wheel", onWheel, { passive: false });
     return () => viewport.removeEventListener("wheel", onWheel);
   }, [ui, adjustZoom]);
-  React13.useEffect(() => {
+  React14.useEffect(() => {
     wheelIntentRef.current.reset();
     zoomIntentRef.current.reset();
     pdfAnchorRef.current = null;
     textAnchorRef.current = null;
   }, [bookId]);
-  React13.useEffect(() => {
+  React14.useEffect(() => {
     const onKeyDown = (event) => {
       const state = ui.store.get();
       if (!state.visible || state.view !== "reader") return;
@@ -106665,7 +107150,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [ui]);
-  React13.useEffect(() => {
+  React14.useEffect(() => {
     const onMouseUp = () => {
       try {
         const flow = flowRef.current;
@@ -106842,11 +107327,11 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     textAlign: settings.justify ? "justify" : "left",
     color: "var(--qmr-ink)"
   };
-  const panelNode = panel === "toc" ? h12(TocPanel, { ui }) : panel === "search" ? h12(SearchPanel, { ui }) : panel === "highlights" || panel === "notes" ? h12(HighlightsPanel, { ui }) : panel === "companion" ? h12(CompanionPanel, { ui, bookId, chapterIndex, engine, chatApi, SessionProvider, renderSlot }) : panel === "settings" ? h12(SettingsPanel, { ui }) : null;
+  const panelNode = panel === "toc" ? h13(TocPanel, { ui }) : panel === "search" ? h13(SearchPanel, { ui }) : panel === "highlights" || panel === "notes" ? h13(HighlightsPanel, { ui }) : panel === "companion" ? h13(CompanionPanel, { ui, bookId, chapterIndex, engine, chatApi, SessionProvider, renderSlot }) : panel === "settings" ? h13(SettingsPanel, { ui }) : null;
   const title = book && book.title || "\u9605\u8BFB";
   const author = book && book.author || "";
   const chapterLabel2 = labels.get(chapterIndex) || `\u7B2C ${chapterIndex + 1} \u7AE0`;
-  const toolbarButton = (key, icon, label, onClick, active) => h12(
+  const toolbarButton = (key, icon, label, onClick, active) => h13(
     "button",
     {
       key,
@@ -106860,15 +107345,15 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     icon
   );
   const zoom = isPdf ? settings.pdfZoom : settings.fontSize;
-  const zoomIcon = (direction) => h12(
+  const zoomIcon = (direction) => h13(
     "svg",
     { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
-    h12("circle", { cx: 12, cy: 12, r: 9, stroke: "currentColor", strokeWidth: 1.5 }),
-    h12("path", { d: direction > 0 ? "M7 12h10M12 7v10" : "M7 12h10", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round" })
+    h13("circle", { cx: 12, cy: 12, r: 9, stroke: "currentColor", strokeWidth: 1.5 }),
+    h13("path", { d: direction > 0 ? "M7 12h10M12 7v10" : "M7 12h10", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round" })
   );
   const zoomButton = (direction) => {
     const label = ui.t(direction > 0 ? "reader.zoomIn" : "reader.zoomOut", direction > 0 ? "\u653E\u5927" : "\u7F29\u5C0F");
-    return h12("button", {
+    return h13("button", {
       type: "button",
       className: "qmr-btn qmr-btn-icon qmr-zoom-btn",
       title: label,
@@ -106877,70 +107362,70 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       onClick: () => adjustZoom(direction)
     }, zoomIcon(direction));
   };
-  const topBar = h12(
+  const topBar = h13(
     "div",
     { className: `qmr-topbar${chromeVisible ? "" : " qmr-chrome-hidden"}` },
-    h12("button", {
+    h13("button", {
       type: "button",
       className: "qmr-btn qmr-btn-icon",
       "aria-label": "\u8FD4\u56DE\u4E66\u5E93",
       title: "\u8FD4\u56DE\u4E66\u5E93",
       onClick: () => ui.backToLibrary()
-    }, h12(IconBack, { width: 16, height: 16 })),
-    h12(
+    }, h13(IconBack, { width: 16, height: 16 })),
+    h13(
       "div",
       { className: "qmr-topbar-title", title: [title, author, chapterLabel2].filter(Boolean).join(" \xB7 ") },
-      h12("div", { className: "qmr-title" }, title),
-      h12(
+      h13("div", { className: "qmr-title" }, title),
+      h13(
         "div",
         { className: "qmr-subtitle" },
         [chapterLabel2 !== title ? chapterLabel2 : "", formatPercent(progress)].filter(Boolean).join(" \xB7 ")
       )
     ),
-    h12(
+    h13(
       "div",
       { className: "qmr-actions" },
       zoomButton(-1),
-      h12("span", { className: "qmr-zoom-value", "aria-label": ui.t("reader.zoom", "\u7F29\u653E") }, isPdf ? `${Math.round(zoom * 100)}%` : `${zoom}px`),
+      h13("span", { className: "qmr-zoom-value", "aria-label": ui.t("reader.zoom", "\u7F29\u653E") }, isPdf ? `${Math.round(zoom * 100)}%` : `${zoom}px`),
       zoomButton(1),
-      toolbarButton("search", h12(IconSearch, { width: 16, height: 16 }), "\u641C\u7D22", () => ui.setPanel("search"), panel === "search"),
-      toolbarButton("hl", h12(IconHighlight, { width: 16, height: 16 }), "\u5212\u7EBF", () => ui.setPanel("highlights"), panel === "highlights" || panel === "notes"),
-      toolbarButton("ai", h12(IconSparkles, { width: 16, height: 16 }), "AI \u4F34\u8BFB", () => ui.setPanel("companion"), panel === "companion"),
-      toolbarButton("settings", h12(IconSettings, { width: 16, height: 16 }), "\u8BBE\u7F6E", () => ui.setPanel("settings"), panel === "settings"),
-      h12("button", {
+      toolbarButton("search", h13(IconSearch, { width: 16, height: 16 }), "\u641C\u7D22", () => ui.setPanel("search"), panel === "search"),
+      toolbarButton("hl", h13(IconHighlight, { width: 16, height: 16 }), "\u5212\u7EBF", () => ui.setPanel("highlights"), panel === "highlights" || panel === "notes"),
+      toolbarButton("ai", h13(IconSparkles, { width: 16, height: 16 }), "AI \u4F34\u8BFB", () => ui.setPanel("companion"), panel === "companion"),
+      toolbarButton("settings", h13(IconSettings, { width: 16, height: 16 }), "\u8BBE\u7F6E", () => ui.setPanel("settings"), panel === "settings"),
+      h13("button", {
         type: "button",
         className: "qmr-btn qmr-btn-icon",
         "aria-label": "\u5168\u5C4F",
         title: "\u5168\u5C4F",
         onClick: () => ui.toggleFullscreen()
-      }, h12(IconFullscreen, { width: 16, height: 16 })),
-      h12("button", {
+      }, h13(IconFullscreen, { width: 16, height: 16 })),
+      h13("button", {
         type: "button",
         className: "qmr-btn qmr-btn-icon",
         "aria-label": "\u5173\u95ED\u9605\u8BFB\u5668",
         title: "\u5173\u95ED\u9605\u8BFB\u5668",
         onClick: () => ui.closeOverlay()
-      }, h12(IconClose, { width: 16, height: 16 }))
+      }, h13(IconClose, { width: 16, height: 16 }))
     )
   );
-  const bottomBar = h12(
+  const bottomBar = h13(
     "div",
     { className: `qmr-bottombar${chromeVisible ? "" : " qmr-chrome-hidden"}` },
-    h12("button", {
+    h13("button", {
       type: "button",
       className: `qmr-icon-btn${panel === "toc" ? " is-active" : ""}`,
       "aria-label": "\u76EE\u5F55",
       "aria-pressed": panel === "toc",
       title: "\u76EE\u5F55",
       onClick: () => ui.setPanel("toc")
-    }, h12(IconToc, { width: 16, height: 16 })),
-    h12("button", {
+    }, h13(IconToc, { width: 16, height: 16 })),
+    h13("button", {
       type: "button",
       className: "qmr-icon-btn",
       "aria-label": "\u4E0A\u4E00\u9875",
       onClick: () => ui.turnPage(-1)
-    }, h12(IconPrev, { width: 16, height: 16 })),
-    h12(
+    }, h13(IconPrev, { width: 16, height: 16 })),
+    h13(
       "div",
       {
         className: "qmr-track",
@@ -106964,26 +107449,26 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
           }
         }
       },
-      h12("div", { className: "qmr-track-rail" }),
-      h12("div", { className: "qmr-track-fill", style: { width: `${Math.round(progress * 100)}%` } }),
-      h12("div", { className: "qmr-track-knob", style: { left: `${Math.round(progress * 100)}%` } })
+      h13("div", { className: "qmr-track-rail" }),
+      h13("div", { className: "qmr-track-fill", style: { width: `${Math.round(progress * 100)}%` } }),
+      h13("div", { className: "qmr-track-knob", style: { left: `${Math.round(progress * 100)}%` } })
     ),
-    h12("span", { className: "qmr-bottom-text" }, `\u7B2C ${chapterIndex + 1} / ${chapterCount || "?"} ${sectionUnit}`),
-    h12("span", { className: "qmr-bottom-text" }, formatPercent(progress)),
-    h12("button", {
+    h13("span", { className: "qmr-bottom-text" }, `\u7B2C ${chapterIndex + 1} / ${chapterCount || "?"} ${sectionUnit}`),
+    h13("span", { className: "qmr-bottom-text" }, formatPercent(progress)),
+    h13("button", {
       type: "button",
       className: "qmr-icon-btn",
       "aria-label": "\u4E0B\u4E00\u9875",
       onClick: () => ui.turnPage(1)
-    }, h12(IconNext, { width: 16, height: 16 }))
+    }, h13(IconNext, { width: 16, height: 16 }))
   );
-  return h12(
+  return h13(
     "div",
     { className: `qmr-reader${isPdf ? " qmr-reader-pdf" : ""}`, "data-qmr-theme": settings.theme, style: themeVars },
-    h12(
+    h13(
       "div",
       { className: `qmr-reader-main${panel === "companion" ? " qmr-has-companion" : ""}`, ref: workareaRef, style: { "--qmr-companion-width": `${companionWidth}%` } },
-      h12(
+      h13(
         "div",
         {
           className: `qmr-reader-content${settings.flow === "scroll" ? " qmr-flow-scroll" : ""}`,
@@ -106994,16 +107479,16 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
           onKeyDownCapture: showChrome
         },
         topBar,
-        settings.flow !== "scroll" ? h12("button", {
+        settings.flow !== "scroll" ? h13("button", {
           type: "button",
           className: "qmr-page-zone qmr-page-zone-prev",
           "aria-label": "\u4E0A\u4E00\u9875",
           onClick: () => ui.turnPage(-1)
         }) : null,
-        h12(
+        h13(
           "div",
           { className: "qmr-page-frame", style: contentStyle },
-          h12("div", { className: viewportClass, ref: viewportRef }, h12("div", {
+          h13("div", { className: viewportClass, ref: viewportRef }, h13("div", {
             className: "qmr-page-flow qmr-paper-body",
             ref: flowRef,
             style: flowStyle,
@@ -107011,29 +107496,29 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
             onScroll: void 0
           }))
         ),
-        settings.flow !== "scroll" ? h12("button", {
+        settings.flow !== "scroll" ? h13("button", {
           type: "button",
           className: "qmr-page-zone qmr-page-zone-next",
           "aria-label": "\u4E0B\u4E00\u9875",
           onClick: () => ui.turnPage(1)
         }) : null,
-        settings.flow !== "scroll" ? h12("div", { className: "qmr-page-count" }, `\u7B2C ${page + 1} / ${pageCount} \u9875`) : null,
-        chapterBusy ? h12("div", { className: "qmr-chapter-loading" }, "\u6B63\u5728\u6392\u7248\u2026") : null,
-        renderError ? h12(
+        settings.flow !== "scroll" ? h13("div", { className: "qmr-page-count" }, `\u7B2C ${page + 1} / ${pageCount} \u9875`) : null,
+        chapterBusy ? h13("div", { className: "qmr-chapter-loading" }, "\u6B63\u5728\u6392\u7248\u2026") : null,
+        renderError ? h13(
           "div",
           { className: "qmr-errorbox" },
-          h12("div", { className: "qmr-errorbox-title" }, `\u8FD9\u4E00${sectionUnit}\u6E32\u67D3\u5931\u8D25`),
-          h12("div", { className: "qmr-errorbox-text" }, renderError),
-          h12("button", {
+          h13("div", { className: "qmr-errorbox-title" }, `\u8FD9\u4E00${sectionUnit}\u6E32\u67D3\u5931\u8D25`),
+          h13("div", { className: "qmr-errorbox-text" }, renderError),
+          h13("button", {
             type: "button",
             className: "qmr-btn qmr-btn-sm",
             onClick: () => ui.store.set({ engineVersion: (ui.store.get().engineVersion || 0) + 1 })
           }, "\u91CD\u8BD5")
         ) : null,
-        selection ? h12(SelectionMenu, { ui, selection, onHighlight, onNote, onAsk }) : null,
+        selection ? h13(SelectionMenu, { ui, selection, onHighlight, onNote, onAsk }) : null,
         bottomBar
       ),
-      panel === "companion" ? h12("div", {
+      panel === "companion" ? h13("div", {
         className: "qmr-companion-divider",
         role: "separator",
         tabIndex: 0,
@@ -107084,14 +107569,14 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
           localStorage.setItem("qmr.companionWidth", "44");
         }
       }) : null,
-      panelNode ? h12("div", { className: `qmr-panel${panel === "companion" ? " qmr-panel-companion" : ""}${narrow && panel !== "companion" ? " qmr-panel-overlay" : ""}` }, panelNode) : null
+      panelNode ? h13("div", { className: `qmr-panel${panel === "companion" ? " qmr-panel-companion" : ""}${narrow && panel !== "companion" ? " qmr-panel-overlay" : ""}` }, panelNode) : null
     ),
-    promptManagerOpen ? h12(PromptManager, { onClose: () => ui.store.set({ promptManagerOpen: false }) }) : null
+    promptManagerOpen ? h13(PromptManager, { onClose: () => ui.store.set({ promptManagerOpen: false }) }) : null
   );
 }
 
 // src/ui/shell.js
-var h13 = React14.createElement;
+var h14 = React15.createElement;
 var INITIAL_STATE = Object.freeze({
   visible: false,
   view: "library",
@@ -107099,7 +107584,7 @@ var INITIAL_STATE = Object.freeze({
   panel: null,
   states: {}
 });
-var ReaderErrorBoundary = class extends React14.Component {
+var ReaderErrorBoundary = class extends React15.Component {
   constructor(props) {
     super(props);
     this.state = { error: null };
@@ -107121,23 +107606,23 @@ var ReaderErrorBoundary = class extends React14.Component {
     const error = this.state.error;
     if (error) {
       const text2 = String(error && error.message || error || "\u672A\u77E5\u9519\u8BEF");
-      return h13(
+      return h14(
         "div",
         { className: "qmr-root" },
-        h13(
+        h14(
           "div",
           { className: "qmr-errorbox", role: "alert" },
-          h13("div", { className: "qmr-errorbox-title" }, "\u9605\u8BFB\u5668\u754C\u9762\u51FA\u9519"),
-          h13("div", { className: "qmr-errorbox-text" }, text2),
-          h13(
+          h14("div", { className: "qmr-errorbox-title" }, "\u9605\u8BFB\u5668\u754C\u9762\u51FA\u9519"),
+          h14("div", { className: "qmr-errorbox-text" }, text2),
+          h14(
             "div",
             { className: "qmr-hl-tools" },
-            h13("button", {
+            h14("button", {
               type: "button",
               className: "qmr-btn qmr-btn-primary qmr-btn-sm",
               onClick: this.reset
-            }, h13(IconRetry, { width: 14, height: 14 }), "\u91CD\u8BD5"),
-            typeof this.props.onClose === "function" ? h13("button", {
+            }, h14(IconRetry, { width: 14, height: 14 }), "\u91CD\u8BD5"),
+            typeof this.props.onClose === "function" ? h14("button", {
               type: "button",
               className: "qmr-btn qmr-btn-sm",
               onClick: this.props.onClose
@@ -107154,13 +107639,13 @@ function looksLikeStore2(value) {
 }
 function ReaderOverlay(props) {
   const injectedStore = props && looksLikeStore2(props.store) ? props.store : null;
-  const fallbackStore = React14.useMemo(() => createUiStore({ ...INITIAL_STATE }), []);
+  const fallbackStore = React15.useMemo(() => createUiStore({ ...INITIAL_STATE }), []);
   const store = injectedStore || fallbackStore;
-  const propsRef = React14.useRef(props);
+  const propsRef = React15.useRef(props);
   propsRef.current = props;
-  const ui = React14.useMemo(() => createController(() => propsRef.current, store), [store]);
+  const ui = React15.useMemo(() => createController(() => propsRef.current, store), [store]);
   const injectedUseStore = props && typeof props.useStore === "function" ? props.useStore : null;
-  const useSel = React14.useCallback(
+  const useSel = React15.useCallback(
     (selector) => injectedUseStore ? injectedUseStore(selector) : useUiStore(store, selector),
     [injectedUseStore, store]
   );
@@ -107173,11 +107658,11 @@ function ReaderOverlay(props) {
   const lastError = useSel((state) => state.lastError);
   const openSignal = useSel((state) => state.openSignal);
   const jumpTarget = useSel((state) => state.jumpTarget);
-  const overlayRef = React14.useRef(null);
-  const lastSignalRef = React14.useRef(openSignal);
-  const handledBookRef = React14.useRef(null);
-  const initialHandledRef = React14.useRef(false);
-  const setOverlayNode = React14.useCallback((element) => {
+  const overlayRef = React15.useRef(null);
+  const lastSignalRef = React15.useRef(openSignal);
+  const handledBookRef = React15.useRef(null);
+  const initialHandledRef = React15.useRef(false);
+  const setOverlayNode = React15.useCallback((element) => {
     overlayRef.current = element;
     try {
       ui.attachOverlay(element);
@@ -107185,7 +107670,7 @@ function ReaderOverlay(props) {
     } catch (_error) {
     }
   }, [ui]);
-  React14.useEffect(() => {
+  React15.useEffect(() => {
     if (openSignal === void 0 || openSignal === null) return;
     if (lastSignalRef.current === openSignal) return;
     lastSignalRef.current = openSignal;
@@ -107198,7 +107683,7 @@ function ReaderOverlay(props) {
     handledBookRef.current = null;
     ui.openLibrary();
   }, [openSignal, store, ui]);
-  React14.useEffect(() => {
+  React15.useEffect(() => {
     if (initialHandledRef.current) return;
     const initialBookId = propsRef.current && propsRef.current.initialBookId;
     if (!initialBookId) {
@@ -107209,7 +107694,7 @@ function ReaderOverlay(props) {
     handledBookRef.current = String(initialBookId);
     ui.openBook(initialBookId);
   }, [ui]);
-  React14.useEffect(() => {
+  React15.useEffect(() => {
     if (!jumpTarget) return void 0;
     let cancelled = false;
     (async () => {
@@ -107221,7 +107706,7 @@ function ReaderOverlay(props) {
       cancelled = true;
     };
   }, [jumpTarget, store, ui]);
-  React14.useEffect(() => {
+  React15.useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key !== "Escape") return;
       const state = store.get();
@@ -107249,19 +107734,19 @@ function ReaderOverlay(props) {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [store, ui]);
   if (!visible && !props.embedded) return null;
-  const errorBar = lastError ? h13(
+  const errorBar = lastError ? h14(
     "div",
     { className: "qmr-errorbar", role: "alert" },
-    h13("span", null, String(lastError)),
-    h13("button", {
+    h14("span", null, String(lastError)),
+    h14("button", {
       type: "button",
       className: "qmr-icon-btn",
       "aria-label": "\u5173\u95ED\u9519\u8BEF\u63D0\u793A",
       onClick: () => ui.clearError()
-    }, h13(IconClose, { width: 14, height: 14 }))
+    }, h14(IconClose, { width: 14, height: 14 }))
   ) : null;
-  const content = view === "reader" && bookId != null ? h13(ReaderView, { ui, chatApi: props.chatApi, SessionProvider: props.SessionProvider, renderSlot: props.renderSlot }) : h13(LibraryView, { ui });
-  return h13(
+  const content = view === "reader" && bookId != null ? h14(ReaderView, { ui, chatApi: props.chatApi, SessionProvider: props.SessionProvider, renderSlot: props.renderSlot }) : h14(LibraryView, { ui });
+  return h14(
     "div",
     {
       className: props.embedded ? "qmr-overlay qmr-embedded" : "qmr-overlay",
@@ -107271,17 +107756,17 @@ function ReaderOverlay(props) {
       "aria-label": "\u4E54\u6728\u9605\u8BFB",
       "data-qmr-view": view
     },
-    h13(StyleSheet, null),
+    h14(StyleSheet, null),
     errorBar,
-    h13(
+    h14(
       ReaderErrorBoundary,
       { onError: (error) => ui.reportError(error, true), onClose: () => ui.closeOverlay() },
-      h13(
+      h14(
         "div",
         { className: "qmr-root" },
-        view === "reader" ? h13(ImportQueueView, { ui, compact: true }) : null,
+        view === "reader" ? h14(ImportQueueView, { ui, compact: true }) : null,
         content,
-        notice ? h13("div", { className: `qmr-toast is-${noticeKind || "info"}` }, String(notice)) : null
+        notice ? h14("div", { className: `qmr-toast is-${noticeKind || "info"}` }, String(notice)) : null
       )
     )
   );
@@ -107404,7 +107889,7 @@ var remoteCodec = () => ({
 });
 var REMOTE = {
   package: "qiaomu-reader-dsh",
-  descriptors: ["info", "library", "importBook", "removeBook", "loadState", "saveState", "readBookBytes", "highlights", "exportNotes", "setReadingContext"].map((method) => ({
+  descriptors: ["info", "library", "importBook", "removeBook", "loadState", "saveState", "readBookBytes", "highlights", "exportNotes", "setReadingContext", "createTag", "renameTag", "deleteTag", "updateBookTags", "migrateBookTags"].map((method) => ({
     id: `qiaomu-reader-dsh#qiaomuReader/${method}`,
     service: "qiaomuReader",
     namespace: "qiaomuReader",
@@ -107420,7 +107905,7 @@ function pickComponent(module2, names, label) {
   for (const name of names) {
     if (typeof module2?.[name] === "function") return module2[name];
   }
-  const Missing = () => React15.createElement(
+  const Missing = () => React16.createElement(
     "div",
     { style: { padding: "16px", fontSize: "13px", color: "var(--dsw-alias-state-error-primary, #d33)" } },
     `\u4E54\u6728\u9605\u8BFB\uFF1A${label} \u6CA1\u6709\u5BFC\u51FA\u9884\u671F\u7684\u7EC4\u4EF6\uFF08\u627E\u8FC7 ${names.join(" / ")}\uFF09\u3002\u8BF7\u68C0\u67E5\u6784\u5EFA\u4EA7\u7269\u3002`
@@ -107462,6 +107947,7 @@ function apply(ctx) {
     return () => {
       globalThis.removeEventListener?.("beforeunload", beforeUnload);
       importQueue.dispose();
+      data.dispose();
     };
   }, "qiaomu-reader: import queue");
   function openReader(bookId = null) {
@@ -107536,6 +108022,7 @@ function apply(ctx) {
       retryFailedImports: () => importQueue.retryFailed(),
       cancelImport: (id) => importQueue.cancel(id),
       clearImports: () => importQueue.clear(),
+      updateBookTags: (request) => data.updateBookTags(request),
       /** 删除一本书。 */
       async removeBook(bookId) {
         try {
@@ -107591,11 +108078,11 @@ function apply(ctx) {
     return data.getEngine(bookId);
   }
   function ReaderPanel(props) {
-    React15.useEffect(() => {
+    React16.useEffect(() => {
       store.set({ visible: true });
       return () => store.set({ visible: false, panel: null, selection: null });
     }, []);
-    return React15.createElement(Overlay, { ...props, embedded: true });
+    return React16.createElement(Overlay, { ...props, embedded: true });
   }
   ctx.effect(
     () => ctx.slots.inject(
@@ -107677,8 +108164,8 @@ function apply(ctx) {
   }, "qiaomu-reader: \u5FEB\u6377\u952E");
   ctx.inject(["locale"], (child) => {
     return child.locale.register(NS, {
-      zh: { open: "\u4E54\u6728\u9605\u8BFB", library: "\u4E66\u5E93", reader: "\u9605\u8BFB", themeWhite: "\u7EAF\u767D", ...LIBRARY_MESSAGES.zh },
-      en: { open: "Qiaomu Reader", library: "Library", reader: "Reader", themeWhite: "Pure white", ...LIBRARY_MESSAGES.en }
+      zh: { open: "\u4E54\u6728\u9605\u8BFB", library: "\u4E66\u5E93", reader: "\u9605\u8BFB", themeWhite: "\u7EAF\u767D", ...flattenMessages(LIBRARY_MESSAGES.zh) },
+      en: { open: "Qiaomu Reader", library: "Library", reader: "Reader", themeWhite: "Pure white", ...flattenMessages(LIBRARY_MESSAGES.en) }
     });
   });
   if (typeof ctx.remote?.$mount === "function") {
@@ -107720,16 +108207,16 @@ function apply(ctx) {
   }, "qiaomu-reader: \u9884\u8F7D\u4E66\u5E93");
 }
 function BookIcon({ size = 18 }) {
-  return React15.createElement(
+  return React16.createElement(
     "svg",
     { width: size, height: size, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, focusable: false, style: { display: "block", flexShrink: 0 } },
-    React15.createElement("path", {
+    React16.createElement("path", {
       d: "M12 6.5C10.2 5 7.6 4.4 4.6 4.7v13.6c3-.3 5.6.3 7.4 1.8 1.8-1.5 4.4-2.1 7.4-1.8V4.7c-3-.3-5.6.3-7.4 1.8Z",
       stroke: "currentColor",
       strokeWidth: 1.6,
       strokeLinejoin: "round"
     }),
-    React15.createElement("path", { d: "M12 6.5v13.6", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round" })
+    React16.createElement("path", { d: "M12 6.5v13.6", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round" })
   );
 }
 

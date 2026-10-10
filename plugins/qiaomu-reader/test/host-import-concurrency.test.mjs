@@ -243,6 +243,36 @@ test('automatic export failure does not prevent later saves and imports', async 
   }
 });
 
+test('tag mutations share import and reading-state serialization and survive reopening', async (t) => {
+  const app = await harness(t);
+  const { book } = await app.api.import(upload('tagged'));
+  const created = await app.api.createTag({ name: 'Topic' });
+  const tagId = created.tags[0].id;
+  const gate = gateRead(path.join(app.base, 'library.json'));
+  const adding = app.api.updateBookTags({ bookIds: [book.id, 'starter-book'], tagIds: [tagId], operation: 'add' });
+  await gate.reached;
+  const importing = app.api.import(upload('second'));
+  const saving = app.api.saveState(book.id, state('retained'));
+  gate.release();
+  await Promise.all([adding, importing, saving]);
+  const reopened = await app.api.library();
+  assert.equal(reopened.books.length, 2);
+  assert.deepEqual(reopened.bookTags[book.id], [tagId]);
+  assert.deepEqual(reopened.bookTags['starter-book'], [tagId]);
+  await app.api.renameTag({ tagId, name: 'Renamed' });
+  const before = await app.index();
+  await assert.rejects(app.api.updateBookTags({ bookIds: [book.id], tagIds: ['missing'], newTagNames: ['not committed'], operation: 'add' }));
+  assert.deepEqual(await app.index(), before);
+  await app.api.updateBookTags({ bookIds: ['browser-book'], tagIds: [tagId], operation: 'add' });
+  await app.api.migrateBookTags({ fromId: 'browser-book', toId: book.id });
+  assert.equal((await app.index()).bookTags['browser-book'], undefined);
+  await app.api.deleteTag({ tagId });
+  const deleted = await app.index();
+  assert.deepEqual(deleted.tags, []); assert.deepEqual(deleted.bookTags, {});
+  assert.equal(deleted.books.length, 2);
+  assert.equal((await app.api.loadState(book.id)).highlights[0].text, 'retained');
+});
+
 test('independent apply instances do not share their mutation queue', async (t) => {
   const first = await harness(t);
   const second = await harness(t);

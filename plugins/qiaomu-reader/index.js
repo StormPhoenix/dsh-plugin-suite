@@ -1529,7 +1529,136 @@ var init_text_book = __esm({
 });
 
 // src/host/index.js
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+
+// src/core/tags.js
+var RESERVED_IDS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
+var CONTROLS = new RegExp("\\p{Cc}", "u");
+var isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var validId = (id) => typeof id === "string" && id.length > 0 && id === id.trim() && !CONTROLS.test(id) && !RESERVED_IDS.has(id);
+function requireId(id) {
+  if (!validId(id)) throw new Error("Invalid ID");
+  return id;
+}
+function requireList(value, label) {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
+  return value;
+}
+function ids(value, label) {
+  return [...new Set(requireList(value, label).map(requireId))];
+}
+function requireTag(model, id) {
+  requireId(id);
+  if (!model.tags.some((tag) => tag.id === id)) throw new Error("Unknown tag ID");
+}
+function normalizeTagName(name2) {
+  if (typeof name2 !== "string" || CONTROLS.test(name2)) throw new Error("Invalid tag name");
+  const normalized = name2.normalize("NFC").trim();
+  if ([...normalized].length < 1 || [...normalized].length > 40) throw new Error("Tag name must contain 1\u201340 characters");
+  return normalized;
+}
+function tagNameKey(name2) {
+  return normalizeTagName(name2).toLowerCase().normalize("NFC");
+}
+function normalizeTagModel(raw) {
+  const source = isObject(raw) ? raw : {};
+  const tags = [], names = /* @__PURE__ */ new Map(), aliases = /* @__PURE__ */ new Map();
+  for (const tag of Array.isArray(source.tags) ? source.tags : []) {
+    if (!isObject(tag) || !validId(tag.id) || aliases.has(tag.id)) continue;
+    let name2;
+    try {
+      name2 = normalizeTagName(tag.name);
+    } catch (error) {
+      continue;
+    }
+    const key = tagNameKey(name2);
+    const id = names.get(key) ?? tag.id;
+    aliases.set(tag.id, id);
+    if (!names.has(key)) {
+      names.set(key, id);
+      tags.push({ id, name: name2 });
+    }
+  }
+  const bookTags = {};
+  if (isObject(source.bookTags)) {
+    for (const [id, assigned] of Object.entries(source.bookTags)) {
+      if (!validId(id) || !Array.isArray(assigned)) continue;
+      const clean = [...new Set(assigned.filter(validId).map((tagId) => aliases.get(tagId)).filter(Boolean))];
+      if (clean.length) bookTags[id] = clean;
+    }
+  }
+  return { tags, bookTags };
+}
+function createTag(model, { id, name: name2 }) {
+  const result = normalizeTagModel(model);
+  requireId(id);
+  name2 = normalizeTagName(name2);
+  if (result.tags.some((tag) => tag.id === id)) throw new Error("Duplicate tag ID");
+  if (result.tags.some((tag) => tagNameKey(tag.name) === tagNameKey(name2))) throw new Error("Duplicate tag name");
+  result.tags.push({ id, name: name2 });
+  return result;
+}
+function renameTag(model, { tagId, name: name2 }) {
+  const result = normalizeTagModel(model);
+  requireTag(result, tagId);
+  name2 = normalizeTagName(name2);
+  if (result.tags.some((tag) => tag.id !== tagId && tagNameKey(tag.name) === tagNameKey(name2))) throw new Error("Duplicate tag name");
+  result.tags = result.tags.map((tag) => tag.id === tagId ? { id: tagId, name: name2 } : tag);
+  return result;
+}
+function deleteTag(model, { tagId }) {
+  const result = normalizeTagModel(model);
+  requireTag(result, tagId);
+  result.tags = result.tags.filter((tag) => tag.id !== tagId);
+  for (const [id, assigned] of Object.entries(result.bookTags)) {
+    const remaining = assigned.filter((id2) => id2 !== tagId);
+    if (remaining.length) result.bookTags[id] = remaining;
+    else delete result.bookTags[id];
+  }
+  return result;
+}
+function updateBookTags(model, { bookIds, tagIds = [], newTagNames = [], operation }, createId) {
+  const result = normalizeTagModel(model);
+  if (!["add", "remove", "replace"].includes(operation)) throw new Error("Invalid tag operation");
+  const books = ids(bookIds, "bookIds");
+  if (!books.length || operation === "replace" && books.length !== 1) throw new Error("Invalid book selection");
+  const selected = ids(tagIds, "tagIds");
+  selected.forEach((id) => requireTag(result, id));
+  const names = requireList(newTagNames, "newTagNames").map(normalizeTagName);
+  if (operation === "remove" && names.length) throw new Error("New tag names require add or replace");
+  const byName = new Map(result.tags.map((tag) => [tagNameKey(tag.name), tag.id]));
+  for (const name2 of names) {
+    const key = tagNameKey(name2);
+    let id = byName.get(key);
+    if (!id) {
+      if (typeof createId !== "function") throw new Error("A tag ID factory is required");
+      id = requireId(createId());
+      if (result.tags.some((tag) => tag.id === id)) throw new Error("Duplicate tag ID");
+      result.tags.push({ id, name: name2 });
+      byName.set(key, id);
+    }
+    if (!selected.includes(id)) selected.push(id);
+  }
+  for (const bookId of books) {
+    const assigned = result.bookTags[bookId] ?? [];
+    const next = operation === "replace" ? [...selected] : operation === "add" ? [.../* @__PURE__ */ new Set([...assigned, ...selected])] : assigned.filter((id) => !selected.includes(id));
+    if (next.length) result.bookTags[bookId] = next;
+    else delete result.bookTags[bookId];
+  }
+  return result;
+}
+function migrateBookTags(model, { fromId, toId }) {
+  const result = normalizeTagModel(model);
+  requireId(fromId);
+  requireId(toId);
+  if (fromId === toId) return result;
+  const merged = [.../* @__PURE__ */ new Set([...result.bookTags[toId] ?? [], ...result.bookTags[fromId] ?? []])];
+  if (merged.length) result.bookTags[toId] = merged;
+  delete result.bookTags[fromId];
+  return result;
+}
+
+// src/host/index.js
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile, copyFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -1647,7 +1776,8 @@ async function readLibrary(paths) {
   return {
     version: typeof raw?.version === "number" ? raw.version : LIBRARY_VERSION,
     updatedAt: typeof raw?.updatedAt === "number" ? raw.updatedAt : Date.now(),
-    books
+    books,
+    ...normalizeTagModel(raw)
   };
 }
 async function writeLibrary(paths, library) {
@@ -1847,8 +1977,50 @@ function apply(ctx, config = {}) {
         }
         await rm(safeJoin(paths.state, `${bookId}.json`), { force: true });
         library.books = library.books.filter((entry) => entry.id !== bookId);
+        delete library.bookTags[bookId];
         await writeLibrary(paths, library);
         return { removed: bookId };
+      });
+    },
+    // 创建标签并返回已保存的完整分类快照。
+    createTag(request) {
+      return mutate(async () => {
+        const paths = await ensureFolders();
+        const library = await readLibrary(paths);
+        return writeLibrary(paths, { ...library, ...createTag(library, { id: randomUUID(), name: request?.name }) });
+      });
+    },
+    // 重命名标签，书籍关联保持稳定。
+    renameTag(request) {
+      return mutate(async () => {
+        const paths = await ensureFolders();
+        const library = await readLibrary(paths);
+        return writeLibrary(paths, { ...library, ...renameTag(library, request) });
+      });
+    },
+    // 删除标签及关联，不删除书籍或阅读数据。
+    deleteTag(request) {
+      return mutate(async () => {
+        const paths = await ensureFolders();
+        const library = await readLibrary(paths);
+        return writeLibrary(paths, { ...library, ...deleteTag(library, request) });
+      });
+    },
+    // 原子更新选中书籍的标签，新名称与关联一同保存。
+    updateBookTags(request) {
+      return mutate(async () => {
+        const paths = await ensureFolders();
+        const library = await readLibrary(paths);
+        return writeLibrary(paths, { ...library, ...updateBookTags(library, request, randomUUID) });
+      });
+    },
+    // 浏览器书籍提升到宿主时合并标签关联。
+    migrateBookTags(request) {
+      return mutate(async () => {
+        const paths = await ensureFolders();
+        const library = await readLibrary(paths);
+        if (!library.books.some((book) => book.id === request?.toId)) throw new Error("TAG_BOOK_NOT_FOUND");
+        return writeLibrary(paths, { ...library, ...migrateBookTags(library, request) });
       });
     },
     
@@ -2154,6 +2326,21 @@ var ReaderService = class extends TypertRemoteService {
   exportNotes(request) {
     return this.api.exportNotes(request.bookId);
   }
+  createTag(request) {
+    return this.api.createTag(request);
+  }
+  renameTag(request) {
+    return this.api.renameTag(request);
+  }
+  deleteTag(request) {
+    return this.api.deleteTag(request);
+  }
+  updateBookTags(request) {
+    return this.api.updateBookTags(request);
+  }
+  migrateBookTags(request) {
+    return this.api.migrateBookTags(request);
+  }
   setReadingContext(request) {
     const sessionId = String(request?.sessionId || "");
     if (!sessionId || sessionId.length > 160) throw new Error("\u65E0\u6548\u4F1A\u8BDD");
@@ -2178,7 +2365,7 @@ ${JSON.stringify(material)}
     return { ok: true };
   }
 };
-for (const name2 of ["info", "library", "importBook", "removeBook", "loadState", "saveState", "readBookBytes", "highlights", "exportNotes", "setReadingContext"]) {
+for (const name2 of ["info", "library", "importBook", "removeBook", "loadState", "saveState", "readBookBytes", "highlights", "exportNotes", "setReadingContext", "createTag", "renameTag", "deleteTag", "updateBookTags", "migrateBookTags"]) {
   Remote(name2)(ReaderService.prototype[name2], {
     name: name2,
     private: false,

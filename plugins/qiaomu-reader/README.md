@@ -69,6 +69,14 @@ dsh plugin --profile desktop add "$PWD/qiaomu-reader-dsh-1.0.2.tgz"
 
 普通滚轮在分页文本中翻屏；在 PDF 或连续滚动文本中先滚动当前页/章，到边界后新的滚轮手势进入前后页/章。横向滚动不翻页，Ctrl＋滚轮只缩放正文，不缩放 Harness。目录、设置、AI 会话中的滚轮不触发正文翻页，方向键和原有翻页操作保持可用。
 
+## 标签搜索与整理
+
+书库顶部的「标签」按钮可搜索并多选已有标签，按「任一」或「全部」匹配整个书库；「无标签」仅显示未分类书籍。标签条件可叠加书名／作者关键词、阅读状态和文件格式，清空筛选不改变排序。书籍作者下显示标签，更多标签可在编辑面板查看。
+
+单本「更多操作 → 编辑标签」支持添加、移除及创建标签，保存后生效，取消不写入。进入「选择书籍」模式可全选当前筛选结果，并批量添加或移除指定标签，各书其他标签保持不变；改变筛选会清空选择。导入流程不自动打标签。
+
+标签使用自动配色的胶囊展示，同一标签在书目、筛选和编辑中颜色一致。编辑弹窗只有一个输入框：输入已有名称并按 Enter 选择，输入新名称并按 Enter 加入待保存标签；确认后标签及关联一同保存，取消不创建标签。批量移除只搜索所选书籍已有的标签，不创建新标签。没有独立标签管理、重命名或删除入口；移除书籍关联后仍保留标签供再次使用，不移动或复制文件。标签及关联保存在宿主书库索引并缓存到浏览器。宿主不可用时可查看和筛选缓存，但不能编辑标签；恢复连接后刷新书库再编辑。
+
 ## 本地书库与隐私
 
 宿主书库目录名默认为 `乔木阅读`，包含 `books/`、`state/`、`notes/` 和 `library.json`。根目录优先采用插件配置 `workspaceRoot`，其次是 `DSH_WORKSPACE` 环境变量，最后是宿主进程的启动目录。书库根目录不随当前聊天工作区切换；需要稳定位置时显式配置 `workspaceRoot`。
@@ -107,6 +115,8 @@ Node.js 22+。`src/core/` 是书籍解析与阅读状态，`src/client/` 是界�
 The library screenshot shows the actual component using starter books and test fixtures; the desktop host library has also been checked. The reading screenshot comes from an isolated Harness Web profile. **Install:** download the tarball and checksum from [v1.0.2](https://github.com/joeseesun/qiaomu-reader-dsh/releases/tag/v1.0.2), run the checksum and installation commands above, then restart your profile and open **Qiaomu Reader**. Replace `desktop` with your profile name. No source build is required; there is no npm release.
 
 **Batch imports:** select multiple EPUB/PDF/TXT files and process them sequentially. Append files while importing, stop after the current file, continue manually, cancel waiting items, or retry individual/all failures at the tail. Stopped queues remain stopped when files are added or retried. Identical content updates one book; identical names with different content create separate books. Outcomes distinguish host library saves, browser-only saves and failures. Browser-only saves require both bytes and a recoverable index; retry them to save to the host. A host save remains successful if its auxiliary browser cache fails. Page switches keep the queue running, but reloads, restarts and plugin unloads do not restore it. Clearing processed records keeps books but releases files needed for retries. Host index mutations are serialized per plugin instance, not across independent host processes.
+
+**Tags:** use the top tag filter to search existing tags and match any or all selected tags across the library, combined with title/author, reading status and format filters. Tags appear below each author. Edit one book or select filtered books to add/remove specific tags without replacing their other tags. Pending edits and new names are committed on Save; cancelling does not write. A single input searches existing tags or stages a new tag on Enter, with no writes until confirmation. Removal offers only tags assigned to selected books. Stable automatic colours identify tag chips throughout the UI. There is no standalone tag manager, rename or delete entry; unused tags remain available. Tags do not move or duplicate files, and imports are unchanged. Host-confirmed tags are cached for offline viewing/filtering; editing requires a host connection and a refreshed library.
 
 Reading does not require a model key. AI companion actions require a configured Harness model and send the relevant reading context to that provider. Library files remain on the host under `乔木阅读`: the root is configured `workspaceRoot`, then `DSH_WORKSPACE`, then the host process working directory. Back up the entire folder before migrating. No independent cloud sync is provided.
 

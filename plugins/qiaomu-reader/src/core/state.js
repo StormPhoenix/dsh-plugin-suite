@@ -8,6 +8,7 @@
  */
 
 import { bounded, FONT_MIN, FONT_MAX, PDF_ZOOM_MIN, PDF_ZOOM_MAX } from './reader-input.js';
+import { normalizeTagModel } from './tags.js';
 
 /** 阅读器默认设置（冻结；调用方只读，不要原地修改） */
 export const DEFAULT_READER_SETTINGS = Object.freeze({
@@ -248,6 +249,7 @@ export function normalizeLibrary(raw) {
     ...source,
     version: toNonNegativeInt(source.version) || 1,
     updatedAt: toTimestamp(source.updatedAt),
+    ...normalizeTagModel(source),
     books,
   };
 }

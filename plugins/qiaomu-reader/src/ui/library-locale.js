@@ -1,8 +1,19 @@
+/** Flatten nested UI messages into the locale registry's dotted string keys. */
+export function flattenMessages(messages, prefix = '') {
+  return Object.fromEntries(Object.entries(messages).flatMap(([key, value]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    return typeof value === 'string' ? [[path, value]] : Object.entries(flattenMessages(value, path));
+  }));
+}
+
 /** Shared client catalogue messages. */
 export const LIBRARY_MESSAGES = {
   "zh": {
     "reader": { "zoom": "缩放", "zoomIn": "放大（Ctrl＋滚轮向上）", "zoomOut": "缩小（Ctrl＋滚轮向下）" },
     "catalog": {
+      "tags": {
+        "filter": "标签筛选", "search": "搜索已有标签", "untagged": "无标签", "match": "匹配方式", "any": "任一标签", "all": "全部标签", "clearTags": "清空标签筛选", "done": "完成", "close": "关闭", "noneFound": "没有匹配的标签", "moreTags": "另有 {count} 个标签", "edit": "编辑标签", "bulkAdd": "批量添加标签", "bulkRemove": "批量移除标签", "bookCount": "将修改 {count} 本书", "cancel": "取消", "save": "保存", "saving": "保存中…", "failed": "标签操作失败，请重试", "cacheWarning": "标签已保存到书库，但浏览器缓存更新失败；离线分类可能不是最新状态", "offline": "离线时无法编辑标签；连接书库后可添加或移除标签", "nameControls": "标签名称不能包含控制字符。", "nameRequired": "请输入标签名称。", "nameLong": "标签名称最多 40 个字符。", "activeFilters": "当前筛选", "removeFilter": "移除标签筛选 {name}", "clearAll": "清空全部筛选", "select": "选择书籍", "selected": "已选 {count} 本", "selectResults": "选择全部 {count} 本筛选结果", "selectBook": "选择《{title}》", "input": "输入标签，按 Enter 添加", "removeInput": "搜索要移除的标签", "existing": "已有标签", "createHint": "按 Enter 创建「{name}」", "enterFirst": "请按 Enter 添加输入的标签，或清空输入", "addTitle": "给 {count} 本书添加标签", "removeTitle": "从 {count} 本书移除标签", "keepExisting": "原有标签将保留", "removeHint": "仅移除所选书籍的标签，书籍与阅读数据不受影响", "confirmAdd": "确认添加", "confirmRemove": "确认移除", "clearSelection": "清空选择", "exitSelection": "退出选择", "chooseBooks": "请选择需要整理的书籍", "removeSelected": "取消选择标签 {name}"
+      },
       "queue": {
         "title": "导入队列", "add": "追加文件", "running": "导入中", "stopping": "当前文件完成后停止", "paused": "已停止", "idle": "处理完成",
         "summary": "已处理 {done}/{total} · 已入库 {host} · 仅浏览器缓存 {browser} · 失败 {failed} · 等待 {waiting} · 已取消 {cancelled}",
@@ -65,6 +76,9 @@ export const LIBRARY_MESSAGES = {
   "en": {
     "reader": { "zoom": "Zoom", "zoomIn": "Zoom in (Ctrl + wheel up)", "zoomOut": "Zoom out (Ctrl + wheel down)" },
     "catalog": {
+      "tags": {
+        "filter": "Tag filter", "search": "Search existing tags", "untagged": "No tags", "match": "Match", "any": "Any tag", "all": "All tags", "clearTags": "Clear tag filter", "done": "Done", "close": "Close", "noneFound": "No matching tags", "moreTags": "{count} more tags", "edit": "Edit tags", "bulkAdd": "Add tags in bulk", "bulkRemove": "Remove tags in bulk", "bookCount": "Changing {count} books", "cancel": "Cancel", "save": "Save", "saving": "Saving…", "failed": "Tag operation failed. Please retry.", "cacheWarning": "Tags were saved to the library, but the browser cache could not be updated. Offline tags may be outdated.", "offline": "Tag editing is unavailable offline. Connect to add or remove tags.", "nameControls": "Tag names cannot contain control characters.", "nameRequired": "Enter a tag name.", "nameLong": "Tag names can contain up to 40 characters.", "activeFilters": "Active filters", "removeFilter": "Remove tag filter {name}", "clearAll": "Clear all filters", "select": "Select books", "selected": "{count} selected", "selectResults": "Select all {count} matching books", "selectBook": "Select “{title}”", "input": "Enter a tag and press Enter", "removeInput": "Search tags to remove", "existing": "Existing tags", "createHint": "Press Enter to create “{name}”", "enterFirst": "Press Enter to add the typed tag, or clear the input.", "addTitle": "Add tags to {count} books", "removeTitle": "Remove tags from {count} books", "keepExisting": "Existing tags will be kept", "removeHint": "Only tags on selected books are removed. Books and reading data are kept.", "confirmAdd": "Confirm add", "confirmRemove": "Confirm remove", "clearSelection": "Clear selection", "exitSelection": "Exit selection", "chooseBooks": "Select books to organize", "removeSelected": "Deselect tag {name}"
+      },
       "queue": {
         "title": "Import queue", "add": "Add files", "running": "Importing", "stopping": "Stopping after current file", "paused": "Stopped", "idle": "Finished",
         "summary": "Processed {done}/{total} · Library {host} · Browser only {browser} · Failed {failed} · Waiting {waiting} · Cancelled {cancelled}",

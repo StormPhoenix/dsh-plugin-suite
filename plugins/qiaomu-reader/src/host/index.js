@@ -9,7 +9,8 @@
  * 这里不做任何渲染：EPUB 的解析与排版全在浏览器半边（client.js）完成。
  * 因此宿主半只依赖 Node 内置模块，重启、升级都不影响已入库的书。
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { normalizeTagModel, createTag, renameTag, deleteTag, updateBookTags, migrateBookTags } from '../core/tags.js';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { highlightLink } from '../core/backlink.js';
@@ -173,6 +174,7 @@ async function readLibrary(paths) {
     version: typeof raw?.version === 'number' ? raw.version : LIBRARY_VERSION,
     updatedAt: typeof raw?.updatedAt === 'number' ? raw.updatedAt : Date.now(),
     books,
+    ...normalizeTagModel(raw),
   };
 }
 
@@ -454,8 +456,55 @@ export function apply(ctx, config = {}) {
         }
         await rm(safeJoin(paths.state, `${bookId}.json`), { force: true });
         library.books = library.books.filter((entry) => entry.id !== bookId);
+        delete library.bookTags[bookId];
         await writeLibrary(paths, library);
         return { removed: bookId };
+      });
+    },
+
+    // 创建标签并返回已保存的完整分类快照。
+    createTag(request) {
+      return mutate(async () => {
+        const paths = await ensureFolders();
+        const library = await readLibrary(paths);
+        return writeLibrary(paths, { ...library, ...createTag(library, { id: randomUUID(), name: request?.name }) });
+      });
+    },
+
+    // 重命名标签，书籍关联保持稳定。
+    renameTag(request) {
+      return mutate(async () => {
+        const paths = await ensureFolders();
+        const library = await readLibrary(paths);
+        return writeLibrary(paths, { ...library, ...renameTag(library, request) });
+      });
+    },
+
+    // 删除标签及关联，不删除书籍或阅读数据。
+    deleteTag(request) {
+      return mutate(async () => {
+        const paths = await ensureFolders();
+        const library = await readLibrary(paths);
+        return writeLibrary(paths, { ...library, ...deleteTag(library, request) });
+      });
+    },
+
+    // 原子更新选中书籍的标签，新名称与关联一同保存。
+    updateBookTags(request) {
+      return mutate(async () => {
+        const paths = await ensureFolders();
+        const library = await readLibrary(paths);
+        return writeLibrary(paths, { ...library, ...updateBookTags(library, request, randomUUID) });
+      });
+    },
+
+    // 浏览器书籍提升到宿主时合并标签关联。
+    migrateBookTags(request) {
+      return mutate(async () => {
+        const paths = await ensureFolders();
+        const library = await readLibrary(paths);
+        if (!library.books.some(book => book.id === request?.toId)) throw new Error('TAG_BOOK_NOT_FOUND');
+        return writeLibrary(paths, { ...library, ...migrateBookTags(library, request) });
       });
     },
 
@@ -751,6 +800,11 @@ export default class ReaderService extends TypertRemoteService {
   readBookBytes(request) { return this.api.readBookBytes(request.bookId); }
   highlights(request) { return this.api.highlights(request.bookId); }
   exportNotes(request) { return this.api.exportNotes(request.bookId); }
+  createTag(request) { return this.api.createTag(request); }
+  renameTag(request) { return this.api.renameTag(request); }
+  deleteTag(request) { return this.api.deleteTag(request); }
+  updateBookTags(request) { return this.api.updateBookTags(request); }
+  migrateBookTags(request) { return this.api.migrateBookTags(request); }
   setReadingContext(request) {
     const sessionId = String(request?.sessionId || '');
     if (!sessionId || sessionId.length > 160) throw new Error('无效会话');
@@ -773,7 +827,7 @@ export default class ReaderService extends TypertRemoteService {
   }
 }
 
-for (const name of ['info', 'library', 'importBook', 'removeBook', 'loadState', 'saveState', 'readBookBytes', 'highlights', 'exportNotes', 'setReadingContext']) {
+for (const name of ['info', 'library', 'importBook', 'removeBook', 'loadState', 'saveState', 'readBookBytes', 'highlights', 'exportNotes', 'setReadingContext', 'createTag', 'renameTag', 'deleteTag', 'updateBookTags', 'migrateBookTags']) {
   Remote(name)(ReaderService.prototype[name], {
     name, private: false, static: false,
     addInitializer(fn) { fn.call(Object.create(ReaderService.prototype)); },

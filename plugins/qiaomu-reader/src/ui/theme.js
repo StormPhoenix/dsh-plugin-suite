@@ -213,6 +213,39 @@ export function readerThemeVars(themeId) {
 
 /** 组件级样式表。只用 --dsw-alias-* / --dsw-specific-* 令牌，书页部分用 --qmr-* 读书主题变量。 */
 export const UI_CSS = `
+.qmr-tag-backdrop.qmr-overlay{z-index:9100;display:flex;align-items:center;justify-content:center;padding:16px;background:color-mix(in srgb,var(--dsw-alias-bg-base) 80%,transparent)}
+.qmr-tag-dialog{box-sizing:border-box;display:flex;flex-direction:column;gap:14px;width:440px;max-width:100%;max-height:calc(100dvh - 32px);overflow:auto;padding:20px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-weight:400}
+.qmr-tag-dialog *{box-sizing:border-box}
+.qmr-tag-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.qmr-tag-heading h2{margin:0;font-size:17px;font-weight:500;overflow-wrap:anywhere}
+.qmr-tag-dialog p{margin:0;overflow-wrap:anywhere}
+.qmr-tag-dialog .qmr-actions{justify-content:flex-end}
+.qmr-tag-choices{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px;max-height:220px;overflow:auto;padding:2px;flex-shrink:1}
+.qmr-tag-choice{display:flex;align-items:center;gap:10px;padding:8px 0;min-height:40px;overflow-wrap:anywhere}
+.qmr-tag-choice input,.qmr-book-primary>input{flex:none;accent-color:var(--dsw-alias-brand-primary)}
+.qmr-tag-error{color:var(--dsw-alias-state-error-primary)}
+.qmr-book-primary{display:flex;align-items:center;gap:10px;min-width:0}
+.qmr-book-primary .qmr-book-open{flex:1;min-width:0}
+.qmr-book-tags{display:flex;gap:5px;min-width:0;overflow:hidden}
+.qmr-tag-badge{display:inline-block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 9px;border:1px solid var(--dsw-alias-border-l1);border-radius:999px;font-size:12px;line-height:1.5;font-weight:400;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2)}
+.qmr-tag-badge[data-tone="brand"]{--qmr-tag-tone:var(--dsw-alias-brand-primary)}
+.qmr-tag-badge[data-tone="success"]{--qmr-tag-tone:var(--dsw-alias-state-success-primary)}
+.qmr-tag-badge[data-tone="warn"]{--qmr-tag-tone:var(--dsw-alias-state-warn-primary)}
+.qmr-tag-badge[data-tone="error"]{--qmr-tag-tone:var(--dsw-alias-state-error-primary)}
+.qmr-tag-badge[data-tone="idle"]{--qmr-tag-tone:var(--dsw-alias-state-idle-primary)}
+.qmr-tag-badge[data-tone]{color:color-mix(in srgb,var(--qmr-tag-tone) 25%,var(--dsw-alias-label-primary));background:color-mix(in srgb,var(--qmr-tag-tone) 18%,var(--dsw-alias-bg-layer-1));border-color:color-mix(in srgb,var(--qmr-tag-tone) 35%,var(--dsw-alias-border-l1))}
+button.qmr-tag-badge{cursor:pointer}
+button.qmr-tag-badge:hover:not(:disabled){border-color:var(--qmr-tag-tone,var(--dsw-alias-brand-primary))}
+.qmr-tag-selected{display:flex;gap:6px;flex-wrap:wrap}
+.qmr-tag-choice-button{display:flex;gap:6px;align-items:center;background:transparent;border:0;padding:2px;cursor:pointer;color:var(--dsw-alias-label-primary)}
+.qmr-tag-primary{background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-base)}
+.qmr-book-row.is-selected{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 7%,var(--dsw-alias-bg-layer-1))}
+.qmr-selection-add{margin-left:auto}
+.qmr-tag-summary,.qmr-tag-selection{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;font-size:12px}
+.qmr-tag-selection{padding:10px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px}
+.qmr-tag-dialog .qmr-book-menu{position:static;width:100%;padding:0;border:0;box-shadow:none;background:transparent}
+@media(max-width:700px){.qmr-library-tools{flex-wrap:wrap}.qmr-library-search{min-width:120px}.qmr-library-toolbar{flex-wrap:wrap}.qmr-tag-dialog{padding:14px}.qmr-tag-badge{max-width:100px}}
+
 .qmr-import-queue{margin-bottom:20px;padding:12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}
 .qmr-import-head,.qmr-import-item{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .qmr-import-head{flex-wrap:wrap;margin-bottom:8px}
@@ -285,10 +318,10 @@ export const UI_CSS = `
 /* Library C: a quiet catalogue with aligned rows, no card chrome. */
 .qmr-library{display:flex;flex:1 1 auto;min-width:0;min-height:0;--qmr-lib-line:var(--dsw-alias-border-l1);--qmr-lib-muted:var(--dsw-alias-label-secondary);--qmr-lib-focus:var(--dsw-alias-brand-primary,var(--dsw-alias-label-secondary));--qmr-lib-hover:color-mix(in srgb,var(--dsw-alias-label-primary) 4%,var(--dsw-alias-bg-base));--qmr-lib-active:color-mix(in srgb,var(--dsw-alias-label-primary) 6%,var(--dsw-alias-bg-base));background:var(--dsw-alias-bg-base)}
 .qmr-library-sidebar{display:flex;flex-direction:column;flex:0 0 196px;min-height:0;padding:28px 16px 20px;border-right:1px solid var(--qmr-lib-line);background:color-mix(in srgb,var(--dsw-alias-label-primary) 2%,var(--dsw-alias-bg-base))}
-.qmr-library-brand{display:flex;align-items:center;gap:10px;padding:0 12px;margin-bottom:30px;font-size:19px;font-weight:600}
+.qmr-library-brand{display:flex;align-items:center;gap:10px;padding:0 12px;margin-bottom:30px;font-size:19px;font-weight:500}
 .qmr-library-nav,.qmr-library-formats{display:flex;flex-direction:column;gap:4px}
 .qmr-library-nav button,.qmr-library-formats button{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:42px;padding:8px 12px;border:0;border-radius:6px;background:transparent;color:var(--qmr-lib-muted);font-size:14px;text-align:left;cursor:pointer}
-.qmr-library-nav button.is-active,.qmr-library-formats button.is-active{background:var(--qmr-lib-active);color:var(--dsw-alias-label-primary);font-weight:600}
+.qmr-library-nav button.is-active,.qmr-library-formats button.is-active{background:var(--qmr-lib-active);color:var(--dsw-alias-label-primary);font-weight:500}
 .qmr-library-count{font-size:12px;font-weight:400;font-variant-numeric:tabular-nums;opacity:.8}
 .qmr-library-formats{margin-top:30px}
 .qmr-library-section-label{font-size:12px;font-weight:400;color:var(--qmr-lib-muted)}
@@ -300,7 +333,7 @@ export const UI_CSS = `
 .qmr-library-main{display:flex;flex-direction:column;flex:1 1 auto;min-width:0;min-height:0}
 .qmr-library-header{display:flex;align-items:center;justify-content:space-between;gap:24px;flex:none;padding:24px 32px;border-bottom:1px solid var(--qmr-lib-line)}
 .qmr-library-heading{min-width:0;display:flex;align-items:baseline;gap:12px}
-.qmr-library-heading h1{margin:0;font-size:22px;line-height:1.4;font-weight:600;white-space:nowrap}
+.qmr-library-heading h1{margin:0;font-size:22px;line-height:1.4;font-weight:500;white-space:nowrap}
 .qmr-library-total{color:var(--qmr-lib-muted);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
 .qmr-library-tools{display:flex;align-items:center;gap:4px;min-width:0}
 .qmr-library-search{display:flex;align-items:center;gap:8px;width:260px;min-width:0;height:42px;padding:0 12px;margin-right:8px;border:1px solid var(--qmr-lib-line);border-radius:6px;color:var(--qmr-lib-muted);background:transparent}

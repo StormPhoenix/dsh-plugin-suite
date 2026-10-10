@@ -118,6 +118,8 @@ export function createDataLayer(options = {}) {
   const listeners = new Set();
   let status = 'idle';
   let lastError = '';
+  let tagsOnline = false;
+  let disposed = false;
   let libraryOperations = Promise.resolve();
   const serializeLibrary = (operation) => {
     const result = libraryOperations.then(operation);
@@ -126,6 +128,7 @@ export function createDataLayer(options = {}) {
   };
 
   function emit() {
+    if (disposed) return;
     for (const listener of listeners) {
       try {
         listener();
@@ -165,6 +168,7 @@ export function createDataLayer(options = {}) {
           await api.saveState(nextId, merged);
           states.set(nextId, merged);
         }
+        await migrateTags(book.id, nextId, cached);
         await saveBookBytes(nextId, bytes).catch(() => undefined);
         migratedLocalIds.add(book.id);
       } catch (error) {
@@ -212,6 +216,7 @@ export function createDataLayer(options = {}) {
     } catch {
       cached = null;
     }
+    tagsOnline = Boolean(fetched && Array.isArray(fetched.tags) && fetched.bookTags && typeof host?.updateBookTags === 'function');
     const remoteBooks = Array.isArray(fetched?.books) ? fetched.books : [];
     const remoteIds = new Set(remoteBooks.map((book) => book.id));
     const localOnly = Array.isArray(cached?.books) ? cached.books.filter((book) =>
@@ -424,6 +429,7 @@ export function createDataLayer(options = {}) {
           states.set(book.id, merged);
           await saveLocalState(book.id, merged);
         }
+        await migrateTags(fallbackId, book.id);
         migratedFrom = fallbackId;
         migratedLocalIds.add(fallbackId);
         const parsed = engines.get(fallbackId);
@@ -465,7 +471,9 @@ export function createDataLayer(options = {}) {
         hostError = error instanceof Error ? error.message : String(error);
       }
     }
-    library = normalizeLibrary({ ...library, books: library.books.filter((book) => book.id !== bookId) });
+    const bookTags = { ...library.bookTags };
+    delete bookTags[bookId];
+    library = normalizeLibrary({ ...library, bookTags, books: library.books.filter((book) => book.id !== bookId) });
     states.delete(bookId);
     engines.delete(bookId);
     await saveLocalLibrary(library).catch(() => undefined);
@@ -473,6 +481,36 @@ export function createDataLayer(options = {}) {
     await removeBookBytes(bookId).catch(() => undefined);
     emit();
     return { ok: true, hostError };
+  }
+
+  /** Apply one host-confirmed tag transaction without replacing book records. */
+  async function editTags(method, request) {
+    if (disposed) return { ok: false, error: 'TAG_DISPOSED' };
+    if (!tagsOnline || host === null) return { ok: false, error: 'TAG_OFFLINE' };
+    if (typeof host[method] !== 'function') return { ok: false, error: 'TAG_UNSUPPORTED' };
+    try {
+      const snapshot = await host[method](request);
+      if (!Array.isArray(snapshot?.tags) || !snapshot?.bookTags) throw new Error('TAG_INVALID_RESPONSE');
+      if (disposed) return { ok: false, error: 'TAG_DISPOSED' };
+      library = normalizeLibrary({ ...library, tags: snapshot.tags, bookTags: snapshot.bookTags });
+      const cached = await saveLocalLibrary(library).catch(() => false);
+      emit();
+      return { ok: true, warning: cached ? '' : 'TAG_CACHE_FAILED' };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /** Reconcile content-derived IDs before removing a browser-only book. */
+  async function migrateTags(fromId, toId, catalog = library) {
+    if (fromId === toId) return;
+    if (typeof host?.migrateBookTags !== 'function') {
+      if (catalog.bookTags?.[fromId]?.length) throw new Error('TAG_UNSUPPORTED');
+      return;
+    }
+    const snapshot = await host.migrateBookTags({ fromId, toId });
+    if (!Array.isArray(snapshot?.tags) || !snapshot?.bookTags) throw new Error('TAG_INVALID_RESPONSE');
+    library = normalizeLibrary({ ...library, tags: snapshot.tags, bookTags: snapshot.bookTags });
   }
 
   /** 导出 Markdown 阅读笔记。 */
@@ -495,6 +533,8 @@ export function createDataLayer(options = {}) {
     setHost: (api) => serializeLibrary(() => setHost(api)),
     /* --- 读取 --- */
     getLibrary: () => library,
+    canEditTags: () => !disposed && tagsOnline,
+    dispose: () => { disposed = true; listeners.clear(); },
     getStatus: () => ({ status, error: lastError }),
     getState: (bookId) => states.get(bookId),
     getEngine: (bookId) => engines.get(bookId)?.engine,
@@ -506,6 +546,10 @@ export function createDataLayer(options = {}) {
 
     /* --- 操作 --- */
     refreshLibrary: () => serializeLibrary(refreshLibrary),
+    createTag: (request) => serializeLibrary(() => editTags('createTag', request)),
+    renameTag: (request) => serializeLibrary(() => editTags('renameTag', request)),
+    deleteTag: (request) => serializeLibrary(() => editTags('deleteTag', request)),
+    updateBookTags: (request) => serializeLibrary(() => editTags('updateBookTags', request)),
     ensureState,
     openBook,
     importBook: (file) => serializeLibrary(() => importBook(file)),

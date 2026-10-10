@@ -1,6 +1,7 @@
 /** 书库：分类导航与清晰书目，保留搜索、排序、导入与阅读操作。 */
 import * as React from 'react';
 import { ImportQueueView } from './import-queue.js';
+import { BookTagChips, BookTagEditor, TagChip, TagFilter, TagOverlay, catalogOf, editableTags, matchesTags, tagText } from './library-tags.js';
 import { formatBytes, formatPercent, truncate } from './format.js';
 import { IconBook, IconClose, IconFullscreen, IconImport, IconLibrary, IconRefresh, IconTrash, IconSearch, IconHighlight, IconNext, IconNote, IconMore } from './icons.js';
 
@@ -15,32 +16,14 @@ function Cover({ book }) {
     cover ? h('img', { src: cover, alt: '', loading: 'lazy', onError: event => { event.currentTarget.hidden = true; } }) : null);
 }
 
-function BookRow({ ui, book, busy }) {
+function BookRow({ ui, book, busy, selecting, selected, onSelect, onEdit }) {
   const id = book.id;
   const progress = ui.progressOfBook(id);
   const state = ui.readingStateOf(id);
   const highlights = ui.highlightCountOf(id);
   const [menu, setMenu] = React.useState(false);
-  const menuRef = React.useRef(null);
   const triggerRef = React.useRef(null);
-  React.useEffect(() => {
-    if (!menu) return undefined;
-    const dismiss = (event) => {
-      if (event.type === 'keydown') {
-        if (event.key !== 'Escape') return;
-        event.preventDefault();
-        triggerRef.current?.focus();
-      } else if (menuRef.current?.contains(event.target)) return;
-      setMenu(false);
-    };
-    document.addEventListener('pointerdown', dismiss);
-    document.addEventListener('keydown', dismiss);
-    menuRef.current?.querySelector('.qmr-book-menu button')?.focus();
-    return () => {
-      document.removeEventListener('pointerdown', dismiss);
-      document.removeEventListener('keydown', dismiss);
-    };
-  }, [menu]);
+  const closeMenu = React.useMemo(() => () => setMenu(false), []);
   const openPanel = async (panel) => {
     setMenu(false);
     if (await ui.openBook(id)) {
@@ -60,7 +43,9 @@ function BookRow({ ui, book, busy }) {
   const action = (Icon, key, fallback, onClick, danger = false) => h('button', {
     type: 'button', className: danger ? 'is-danger' : '', onClick,
   }, h(Icon, { width: 16, height: 16 }), tr(ui, key, fallback));
-  return h('div', { className: `qmr-book-row${menu ? ' is-menu-open' : ''}`, role: 'listitem' },
+  return h('div', { className: `qmr-book-row${menu ? ' is-menu-open' : ''}${selecting && selected ? ' is-selected' : ''}`, role: 'listitem' },
+    h('div', { className: 'qmr-book-primary' }, selecting ? h('input', { type: 'checkbox', checked: selected,
+      'aria-label': tagText(ui, 'selectBook', { title: book.title || id }), onChange: onSelect }) : null,
     h('button', {
       type: 'button', className: 'qmr-book-open', disabled: busy,
       title: book.title || id,
@@ -68,7 +53,8 @@ function BookRow({ ui, book, busy }) {
       onClick: () => ui.openBook(id),
     }, h(Cover, { book }), h('span', { className: 'qmr-book-copy' },
       h('span', { className: 'qmr-book-title' }, book.title || id),
-      h('span', { className: 'qmr-book-author' }, book.author || tr(ui, 'unknownAuthor', '未知作者')))),
+      h('span', { className: 'qmr-book-author' }, book.author || tr(ui, 'unknownAuthor', '未知作者')),
+      h(BookTagChips, { ui, bookId: id })))),
     h('span', { className: 'qmr-book-format', title: formatBytes(book.bytes) || undefined }, String(book.format || 'epub').toUpperCase()),
     h('div', { className: `qmr-book-progress${state === 'new' ? ' is-unread' : ''}` },
       h('span', null, busy ? tr(ui, 'opening', '打开中…') : progressText),
@@ -77,16 +63,19 @@ function BookRow({ ui, book, busy }) {
       title: tr(ui, 'highlightsCount', '{count} 条划线', { count: highlights }),
       'aria-label': tr(ui, 'bookHighlights', '查看《{title}》的 {count} 条划线', { title: book.title || id, count: highlights }),
     }, highlights > 0 ? h(React.Fragment, null, h(IconHighlight, { width: 14, height: 14 }), highlights) : h('span', { 'aria-hidden': 'true' }, '—')),
-    h('div', { className: 'qmr-book-more', ref: menuRef },
+    h('div', { className: 'qmr-book-more' },
       h('button', { ref: triggerRef, type: 'button', className: 'qmr-lib-icon', disabled: busy, 'aria-expanded': menu,
         'aria-label': tr(ui, 'bookActions', '《{title}》的更多操作', { title: book.title || id }),
         title: tr(ui, 'more', '更多操作'), onClick: () => setMenu(!menu),
       }, h(IconMore, { width: 18, height: 18 })),
-      menu ? h('div', { className: 'qmr-book-menu', role: 'group', 'aria-label': tr(ui, 'more', '更多操作') },
+      menu ? h(TagOverlay, { ui, title: tr(ui, 'bookActions', '《{title}》的更多操作', { title: book.title || id }), onClose: closeMenu },
+        h('div', { className: 'qmr-book-menu' },
+        h('button', { type: 'button', disabled: !editableTags(ui), title: !editableTags(ui) ? tagText(ui, 'offline') : undefined, onClick: () => { triggerRef.current?.focus(); setMenu(false); onEdit(id); } }, tagText(ui, 'edit')),
+        !editableTags(ui) ? h('p', { className: 'qmr-muted' }, tagText(ui, 'offline')) : null,
         action(IconNote, 'notes', '阅读笔记', () => openPanel('notes')),
         action(IconHighlight, 'highlights', '查看划线', () => openPanel('highlights')),
         h('div', { className: 'qmr-book-menu-meta' }, `${String(book.format || 'epub').toUpperCase()}${formatBytes(book.bytes) ? ` · ${formatBytes(book.bytes)}` : ''}`),
-        action(IconTrash, 'delete', '从书库删除', remove, true)) : null));
+        action(IconTrash, 'delete', '从书库删除', remove, true))) : null));
 }
 
 export function LibraryView({ ui }) {
@@ -103,6 +92,22 @@ export function LibraryView({ ui }) {
   const fileRef = React.useRef(null);
   const status = ui.status();
   const books = ui.books();
+  const tagIds = ui.useSel(state => state.libraryTagIds) || [];
+  const tagMode = ui.useSel(state => state.libraryTagMode) || 'any';
+  const untagged = !!ui.useSel(state => state.libraryUntagged);
+  const catalog = catalogOf(ui);
+  const [dialog, setDialog] = React.useState(null);
+  const [selecting, setSelecting] = React.useState(false);
+  const [selected, setSelected] = React.useState([]);
+  const closeDialog = React.useMemo(() => () => setDialog(null), []);
+  const finishSelection = React.useMemo(() => () => { setSelected([]); setSelecting(false); }, []);
+  const filterKey = JSON.stringify([query, filter, format, tagIds, tagMode, untagged]);
+  React.useEffect(() => { setSelected([]); }, [filterKey]);
+  React.useEffect(() => {
+    setSelected(ids => ids.filter(id => books.some(book => book.id === id)));
+    const retained = tagIds.filter(id => catalog.tags.some(tag => tag.id === id));
+    if (retained.length !== tagIds.length) ui.store.set({ libraryTagIds: retained });
+  }, [dataRevision]);
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -120,18 +125,20 @@ export function LibraryView({ ui }) {
   const visibleBooks = React.useMemo(() => {
     const needle = query.trim().toLowerCase();
     const list = books.filter(book => book && matchesFilter(book, filter)
+      && matchesTags(catalog.bookTags[book.id] || [], tagIds, tagMode, untagged)
       && (format === 'all' || String(book.format || 'epub').toLowerCase() === format)
       && (!needle || `${book.title || ''} ${book.author || ''}`.toLowerCase().includes(needle)));
     return list.sort((a, b) => sort === 'title' ? String(a.title || '').localeCompare(String(b.title || ''), 'zh-Hans-CN')
       : sort === 'added' ? (Number(b.addedAt) || 0) - (Number(a.addedAt) || 0)
         : (Number(b.openedAt) || Number(b.addedAt) || 0) - (Number(a.openedAt) || Number(a.addedAt) || 0));
-  }, [books, query, sort, filter, format, statesVersion, ui]);
+  }, [books, query, sort, filter, format, statesVersion, dataRevision, tagIds, tagMode, untagged, ui]);
   const pickFile = () => {
     try { fileRef.current?.click(); } catch (_error) { ui.toast(tr(ui, 'pickerError', '当前环境无法打开文件选择器'), 'warn'); }
   };
-  const clearFilters = () => ui.store.set({ libraryQuery: '', libraryFilter: 'all', libraryFormat: 'all' });
+  const clearFilters = () => ui.store.set({ libraryQuery: '', libraryFilter: 'all', libraryFormat: 'all', libraryTagIds: [], libraryTagMode: 'any', libraryUntagged: false });
+  const hasFilters = filter !== 'all' || format !== 'all' || !!query.trim() || tagIds.length > 0 || untagged;
   const showLoading = (loading || status.status === 'loading') && !books.length;
-  const resumeBook = filter === 'all' && format === 'all' && !query.trim()
+  const resumeBook = !hasFilters
     ? [...books].filter(book => ui.readingStateOf(book.id) === 'reading')
       .sort((a, b) => (Number(b.openedAt) || 0) - (Number(a.openedAt) || 0))[0] : null;
   const selectedLabel = tr(ui, filter, FILTERS.find(([key]) => key === filter)?.[1] || '全部书籍');
@@ -168,12 +175,21 @@ export function LibraryView({ ui }) {
             placeholder: tr(ui, 'searchPlaceholder', '搜索书名或作者'), 'aria-label': tr(ui, 'search', '搜索书库'),
             onChange: event => ui.store.set({ libraryQuery: event.target.value }),
           })),
+          h('button', { type: 'button', className: `qmr-btn${tagIds.length || untagged ? ' is-active' : ''}`, 'aria-expanded': dialog?.kind === 'filter', onClick: () => setDialog({ kind: 'filter' }) }, tagText(ui, 'filter')),
           iconButton(IconRefresh, 'refresh', '刷新书库', () => ui.refreshLibrary(), !!loading),
           iconButton(IconFullscreen, 'fullscreen', '全屏', () => ui.toggleFullscreen()),
           iconButton(IconClose, 'close', '关闭阅读器', () => ui.closeOverlay()))),
       h('div', { className: 'qmr-lib-scroll' },
         h(ImportQueueView, { ui }),
-        queue?.items.length && (filter !== 'all' || format !== 'all' || query.trim())
+        hasFilters ? h('div', { className: 'qmr-tag-summary', 'aria-label': tagText(ui, 'activeFilters') },
+          query.trim() ? h('span', { className: 'qmr-tag-badge' }, query.trim()) : null,
+          filter !== 'all' ? h('span', { className: 'qmr-tag-badge' }, selectedLabel) : null,
+          format !== 'all' ? h('span', { className: 'qmr-tag-badge' }, format.toUpperCase()) : null,
+          catalog.tags.filter(tag => tagIds.includes(tag.id)).map(tag => h(TagChip, { key: tag.id, tag, remove: true, label: tagText(ui, 'removeFilter', { name: tag.name }), onClick: () => ui.store.set({ libraryTagIds: tagIds.filter(id => id !== tag.id) }) })),
+          untagged ? h('button', { type: 'button', className: 'qmr-chip', onClick: () => ui.store.set({ libraryUntagged: false }) }, tagText(ui, 'untagged'), ' ×') : null,
+          tagIds.length ? h('span', { className: 'qmr-muted' }, tagText(ui, tagMode === 'all' ? 'all' : 'any')) : null,
+          h('button', { type: 'button', className: 'qmr-btn', onClick: clearFilters }, tagText(ui, 'clearAll'))) : null,
+        queue?.items.length && hasFilters
           ? h('div', { className: 'qmr-muted qmr-small' }, tr(ui, 'queue.filtered', '新导入的书可能被当前筛选隐藏')) : null,
         error ? h('div', { className: 'qmr-errorbox', role: 'alert' }, h('div', { className: 'qmr-errorbox-title' }, tr(ui, 'error', '书库操作失败')),
           h('div', { className: 'qmr-errorbox-text' }, String(error)), h('button', { type: 'button', className: 'qmr-btn', onClick: () => ui.refreshLibrary() }, tr(ui, 'retry', '重试'))) : null,
@@ -185,11 +201,20 @@ export function LibraryView({ ui }) {
           h('button', { type: 'button', className: 'qmr-library-continue', disabled: busyBookId === resumeBook.id, onClick: () => ui.openBook(resumeBook.id) },
             tr(ui, 'continue', '继续阅读'), h(IconNext, { width: 16, height: 16 }))) : null,
         h('div', { className: 'qmr-library-toolbar' },
-          h('span', null, format === 'all' ? tr(ui, 'collection', '我的书目') : format.toUpperCase()),
+          !selecting ? h('button', { type: 'button', className: 'qmr-btn qmr-selection-toggle', disabled: !editableTags(ui), title: !editableTags(ui) ? tagText(ui, 'offline') : undefined, onClick: () => setSelecting(true) }, tagText(ui, 'select')) : null,
           h('select', { className: 'qmr-library-mobile-format', value: format, 'aria-label': tr(ui, 'formats', '文件格式'), onChange: event => ui.store.set({ libraryFormat: event.target.value }) },
             ['all', 'epub', 'pdf', 'txt'].map(key => h('option', { key, value: key }, key === 'all' ? tr(ui, 'allFormats', '全部格式') : key.toUpperCase()))),
           h('select', { className: 'qmr-library-sort', value: sort, 'aria-label': tr(ui, 'sort', '排序方式'), onChange: event => ui.store.set({ librarySort: event.target.value }) },
             h('option', { value: 'recent' }, tr(ui, 'recent', '最近阅读')), h('option', { value: 'added' }, tr(ui, 'added', '加入时间')), h('option', { value: 'title' }, tr(ui, 'title', '书名')))),
+        !editableTags(ui) ? h('p', { className: 'qmr-muted qmr-small' }, tagText(ui, 'offline')) : null,
+        selecting ? h('div', { className: 'qmr-tag-selection' },
+          h('span', { role: 'status' }, tagText(ui, 'selected', { count: selected.length })),
+          h('button', { type: 'button', className: 'qmr-btn', onClick: () => setSelected(visibleBooks.map(book => book.id)) }, tagText(ui, 'selectResults', { count: visibleBooks.length })),
+          h('button', { type: 'button', className: 'qmr-btn', disabled: !selected.length, onClick: () => setSelected([]) }, tagText(ui, 'clearSelection')),
+          !selected.length ? h('span', { className: 'qmr-muted' }, tagText(ui, 'chooseBooks')) : null,
+          h('button', { type: 'button', className: 'qmr-btn qmr-selection-add', disabled: !selected.length || !editableTags(ui), onClick: () => setDialog({ kind: 'edit', mode: 'add', bookIds: [...selected] }) }, tagText(ui, 'bulkAdd')),
+          h('button', { type: 'button', className: 'qmr-btn', disabled: !selected.length || !editableTags(ui), onClick: () => setDialog({ kind: 'edit', mode: 'remove', bookIds: [...selected] }) }, tagText(ui, 'bulkRemove')),
+          h('button', { type: 'button', className: 'qmr-btn', onClick: finishSelection }, tagText(ui, 'exitSelection'))) : null,
         showLoading ? h('div', { className: 'qmr-busy', role: 'status' }, tr(ui, 'loading', '书库正在加载…'))
           : !visibleBooks.length ? h('div', { className: 'qmr-empty' }, h(IconBook, { width: 32, height: 32 }),
             h('div', { className: 'qmr-empty-title' }, books.length ? tr(ui, 'noResults', '没有符合条件的书') : tr(ui, 'empty', '从第一本书开始')),
@@ -197,6 +222,8 @@ export function LibraryView({ ui }) {
             h('div', { className: 'qmr-empty-actions' }, books.length ? h('button', { type: 'button', className: 'qmr-btn', onClick: clearFilters }, tr(ui, 'clear', '清空筛选')) : importButton))
             : h(React.Fragment, null,
               h('div', { className: 'qmr-library-columns', 'aria-hidden': 'true' }, h('span', null, tr(ui, 'titleAuthor', '书名 / 作者')), h('span', null, tr(ui, 'format', '格式')), h('span', null, tr(ui, 'progress', '阅读进度')), h('span', null, tr(ui, 'annotations', '划线')), h('span')),
-              h('div', { className: 'qmr-book-list', role: 'list', 'aria-label': tr(ui, 'collection', '我的书目') }, visibleBooks.map(book => h(BookRow, { key: book.id, ui, book, busy: busyBookId === String(book.id) })))))));
+              h('div', { className: 'qmr-book-list', role: 'list', 'aria-label': tr(ui, 'collection', '我的书目') }, visibleBooks.map(book => h(BookRow, { key: book.id, ui, book, busy: busyBookId === String(book.id), selecting, selected: selected.includes(book.id), onSelect: () => setSelected(ids => ids.includes(book.id) ? ids.filter(id => id !== book.id) : [...ids, book.id]), onEdit: id => setDialog({ kind: 'edit', mode: 'replace', bookIds: [id] }) }))))),
+      dialog?.kind === 'filter' ? h(TagFilter, { ui, ids: tagIds, mode: tagMode, untagged, onClose: closeDialog }) : null,
+      dialog?.kind === 'edit' ? h(BookTagEditor, { key: `${dialog.mode}:${dialog.bookIds.join(',')}`, ui, bookIds: dialog.bookIds, mode: dialog.mode, onClose: closeDialog, onSuccess: dialog.mode === 'add' ? finishSelection : undefined }) : null));
 }
 export const truncateForCard = value => truncate(value, 60);

@@ -6,7 +6,7 @@ import { LIBRARY_MESSAGES } from '../src/ui/library-locale.js';
 
 // Observe component output and event handlers without a second React installation.
 async function load(entry) {
-  const result = await build({ entryPoints: [new URL(entry, import.meta.url).pathname], bundle: true, write: false, format: 'cjs', platform: 'browser', external: ['react'] });
+  const result = await build({ entryPoints: [new URL(entry, import.meta.url).pathname], bundle: true, write: false, format: 'cjs', platform: 'browser', external: ['react', 'react-dom'] });
   const module = { exports: {} };
   const react = {
     createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),

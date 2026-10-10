@@ -1,4 +1,4 @@
-import { LIBRARY_MESSAGES } from '../ui/library-locale.js';
+import { LIBRARY_MESSAGES, flattenMessages } from '../ui/library-locale.js';
 /**
  * 乔木阅读 · 客户端半入口（bootstrap）
  *
@@ -29,7 +29,7 @@ const remoteCodec = () => ({
 });
 const REMOTE = {
   package: 'qiaomu-reader-dsh',
-  descriptors: ['info', 'library', 'importBook', 'removeBook', 'loadState', 'saveState', 'readBookBytes', 'highlights', 'exportNotes', 'setReadingContext'].map((method) => ({
+  descriptors: ['info', 'library', 'importBook', 'removeBook', 'loadState', 'saveState', 'readBookBytes', 'highlights', 'exportNotes', 'setReadingContext', 'createTag', 'renameTag', 'deleteTag', 'updateBookTags', 'migrateBookTags'].map((method) => ({
     id: `qiaomu-reader-dsh#qiaomuReader/${method}`,
     service: 'qiaomuReader', namespace: 'qiaomuReader', method,
     invocation: { kind: 'direct' },
@@ -105,6 +105,7 @@ export function apply(ctx) {
     return () => {
       globalThis.removeEventListener?.('beforeunload', beforeUnload);
       importQueue.dispose();
+      data.dispose();
     };
   }, 'qiaomu-reader: import queue');
 
@@ -195,6 +196,7 @@ export function apply(ctx) {
       retryFailedImports: () => importQueue.retryFailed(),
       cancelImport: (id) => importQueue.cancel(id),
       clearImports: () => importQueue.clear(),
+      updateBookTags: (request) => data.updateBookTags(request),
 
       /** 删除一本书。 */
       async removeBook(bookId) {
@@ -364,8 +366,8 @@ export function apply(ctx) {
   // 子上下文等待语言服务就绪，并在服务或本插件卸载时回收字典。
   ctx.inject(['locale'], (child) => {
     return child.locale.register(NS, {
-      zh: { open: '乔木阅读', library: '书库', reader: '阅读', themeWhite: '纯白', ...LIBRARY_MESSAGES.zh },
-      en: { open: 'Qiaomu Reader', library: 'Library', reader: 'Reader', themeWhite: 'Pure white', ...LIBRARY_MESSAGES.en },
+      zh: { open: '乔木阅读', library: '书库', reader: '阅读', themeWhite: '纯白', ...flattenMessages(LIBRARY_MESSAGES.zh) },
+      en: { open: 'Qiaomu Reader', library: 'Library', reader: 'Reader', themeWhite: 'Pure white', ...flattenMessages(LIBRARY_MESSAGES.en) },
     });
   });
 
