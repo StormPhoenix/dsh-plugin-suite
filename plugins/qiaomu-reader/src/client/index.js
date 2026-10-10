@@ -13,6 +13,7 @@ import { LIBRARY_MESSAGES } from '../ui/library-locale.js';
 import * as React from 'react';
 
 import { createDataLayer } from './bridge.js';
+import { createImportQueue } from './import-queue.js';
 import { remoteHostApi } from './host-api.js';
 import { createUiStore } from '../ui/store.js';
 import * as ShellModule from '../ui/shell.js';
@@ -83,6 +84,29 @@ export function apply(ctx) {
     lastError: '',
     openSignal: 0,
   });
+
+  const importQueue = createImportQueue({
+    importBook: async (file) => {
+      const result = await data.importBook(file);
+      if (result.migratedFrom && store.get().bookId === result.migratedFrom) {
+        store.set({ bookId: result.book.id, states: { ...store.get().states, [result.book.id]: data.getState(result.book.id) }, statesRevision: (store.get().statesRevision || 0) + 1 });
+      }
+      return result;
+    },
+    publish: (snapshot) => store.set({ importQueue: snapshot }),
+  });
+  ctx.effect(() => {
+    const beforeUnload = (event) => {
+      if (!importQueue.hasPending()) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    globalThis.addEventListener?.('beforeunload', beforeUnload);
+    return () => {
+      globalThis.removeEventListener?.('beforeunload', beforeUnload);
+      importQueue.dispose();
+    };
+  }, 'qiaomu-reader: import queue');
 
   /** 打开浮层的唯一入口：把可见性与打开信号一起推给 UI。 */
   function openReader(bookId = null) {
@@ -163,21 +187,14 @@ export function apply(ctx) {
       },
 
       /** 导入一个用户选择的文件。 */
-      async importBook(file) {
-        try {
-          const result = await data.importBook(file);
-          if (result.ok === true) {
-            store.set({ lastError: '', notice: `已导入《${result.book.title}》` });
-            return { ok: true, book: result.book };
-          }
-          store.set({ lastError: result.error ?? '导入失败' });
-          return { ok: false, error: result.error ?? '导入失败' };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          store.set({ lastError: message });
-          return { ok: false, error: message };
-        }
-      },
+      importBook: (file) => data.importBook(file),
+      enqueueImports: (files) => importQueue.enqueue(files),
+      stopImports: () => importQueue.stop(),
+      resumeImports: () => importQueue.resume(),
+      retryImport: (id) => importQueue.retry([id]),
+      retryFailedImports: () => importQueue.retryFailed(),
+      cancelImport: (id) => importQueue.cancel(id),
+      clearImports: () => importQueue.clear(),
 
       /** 删除一本书。 */
       async removeBook(bookId) {

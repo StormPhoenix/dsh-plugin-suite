@@ -15,6 +15,7 @@ import { IconClose, IconRetry } from './icons.js';
 import { setUiHost } from './format.js';
 import { LibraryView } from './library.js';
 import { ReaderView } from './reader.js';
+import { ImportQueueView } from './import-queue.js';
 
 const h = React.createElement;
 
@@ -250,7 +251,7 @@ export function ReaderOverlay(props) {
     h(
       ReaderErrorBoundary,
       { onError: (error) => ui.reportError(error, true), onClose: () => ui.closeOverlay() },
-      h('div', { className: 'qmr-root' }, content,
+      h('div', { className: 'qmr-root' }, view === 'reader' ? h(ImportQueueView, { ui, compact: true }) : null, content,
         notice ? h('div', { className: `qmr-toast is-${noticeKind || 'info'}` }, String(notice)) : null),
     ),
   );

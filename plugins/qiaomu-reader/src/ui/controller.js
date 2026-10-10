@@ -911,21 +911,9 @@ export function createController(getProps, store) {
     return result;
   }
 
-  /** 导入书籍（File） */
-  async function importBook(file) {
-    if (!file) return { ok: false, error: '没有选择文件' };
-    uiStore.set({ importing: true, lastError: null });
-    const result = await callAction('importBook', file);
-    if (!result || result.ok === false) {
-      const error = (result && result.error) || '导入失败';
-      uiStore.set({ importing: false, lastError: error });
-      toast(error, 'error');
-      return { ok: false, error };
-    }
-    await refreshLibrary();
-    uiStore.set({ importing: false });
-    toast(`已导入《${(result.book && result.book.title) || file.name}》`, 'ok');
-    return result;
+  /** Enqueue one file; the plugin instance owns execution across page switches. */
+  function importBook(file) {
+    return callAction('enqueueImports', file ? [file] : []);
   }
 
   async function removeBook(id) {
@@ -1044,6 +1032,13 @@ export function createController(getProps, store) {
     closeSearch,
     refreshLibrary,
     importBook,
+    enqueueImports: (files) => callAction('enqueueImports', files),
+    stopImports: () => callAction('stopImports'),
+    resumeImports: () => callAction('resumeImports'),
+    retryImport: (id) => callAction('retryImport', id),
+    retryFailedImports: () => callAction('retryFailedImports'),
+    cancelImport: (id) => callAction('cancelImport', id),
+    clearImports: () => callAction('clearImports'),
     removeBook,
     exportNotes,
     copy,

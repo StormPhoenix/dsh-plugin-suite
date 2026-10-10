@@ -22,12 +22,13 @@ function harness() {
   });
 
   const slots = new Set();
+  const entries = new Map();
   const services = new Map([['layout', {
     selectPanel() {},
     panelInfo: { getSnapshot: () => ({ activePanelId: null }) },
   }], ['slots', {
     inject(_name, callback) { return callback(); },
-    register({ name }) { slots.add(name); return () => slots.delete(name); },
+    register(options, component) { slots.add(options.name); entries.set(options.name, { ...options, component }); return () => slots.delete(options.name); },
   }]]);
   const disposers = [];
   const pending = [];
@@ -60,7 +61,7 @@ function harness() {
     });
   }
   return {
-    slots, listeners,
+    slots, listeners, entries,
     start: () => plugin.apply(context(plugin.inject)),
     provide(name, value) {
       services.set(name, value);
@@ -93,6 +94,25 @@ for (const timing of ['before', 'after', 'absent']) {
     assert.equal(app.listeners.size, 0);
   });
 }
+
+test('shipped queue survives panel reinjection and unload suppresses pending work', async () => {
+  const app = harness(); app.start();
+  const first = app.entries.get('main').inject();
+  let release; let started;
+  const entered = new Promise((resolve) => { started = resolve; });
+  const held = new Promise((resolve) => { release = resolve; });
+  first.actions.enqueueImports([{ name: 'pending.txt', arrayBuffer: async () => { started(); await held; return new Uint8Array([1]).buffer; } }]);
+  await entered;
+  const remounted = app.entries.get('main').inject();
+  assert.equal(remounted.store, first.store);
+  assert.equal(remounted.store.get().importQueue.items[0].status, 'processing');
+  const event = { preventDefault() { this.prevented = true; } };
+  app.listeners.get('beforeunload')(event); assert.equal(event.prevented, true);
+  app.dispose(); const snapshot = first.store.get().importQueue;
+  release(); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(first.store.get().importQueue, snapshot);
+  assert.equal(app.listeners.size, 0);
+});
 
 test('client mounts Reader Remote descriptors when Harness remote is available', async () => {
   const app = harness();

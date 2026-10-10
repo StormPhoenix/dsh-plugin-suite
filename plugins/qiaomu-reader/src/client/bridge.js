@@ -118,6 +118,12 @@ export function createDataLayer(options = {}) {
   const listeners = new Set();
   let status = 'idle';
   let lastError = '';
+  let libraryOperations = Promise.resolve();
+  const serializeLibrary = (operation) => {
+    const result = libraryOperations.then(operation);
+    libraryOperations = result.catch(() => undefined);
+    return result;
+  };
 
   function emit() {
     for (const listener of listeners) {
@@ -374,11 +380,14 @@ export function createDataLayer(options = {}) {
       }
     }
     let book = null;
+    let existing = library.books.some((entry) => entry.id === fallbackId);
     let hostError = '';
     if (host !== null) {
       try {
         const result = await host.import({ filename, base64: bytesToBase64(bytes), ...meta });
         book = result?.book ?? null;
+        existing = result?.existing ?? existing;
+        if (book === null) hostError = '宿主未返回书籍记录';
       } catch (error) {
         hostError = error instanceof Error ? error.message : String(error);
       }
@@ -401,23 +410,48 @@ export function createDataLayer(options = {}) {
         identifier: meta?.identifier ?? '',
       };
     }
-    // 无论宿主是否落盘，本机都留一份：脱机与跨版本时可读。
-    await saveBookBytes(book.id, bytes).catch(() => undefined);
-    if (format === 'epub') {
+    const storage = hostError ? 'browser' : 'host';
+    const localPrevious = library.books.find((entry) => entry.id === fallbackId && ['local', 'local-offline'].includes(entry.source));
+    let migratedFrom = null;
+    let migrationWarning = '';
+    if (storage === 'host' && localPrevious && book.id !== fallbackId) {
       try {
-        const { parseEpub } = await import('../core/epub.js');
-        const parsed = await parseEpub(bytes);
-        const { createReaderEngine } = await import('../core/reader.js');
-        engines.set(book.id, { book: parsed, engine: createReaderEngine(parsed), bytes });
-      } catch {
-        /* 前面已经预解析成功过一次；这里失败也不影响入库 */
+        const localState = states.get(fallbackId) ?? await loadLocalState(fallbackId);
+        if (localState) {
+          const remoteState = await host.loadState(book.id);
+          const merged = mergeStates(normalizeState(remoteState, book.id), normalizeState({ ...localState, bookId: book.id }, book.id));
+          await host.saveState(book.id, merged);
+          states.set(book.id, merged);
+          await saveLocalState(book.id, merged);
+        }
+        migratedFrom = fallbackId;
+        migratedLocalIds.add(fallbackId);
+        const parsed = engines.get(fallbackId);
+        if (parsed) { engines.delete(fallbackId); engines.set(book.id, parsed); }
+        states.delete(fallbackId);
+      } catch (error) {
+        migrationWarning = `已入库，但原缓存书籍的笔记迁移失败：${error instanceof Error ? error.message : String(error)}`;
       }
     }
-    library = normalizeLibrary({ ...library, books: [...library.books.filter((entry) => entry.id !== book.id), book] });
-    await saveLocalLibrary(library).catch(() => undefined);
-    if (hostError) setStatus('ready', hostError);
+    const bytesSaved = await saveBookBytes(book.id, bytes).catch(() => false);
+    if (storage === 'browser' && !bytesSaved) {
+      return { ok: false, error: `${hostError}；浏览器也无法保存文件，请检查存储空间后重试` };
+    }
+    const nextLibrary = normalizeLibrary({ ...library, books: [...library.books.filter((entry) => entry.id !== book.id && entry.id !== migratedFrom), book] });
+    const indexSaved = await saveLocalLibrary(nextLibrary).catch(() => false);
+    if (storage === 'browser' && !indexSaved) {
+      return { ok: false, error: `${hostError}；浏览器无法保存书库索引，请检查存储空间后重试` };
+    }
+    // Imported EPUBs are parsed on open, within the existing engine-cache limit.
+    library = nextLibrary;
+    const warning = migrationWarning || (storage === 'browser' ? hostError : !bytesSaved || !indexSaved ? '已保存到书库，但浏览器缓存不可用' : '');
+    if (migratedFrom && bytesSaved && indexSaved) {
+      await removeLocalState(migratedFrom).catch(() => undefined);
+      await removeBookBytes(migratedFrom).catch(() => undefined);
+    }
+    setStatus('ready', warning);
     emit();
-    return { ok: true, book, hostError };
+    return { ok: true, book, hostError, storage, existing, warning, migratedFrom };
   }
 
   /** 删除一本书及它的状态。 */
@@ -458,7 +492,7 @@ export function createDataLayer(options = {}) {
   }
 
   return {
-    setHost,
+    setHost: (api) => serializeLibrary(() => setHost(api)),
     /* --- 读取 --- */
     getLibrary: () => library,
     getStatus: () => ({ status, error: lastError }),
@@ -471,11 +505,11 @@ export function createDataLayer(options = {}) {
     },
 
     /* --- 操作 --- */
-    refreshLibrary,
+    refreshLibrary: () => serializeLibrary(refreshLibrary),
     ensureState,
     openBook,
-    importBook,
-    removeBook,
+    importBook: (file) => serializeLibrary(() => importBook(file)),
+    removeBook: (id) => serializeLibrary(() => removeBook(id)),
     exportNotes,
     clearLocalData,
 

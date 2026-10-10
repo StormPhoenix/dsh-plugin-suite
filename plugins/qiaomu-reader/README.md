@@ -49,6 +49,18 @@ dsh plugin --profile desktop add "$PWD/qiaomu-reader-dsh-1.0.2.tgz"
 
 升级时安装新包并重启同一 profile。暂时停用可在 Harness 插件管理中禁用 Reader；卸载或迁移前备份下面的完整书库目录。
 
+## 批量导入与队列
+
+点击「导入书籍」可以一次选择多个 EPUB、PDF、TXT。文件按队列顺序逐个处理，单个失败不影响后续文件，已入库的书会立即显示；当前筛选可能隐藏新书。
+
+导入过程中可「追加文件」「停止后续导入」或「继续导入」。停止会等待当前文件完成，不撤回已入库内容；等待项可单独取消。失败项可单项或全部重试，重试排到队尾；已停止的队列需要手动继续。相同内容更新已有书籍，同名但内容不同的文件分别入库。
+
+队列区显示已入库、仅浏览器缓存、失败及错误明细。宿主不可用时，只有文件和书库索引都成功保存才显示「仅浏览器缓存」，可点击「重试保存到书库」。宿主保存成功但浏览器缓存失败不影响入库，会显示缓存警告。
+
+切换阅读视图或 Harness 页面后继续导入，返回书库可查看队列。刷新页面、重启或停用插件不恢复等待队列；已入库内容保留。浏览器可能提示未完成任务，但不能保证提示出现。清除已处理记录不会删除书籍，不过会释放失败或缓存任务重试所需的文件，之后需重新选择。
+
+队列仅在当前客户端插件实例中运行；宿主同一插件实例的入库、删除和阅读进度索引更新串行执行。不提供跨独立宿主进程的书库锁、目录导入或跨重启队列恢复。
+
 ## 本地书库与隐私
 
 宿主书库目录名默认为 `乔木阅读`，包含 `books/`、`state/`、`notes/` 和 `library.json`。根目录优先采用插件配置 `workspaceRoot`，其次是 `DSH_WORKSPACE` 环境变量，最后是宿主进程的启动目录。书库根目录不随当前聊天工作区切换；需要稳定位置时显式配置 `workspaceRoot`。
@@ -85,6 +97,8 @@ Node.js 22+。`src/core/` 是书籍解析与阅读状态，`src/client/` 是界�
 **Read a book without leaving your Harness workflow.** Qiaomu Reader brings EPUB, PDF and TXT into a local library, with reading progress, chapter navigation, search, highlights, annotations, Markdown notes and an AI companion backed by the host conversation. Six classic starter books let you try it immediately.
 
 The library screenshot shows the actual component using starter books and test fixtures; the desktop host library has also been checked. The reading screenshot comes from an isolated Harness Web profile. **Install:** download the tarball and checksum from [v1.0.2](https://github.com/joeseesun/qiaomu-reader-dsh/releases/tag/v1.0.2), run the checksum and installation commands above, then restart your profile and open **Qiaomu Reader**. Replace `desktop` with your profile name. No source build is required; there is no npm release.
+
+**Batch imports:** select multiple EPUB/PDF/TXT files and process them sequentially. Append files while importing, stop after the current file, continue manually, cancel waiting items, or retry individual/all failures at the tail. Stopped queues remain stopped when files are added or retried. Identical content updates one book; identical names with different content create separate books. Outcomes distinguish host library saves, browser-only saves and failures. Browser-only saves require both bytes and a recoverable index; retry them to save to the host. A host save remains successful if its auxiliary browser cache fails. Page switches keep the queue running, but reloads, restarts and plugin unloads do not restore it. Clearing processed records keeps books but releases files needed for retries. Host index mutations are serialized per plugin instance, not across independent host processes.
 
 Reading does not require a model key. AI companion actions require a configured Harness model and send the relevant reading context to that provider. Library files remain on the host under `乔木阅读`: the root is configured `workspaceRoot`, then `DSH_WORKSPACE`, then the host process working directory. Back up the entire folder before migrating. No independent cloud sync is provided.
 

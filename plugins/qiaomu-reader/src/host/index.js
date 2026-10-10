@@ -220,7 +220,7 @@ function normalizeBook(raw) {
  * 入库一本书：写文件 + 更新索引（已存在同 id 则只补元数据）。
  * @param {object} paths - libraryPaths 的结果。
  * @param {object} input - { filename, bytes, title?, author?, source? }。
- * @returns {Promise<object>} 归一化后的书籍记录。
+ * @returns {Promise<{book: object, existing: boolean}>} 书籍记录与入库前是否存在。
  */
 async function importBook(paths, input) {
   const bytes = input.bytes instanceof Uint8Array ? input.bytes : new Uint8Array(input.bytes);
@@ -255,7 +255,7 @@ async function importBook(paths, input) {
   if (index >= 0) library.books[index] = book;
   else library.books.push(book);
   await writeLibrary(paths, library);
-  return book;
+  return { book, existing: index >= 0 };
 }
 
 /** 阅读状态文件的空壳。 */
@@ -361,6 +361,14 @@ export function apply(ctx, config = {}) {
   };
   const pathsOf = () => libraryPaths(rootOf(), config);
 
+  /** 每个实例串行执行完整读改写；失败只拒绝当前调用，不阻塞后续操作。 */
+  let mutationChain = Promise.resolve();
+  const mutate = (operation) => {
+    const result = mutationChain.then(operation);
+    mutationChain = result.catch(() => undefined);
+    return result;
+  };
+
   /** 确保目录存在。 */
   const ensureFolders = async () => {
     const paths = pathsOf();
@@ -396,54 +404,59 @@ export function apply(ctx, config = {}) {
      * 导入一本书。
      * @param {{ filename: string, base64: string, title?: string, author?: string }} input
      */
-    async import(input) {
-      if (typeof input?.base64 !== 'string' || input.base64 === '') {
-        throw new Error('导入失败：缺少文件内容');
-      }
-      const paths = await ensureFolders();
-      const bytes = Buffer.from(input.base64, 'base64');
-      if (bytes.byteLength === 0) throw new Error('导入失败：文件为空');
-      const book = await importBook(paths, {
-        filename: input.filename,
-        bytes,
-        title: input.title,
-        author: input.author,
-        cover: typeof input.cover === 'string' && /^data:image\/(?:jpeg|png|webp|gif);base64,/i.test(input.cover)
-          && input.cover.length <= 1400000 ? input.cover : null,
-        source: input.source ?? 'upload',
+    import(input) {
+      return mutate(async () => {
+        if (typeof input?.base64 !== 'string' || input.base64 === '') {
+          throw new Error('导入失败：缺少文件内容');
+        }
+        const paths = await ensureFolders();
+        const bytes = Buffer.from(input.base64, 'base64');
+        if (bytes.byteLength === 0) throw new Error('导入失败：文件为空');
+        return importBook(paths, {
+          filename: input.filename,
+          bytes,
+          title: input.title,
+          author: input.author,
+          cover: typeof input.cover === 'string' && /^data:image\/(?:jpeg|png|webp|gif);base64,/i.test(input.cover)
+            && input.cover.length <= 1400000 ? input.cover : null,
+          source: input.source ?? 'upload',
+        });
       });
-      return { book };
     },
 
     /**
      * 把工作区里已经存在的文件导入书库（Agent 命令与工具共用）。
      * @param {string} filePath - 绝对路径或相对工作区根的路径。
      */
-    async importPath(filePath) {
-      if (typeof filePath !== 'string' || filePath.trim() === '') throw new Error('导入失败：缺少文件路径');
-      const root = rootOf();
-      const absolute = path.isAbsolute(filePath) ? path.resolve(filePath) : path.resolve(root, filePath);
-      const info = await stat(absolute).catch(() => null);
-      if (info === null || !info.isFile()) throw new Error(`找不到文件：${filePath}`);
-      const paths = await ensureFolders();
-      const bytes = await readFile(absolute);
-      const book = await importBook(paths, { filename: path.basename(absolute), bytes, source: 'workspace' });
-      return { book, from: absolute };
+    importPath(filePath) {
+      return mutate(async () => {
+        if (typeof filePath !== 'string' || filePath.trim() === '') throw new Error('导入失败：缺少文件路径');
+        const root = rootOf();
+        const absolute = path.isAbsolute(filePath) ? path.resolve(filePath) : path.resolve(root, filePath);
+        const info = await stat(absolute).catch(() => null);
+        if (info === null || !info.isFile()) throw new Error(`找不到文件：${filePath}`);
+        const paths = await ensureFolders();
+        const bytes = await readFile(absolute);
+        const { book } = await importBook(paths, { filename: path.basename(absolute), bytes, source: 'workspace' });
+        return { book, from: absolute };
+      });
     },
 
     /** 删除一本书（同时删掉文件和状态）。 */
-    async remove(bookId) {
-      const paths = await ensureFolders();
-      const library = await readLibrary(paths);
-      const book = library.books.find((entry) => entry.id === bookId);
-      if (book === undefined) throw new Error(`书库里没有这本书：${bookId}`);
-      if (typeof book.file === 'string') {
-        await rm(safeJoin(paths.base, book.file), { force: true });
-      }
-      await rm(safeJoin(paths.state, `${bookId}.json`), { force: true });
-      library.books = library.books.filter((entry) => entry.id !== bookId);
-      await writeLibrary(paths, library);
-      return { removed: bookId };
+    remove(bookId) {
+      return mutate(async () => {
+        const paths = await ensureFolders();
+        const library = await readLibrary(paths);
+        const book = library.books.find((entry) => entry.id === bookId);
+        if (book === undefined) throw new Error(`书库里没有这本书：${bookId}`);
+        if (typeof book.file === 'string') {
+          await rm(safeJoin(paths.base, book.file), { force: true });
+        }
+        await rm(safeJoin(paths.state, `${bookId}.json`), { force: true });
+        library.books = library.books.filter((entry) => entry.id !== bookId);
+        await writeLibrary(paths, library);
+        return { removed: bookId };
+      });
     },
 
     /** 读取某本书的阅读状态。 */
@@ -453,20 +466,22 @@ export function apply(ctx, config = {}) {
     },
 
     /** 写入某本书的阅读状态，并把 openedAt 回填索引。 */
-    async saveState(bookId, state) {
-      const paths = await ensureFolders();
-      const previous = await readState(paths, bookId);
-      const saved = await writeState(paths, bookId, state ?? emptyState(bookId));
-      const library = await readLibrary(paths);
-      const index = library.books.findIndex((entry) => entry.id === bookId);
-      if (index >= 0) {
-        library.books[index] = normalizeBook({ ...library.books[index], openedAt: Date.now() });
-        await writeLibrary(paths, library);
-      }
-      if (JSON.stringify(previous.highlights) !== JSON.stringify(saved.highlights)) {
-        await api.exportNotes(bookId);
-      }
-      return { state: saved };
+    saveState(bookId, state) {
+      return mutate(async () => {
+        const paths = await ensureFolders();
+        const previous = await readState(paths, bookId);
+        const saved = await writeState(paths, bookId, state ?? emptyState(bookId));
+        const library = await readLibrary(paths);
+        const index = library.books.findIndex((entry) => entry.id === bookId);
+        if (index >= 0) {
+          library.books[index] = normalizeBook({ ...library.books[index], openedAt: Date.now() });
+          await writeLibrary(paths, library);
+        }
+        if (JSON.stringify(previous.highlights) !== JSON.stringify(saved.highlights)) {
+          await api.exportNotes(bookId);
+        }
+        return { state: saved };
+      });
     },
 
     /** 读取书籍字节（base64）：客户端在浏览器内存里解析。 */

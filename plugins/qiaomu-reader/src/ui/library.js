@@ -1,5 +1,6 @@
 /** 书库：分类导航与清晰书目，保留搜索、排序、导入与阅读操作。 */
 import * as React from 'react';
+import { ImportQueueView } from './import-queue.js';
 import { formatBytes, formatPercent, truncate } from './format.js';
 import { IconBook, IconClose, IconFullscreen, IconImport, IconLibrary, IconRefresh, IconTrash, IconSearch, IconHighlight, IconNext, IconNote, IconMore } from './icons.js';
 
@@ -96,7 +97,8 @@ export function LibraryView({ ui }) {
   const filter = ui.useSel(state => state.libraryFilter) || 'all';
   const format = ui.useSel(state => state.libraryFormat) || 'all';
   const loading = ui.useSel(state => state.libraryLoading);
-  const importing = ui.useSel(state => state.importing);
+  const queue = ui.useSel(state => state.importQueue);
+  const importing = queue && ['running', 'stopping', 'paused'].includes(queue.mode);
   const busyBookId = ui.useSel(state => state.busyBookId);
   const fileRef = React.useRef(null);
   const status = ui.status();
@@ -136,13 +138,15 @@ export function LibraryView({ ui }) {
   const iconButton = (Icon, key, fallback, onClick, disabled = false) => h('button', {
     type: 'button', className: 'qmr-lib-icon', title: tr(ui, key, fallback), 'aria-label': tr(ui, key, fallback), onClick, disabled,
   }, h(Icon, { width: 18, height: 18 }));
-  const importButton = h('button', { type: 'button', className: 'qmr-lib-import', disabled: importing, onClick: pickFile },
-    h(IconImport, { width: 17, height: 17 }), importing ? tr(ui, 'importing', '导入中…') : tr(ui, 'import', '导入书籍'));
+  const importButton = h('button', { type: 'button', className: 'qmr-lib-import', onClick: pickFile },
+    h(IconImport, { width: 17, height: 17 }), importing ? tr(ui, 'queue.add', '追加文件') : tr(ui, 'import', '导入书籍'));
   const error = status.error;
 
   return h('div', { className: 'qmr-library' },
-    h('input', { ref: fileRef, type: 'file', accept: '.epub,.pdf,.txt', hidden: true, tabIndex: -1, onChange: event => {
-      const file = event.target.files?.[0]; event.target.value = ''; if (file) ui.importBook(file);
+    h('input', { ref: fileRef, type: 'file', accept: '.epub,.pdf,.txt', multiple: true, hidden: true, tabIndex: -1, onChange: event => {
+      const files = Array.from(event.target.files || []);
+      event.target.value = '';
+      if (files.length) ui.enqueueImports(files);
     } }),
     h('aside', { className: 'qmr-library-sidebar', 'aria-label': tr(ui, 'categories', '书库分类') },
       h('div', { className: 'qmr-library-brand' }, h(IconLibrary, { width: 22, height: 22 }), h('span', null, ui.t('library', '书库'))),
@@ -168,6 +172,9 @@ export function LibraryView({ ui }) {
           iconButton(IconFullscreen, 'fullscreen', '全屏', () => ui.toggleFullscreen()),
           iconButton(IconClose, 'close', '关闭阅读器', () => ui.closeOverlay()))),
       h('div', { className: 'qmr-lib-scroll' },
+        h(ImportQueueView, { ui }),
+        queue?.items.length && (filter !== 'all' || format !== 'all' || query.trim())
+          ? h('div', { className: 'qmr-muted qmr-small' }, tr(ui, 'queue.filtered', '新导入的书可能被当前筛选隐藏')) : null,
         error ? h('div', { className: 'qmr-errorbox', role: 'alert' }, h('div', { className: 'qmr-errorbox-title' }, tr(ui, 'error', '书库操作失败')),
           h('div', { className: 'qmr-errorbox-text' }, String(error)), h('button', { type: 'button', className: 'qmr-btn', onClick: () => ui.refreshLibrary() }, tr(ui, 'retry', '重试'))) : null,
         resumeBook ? h('section', { className: 'qmr-library-resume', 'aria-label': tr(ui, 'continue', '继续阅读') },

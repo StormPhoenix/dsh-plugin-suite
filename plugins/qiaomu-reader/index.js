@@ -1714,7 +1714,7 @@ async function importBook(paths, input) {
   if (index >= 0) library.books[index] = book;
   else library.books.push(book);
   await writeLibrary(paths, library);
-  return book;
+  return { book, existing: index >= 0 };
 }
 function emptyState(bookId) {
   return {
@@ -1775,6 +1775,12 @@ function apply(ctx, config = {}) {
     return cachedRoot;
   };
   const pathsOf = () => libraryPaths(rootOf(), config);
+  let mutationChain = Promise.resolve();
+  const mutate = (operation) => {
+    const result = mutationChain.then(operation);
+    mutationChain = result.catch(() => void 0);
+    return result;
+  };
   const ensureFolders = async () => {
     const paths = pathsOf();
     await Promise.all([
@@ -1797,48 +1803,53 @@ function apply(ctx, config = {}) {
       return { ...library, books: library.books.map(normalizeBook) };
     },
     
-    async import(input) {
-      if (typeof input?.base64 !== "string" || input.base64 === "") {
-        throw new Error("\u5BFC\u5165\u5931\u8D25\uFF1A\u7F3A\u5C11\u6587\u4EF6\u5185\u5BB9");
-      }
-      const paths = await ensureFolders();
-      const bytes = Buffer.from(input.base64, "base64");
-      if (bytes.byteLength === 0) throw new Error("\u5BFC\u5165\u5931\u8D25\uFF1A\u6587\u4EF6\u4E3A\u7A7A");
-      const book = await importBook(paths, {
-        filename: input.filename,
-        bytes,
-        title: input.title,
-        author: input.author,
-        cover: typeof input.cover === "string" && /^data:image\/(?:jpeg|png|webp|gif);base64,/i.test(input.cover) && input.cover.length <= 14e5 ? input.cover : null,
-        source: input.source ?? "upload"
+    import(input) {
+      return mutate(async () => {
+        if (typeof input?.base64 !== "string" || input.base64 === "") {
+          throw new Error("\u5BFC\u5165\u5931\u8D25\uFF1A\u7F3A\u5C11\u6587\u4EF6\u5185\u5BB9");
+        }
+        const paths = await ensureFolders();
+        const bytes = Buffer.from(input.base64, "base64");
+        if (bytes.byteLength === 0) throw new Error("\u5BFC\u5165\u5931\u8D25\uFF1A\u6587\u4EF6\u4E3A\u7A7A");
+        return importBook(paths, {
+          filename: input.filename,
+          bytes,
+          title: input.title,
+          author: input.author,
+          cover: typeof input.cover === "string" && /^data:image\/(?:jpeg|png|webp|gif);base64,/i.test(input.cover) && input.cover.length <= 14e5 ? input.cover : null,
+          source: input.source ?? "upload"
+        });
       });
-      return { book };
     },
     
-    async importPath(filePath) {
-      if (typeof filePath !== "string" || filePath.trim() === "") throw new Error("\u5BFC\u5165\u5931\u8D25\uFF1A\u7F3A\u5C11\u6587\u4EF6\u8DEF\u5F84");
-      const root = rootOf();
-      const absolute = path.isAbsolute(filePath) ? path.resolve(filePath) : path.resolve(root, filePath);
-      const info = await stat(absolute).catch(() => null);
-      if (info === null || !info.isFile()) throw new Error(`\u627E\u4E0D\u5230\u6587\u4EF6\uFF1A${filePath}`);
-      const paths = await ensureFolders();
-      const bytes = await readFile(absolute);
-      const book = await importBook(paths, { filename: path.basename(absolute), bytes, source: "workspace" });
-      return { book, from: absolute };
+    importPath(filePath) {
+      return mutate(async () => {
+        if (typeof filePath !== "string" || filePath.trim() === "") throw new Error("\u5BFC\u5165\u5931\u8D25\uFF1A\u7F3A\u5C11\u6587\u4EF6\u8DEF\u5F84");
+        const root = rootOf();
+        const absolute = path.isAbsolute(filePath) ? path.resolve(filePath) : path.resolve(root, filePath);
+        const info = await stat(absolute).catch(() => null);
+        if (info === null || !info.isFile()) throw new Error(`\u627E\u4E0D\u5230\u6587\u4EF6\uFF1A${filePath}`);
+        const paths = await ensureFolders();
+        const bytes = await readFile(absolute);
+        const { book } = await importBook(paths, { filename: path.basename(absolute), bytes, source: "workspace" });
+        return { book, from: absolute };
+      });
     },
     
-    async remove(bookId) {
-      const paths = await ensureFolders();
-      const library = await readLibrary(paths);
-      const book = library.books.find((entry) => entry.id === bookId);
-      if (book === void 0) throw new Error(`\u4E66\u5E93\u91CC\u6CA1\u6709\u8FD9\u672C\u4E66\uFF1A${bookId}`);
-      if (typeof book.file === "string") {
-        await rm(safeJoin(paths.base, book.file), { force: true });
-      }
-      await rm(safeJoin(paths.state, `${bookId}.json`), { force: true });
-      library.books = library.books.filter((entry) => entry.id !== bookId);
-      await writeLibrary(paths, library);
-      return { removed: bookId };
+    remove(bookId) {
+      return mutate(async () => {
+        const paths = await ensureFolders();
+        const library = await readLibrary(paths);
+        const book = library.books.find((entry) => entry.id === bookId);
+        if (book === void 0) throw new Error(`\u4E66\u5E93\u91CC\u6CA1\u6709\u8FD9\u672C\u4E66\uFF1A${bookId}`);
+        if (typeof book.file === "string") {
+          await rm(safeJoin(paths.base, book.file), { force: true });
+        }
+        await rm(safeJoin(paths.state, `${bookId}.json`), { force: true });
+        library.books = library.books.filter((entry) => entry.id !== bookId);
+        await writeLibrary(paths, library);
+        return { removed: bookId };
+      });
     },
     
     async loadState(bookId) {
@@ -1846,20 +1857,22 @@ function apply(ctx, config = {}) {
       return readState(pathsOf(), bookId);
     },
     
-    async saveState(bookId, state) {
-      const paths = await ensureFolders();
-      const previous = await readState(paths, bookId);
-      const saved = await writeState(paths, bookId, state ?? emptyState(bookId));
-      const library = await readLibrary(paths);
-      const index = library.books.findIndex((entry) => entry.id === bookId);
-      if (index >= 0) {
-        library.books[index] = normalizeBook({ ...library.books[index], openedAt: Date.now() });
-        await writeLibrary(paths, library);
-      }
-      if (JSON.stringify(previous.highlights) !== JSON.stringify(saved.highlights)) {
-        await api.exportNotes(bookId);
-      }
-      return { state: saved };
+    saveState(bookId, state) {
+      return mutate(async () => {
+        const paths = await ensureFolders();
+        const previous = await readState(paths, bookId);
+        const saved = await writeState(paths, bookId, state ?? emptyState(bookId));
+        const library = await readLibrary(paths);
+        const index = library.books.findIndex((entry) => entry.id === bookId);
+        if (index >= 0) {
+          library.books[index] = normalizeBook({ ...library.books[index], openedAt: Date.now() });
+          await writeLibrary(paths, library);
+        }
+        if (JSON.stringify(previous.highlights) !== JSON.stringify(saved.highlights)) {
+          await api.exportNotes(bookId);
+        }
+        return { state: saved };
+      });
     },
     
     async readBookBytes(bookId) {

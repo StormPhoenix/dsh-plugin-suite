@@ -212,6 +212,22 @@ export function readerThemeVars(themeId) {
 
 /** 组件级样式表。只用 --dsw-alias-* / --dsw-specific-* 令牌，书页部分用 --qmr-* 读书主题变量。 */
 export const UI_CSS = `
+.qmr-import-queue{margin-bottom:20px;padding:12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}
+.qmr-import-head,.qmr-import-item{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.qmr-import-head{flex-wrap:wrap;margin-bottom:8px}
+.qmr-import-toggle{border:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-weight:500;padding:4px 0;cursor:pointer}
+.qmr-import-summary{font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.qmr-import-progress{display:block;width:100%;height:6px;margin:8px 0;accent-color:var(--dsw-alias-brand-primary)}
+.qmr-import-current,.qmr-import-filename{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qmr-import-current{margin-bottom:6px}
+.qmr-import-list{max-height:320px;overflow:auto;margin-top:12px}
+.qmr-import-item{padding:8px 0;border-top:1px solid var(--dsw-alias-border-l1)}
+.qmr-import-copy{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1}
+.qmr-import-message{font-size:13px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
+.qmr-import-compact{display:flex;align-items:center;gap:12px;flex:none;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);font-size:13px}
+.qmr-import-compact>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:760px){.qmr-import-item{align-items:flex-start;flex-wrap:wrap}.qmr-import-head .qmr-actions{gap:4px}.qmr-import-copy{flex-basis:70%}}
+
 .qmr-overlay{position:fixed;inset:0;z-index:9000;display:flex;flex-direction:column;
   background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);
   font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;

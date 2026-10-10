@@ -2,6 +2,15 @@
 export const LIBRARY_MESSAGES = {
   "zh": {
     "catalog": {
+      "queue": {
+        "title": "导入队列", "add": "追加文件", "running": "导入中", "stopping": "当前文件完成后停止", "paused": "已停止", "idle": "处理完成",
+        "summary": "已处理 {done}/{total} · 已入库 {host} · 仅浏览器缓存 {browser} · 失败 {failed} · 等待 {waiting} · 已取消 {cancelled}",
+        "progress": "导入进度", "current": "当前文件：{name}", "stop": "停止后续导入", "resume": "继续导入", "retryAll": "重试全部失败", "clear": "清除已处理记录",
+        "waiting": "等待", "processing": "处理中", "host": "已入库", "browser": "仅浏览器缓存", "failed": "失败", "cancelled": "已取消", "existing": "已更新已有书籍", "attempts": "尝试 {count} 次",
+        "cancel": "取消此项", "retry": "重试", "saveHost": "重试保存到书库", "show": "查看导入队列",
+        "lifetime": "切换页面后继续导入；刷新或重启不恢复队列。清除记录不会删除书籍，但会释放重试所需文件。",
+        "filtered": "新导入的书可能被当前筛选隐藏"
+      },
       "deleteConfirm": "从书库删除《{title}》？\n只删除书库副本，不影响原始文件。",
       "finished": "已读完",
       "justStarted": "刚开始",
@@ -54,6 +63,15 @@ export const LIBRARY_MESSAGES = {
   },
   "en": {
     "catalog": {
+      "queue": {
+        "title": "Import queue", "add": "Add files", "running": "Importing", "stopping": "Stopping after current file", "paused": "Stopped", "idle": "Finished",
+        "summary": "Processed {done}/{total} · Library {host} · Browser only {browser} · Failed {failed} · Waiting {waiting} · Cancelled {cancelled}",
+        "progress": "Import progress", "current": "Current file: {name}", "stop": "Stop after current", "resume": "Continue", "retryAll": "Retry all failed", "clear": "Clear processed records",
+        "waiting": "Waiting", "processing": "Processing", "host": "Saved to library", "browser": "Browser cache only", "failed": "Failed", "cancelled": "Cancelled", "existing": "Updated existing book", "attempts": "{count} attempts",
+        "cancel": "Cancel item", "retry": "Retry", "saveHost": "Retry saving to library", "show": "Show import queue",
+        "lifetime": "Imports continue across page switches, but not reloads or restarts. Clearing records keeps books but releases files needed for retries.",
+        "filtered": "Current filters may hide newly imported books"
+      },
       "all": "All books",
       "reading": "Reading",
       "finished": "Finished",

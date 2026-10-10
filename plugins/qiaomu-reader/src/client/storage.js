@@ -54,10 +54,12 @@ async function withStore(storeName, mode, run) {
       const transaction = db.transaction(storeName, mode);
       const store = transaction.objectStore(storeName);
       const request = run(store);
+      let result;
       if (request !== undefined) {
-        request.onsuccess = () => resolve(request.result);
+        request.onsuccess = () => { result = request.result; };
         request.onerror = () => resolve(undefined);
       }
+      transaction.oncomplete = () => resolve(result);
       transaction.onerror = () => resolve(undefined);
       transaction.onabort = () => resolve(undefined);
     } catch {
@@ -78,23 +80,32 @@ function localGet(key) {
 
 function localSet(key, value) {
   try {
-    globalThis.localStorage?.setItem(`${LS_PREFIX}${key}`, JSON.stringify(value));
+    if (!globalThis.localStorage) return false;
+    globalThis.localStorage.setItem(`${LS_PREFIX}${key}`, JSON.stringify(value));
+    return true;
   } catch {
-    /* 隐私模式或配额满：忽略，宿主那边仍然会存 */
+    return false;
   }
 }
 
-/** 读取客户端缓存的书库索引。 */
+let libraryRevision = 0;
+const cachedIndex = (value) => ({ revision: value?.cacheRevision || 0, library: value });
+
+/** Read the newest committed index across both caches; accept legacy raw indexes. */
 export async function loadLocalLibrary() {
-  const fromDb = await withStore(STORE_LIBRARY, 'readonly', (store) => store.get('index'));
-  if (fromDb !== undefined && fromDb !== null) return fromDb;
-  return localGet('library');
+  const fromDb = cachedIndex(await withStore(STORE_LIBRARY, 'readonly', (store) => store.get('index')));
+  const fromLocal = cachedIndex(localGet('library'));
+  libraryRevision = Math.max(libraryRevision, fromDb.revision || 0, fromLocal.revision || 0);
+  const selected = fromLocal.library && (!fromDb.library || fromLocal.revision > fromDb.revision) ? fromLocal : fromDb;
+  return selected.library;
 }
 
-/** 写入客户端缓存的库索引。 */
+/** An additive revision orders partial backend saves while retaining the raw index fields. */
 export async function saveLocalLibrary(library) {
-  await withStore(STORE_LIBRARY, 'readwrite', (store) => store.put(library, 'index'));
-  localSet('library', library);
+  const envelope = { ...library, cacheRevision: libraryRevision = Math.max(Date.now(), libraryRevision + 1) };
+  const saved = await withStore(STORE_LIBRARY, 'readwrite', (store) => store.put(envelope, 'index'));
+  const fallback = localSet('library', envelope);
+  return saved !== undefined || fallback;
 }
 
 /** 读取某本书的阅读状态。 */
@@ -160,8 +171,7 @@ export async function saveBookBytes(bookId, bytes) {
       for (let i = 0; i < bytes.length; i += chunk) {
         binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
       }
-      localSet(`bytes:${bookId}`, btoa(binary));
-      return true;
+      return localSet(`bytes:${bookId}`, btoa(binary));
     } catch {
       return false;
     }
