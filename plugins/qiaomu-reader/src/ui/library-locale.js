@@ -1,6 +1,7 @@
 /** Shared client catalogue messages. */
 export const LIBRARY_MESSAGES = {
   "zh": {
+    "reader": { "zoom": "缩放", "zoomIn": "放大（Ctrl＋滚轮向上）", "zoomOut": "缩小（Ctrl＋滚轮向下）" },
     "catalog": {
       "queue": {
         "title": "导入队列", "add": "追加文件", "running": "导入中", "stopping": "当前文件完成后停止", "paused": "已停止", "idle": "处理完成",
@@ -62,6 +63,7 @@ export const LIBRARY_MESSAGES = {
     }
   },
   "en": {
+    "reader": { "zoom": "Zoom", "zoomIn": "Zoom in (Ctrl + wheel up)", "zoomOut": "Zoom out (Ctrl + wheel down)" },
     "catalog": {
       "queue": {
         "title": "Import queue", "add": "Add files", "running": "Importing", "stopping": "Stopping after current file", "paused": "Stopped", "idle": "Finished",

@@ -7,10 +7,13 @@
  * - 畸形输入（null / 数组 / 字符串 / 缺字段）一律归一化成合法结构，绝不抛异常。
  */
 
+import { bounded, FONT_MIN, FONT_MAX, PDF_ZOOM_MIN, PDF_ZOOM_MAX } from './reader-input.js';
+
 /** 阅读器默认设置（冻结；调用方只读，不要原地修改） */
 export const DEFAULT_READER_SETTINGS = Object.freeze({
   theme: 'paper',
   fontSize: 18,
+  pdfZoom: 1,
   lineHeight: 1.75,
   fontFamily: 'serif',
   margin: 64,
@@ -141,7 +144,8 @@ export function normalizeSettings(raw) {
     ...DEFAULT_READER_SETTINGS,
     ...source,
     theme: str(source.theme).trim() || DEFAULT_READER_SETTINGS.theme,
-    fontSize: positiveNum(source.fontSize, DEFAULT_READER_SETTINGS.fontSize),
+    fontSize: bounded(source.fontSize, DEFAULT_READER_SETTINGS.fontSize, FONT_MIN, FONT_MAX),
+    pdfZoom: bounded(source.pdfZoom, 1, PDF_ZOOM_MIN, PDF_ZOOM_MAX),
     lineHeight: positiveNum(source.lineHeight, DEFAULT_READER_SETTINGS.lineHeight),
     fontFamily: str(source.fontFamily).trim() || DEFAULT_READER_SETTINGS.fontFamily,
     margin: nonNegativeNum(source.margin, DEFAULT_READER_SETTINGS.margin),

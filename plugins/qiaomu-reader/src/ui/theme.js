@@ -158,6 +158,7 @@ export const READER_FONT_LABELS = Object.freeze({
 export const UI_SETTING_DEFAULTS = Object.freeze({
   theme: 'paper',
   fontSize: 18,
+  pdfZoom: 1,
   lineHeight: 1.75,
   fontFamily: 'serif',
   margin: 64,
@@ -415,7 +416,11 @@ export const UI_CSS = `
 .qmr-pdf-text-layer span{position:absolute;display:block;white-space:pre;color:transparent;line-height:1;user-select:text}
 .qmr-pdf-text-layer span::selection{background:var(--qmr-selection);color:transparent}
 .qmr-pdf-text-layer mark.qmr-hl,.qmr-pdf-text-layer mark.qm-hit{color:transparent;padding:0;mix-blend-mode:multiply}
-.qmr-txt-body{max-width:70ch;margin:0 auto}
+.qmr-txt-body{max-width:none;margin:0}
+.qmr-reader-pdf .qmr-page-viewport{overflow:auto;overscroll-behavior:contain}
+.qmr-reader-pdf .qmr-pdf-sheet{max-width:none;margin:0 auto}
+.qmr-reader-content .qmr-zoom-btn{border-radius:50%}
+.qmr-zoom-value{min-width:44px;text-align:center;font-size:12px;font-variant-numeric:tabular-nums;color:var(--qmr-muted)}
 .qmr-md-preview h3{font-size:15px;margin:0 0 16px}.qmr-md-preview h4{font-size:13px;margin:18px 0 8px}
 .qmr-md-quote{padding:8px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .qmr-md-quote blockquote{margin:0 0 6px;line-height:1.65}.qmr-md-quote p{margin:0 0 6px}

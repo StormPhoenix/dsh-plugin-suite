@@ -17,6 +17,7 @@ import {
   updateHighlightNote as coreUpdateHighlightNote,
 } from '../core/state.js';
 import { createUiStore } from './store.js';
+import { bounded, FONT_MIN, FONT_MAX, PDF_ZOOM_MIN, PDF_ZOOM_MAX } from '../core/reader-input.js';
 import { UI_SETTING_DEFAULTS, READER_THEMES } from './theme.js';
 import { chapterIndexForHref, copyText, formatPercent, localId, normalizePercent, toMarkdown } from './format.js';
 
@@ -309,7 +310,8 @@ export function createController(getProps, store) {
     const base = { ...UI_SETTING_DEFAULTS, ...(DEFAULT_READER_SETTINGS || {}) };
     const own = (state && state.settings) || {};
     const merged = { ...base, ...own };
-    merged.fontSize = clampInt(merged.fontSize || base.fontSize, 14, 28);
+    merged.fontSize = Math.round(bounded(merged.fontSize, base.fontSize, FONT_MIN, FONT_MAX));
+    merged.pdfZoom = bounded(merged.pdfZoom, 1, PDF_ZOOM_MIN, PDF_ZOOM_MAX);
     merged.lineHeight = Math.min(2.2, Math.max(1.4, Number(merged.lineHeight) || base.lineHeight));
     merged.margin = clampInt(merged.margin || base.margin, 32, 120);
     if (!READER_THEMES[merged.theme]) merged.theme = base.theme;

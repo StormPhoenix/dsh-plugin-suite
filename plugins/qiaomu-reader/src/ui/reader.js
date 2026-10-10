@@ -11,6 +11,7 @@ import {
 } from './theme.js';
 import { chapterIndexForHref, chapterLabelMap, formatPercent } from './format.js';
 import { useMediaQuery } from './hooks.js';
+import { zoomValue, FONT_MIN, FONT_MAX, PDF_ZOOM_MIN, PDF_ZOOM_MAX, wheelPixels, createWheelIntent, createZoomIntent } from '../core/reader-input.js';
 import {
   IconBack,
   IconClose,
@@ -234,11 +235,16 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const sectionUnit = book?.format === 'pdf' ? '页' : book?.format === 'txt' ? '部分' : '章';
   const engine = ui.engineOf(bookId);
   const storedSettings = ui.settingsOf(bookId);
-  const settings = book?.format === 'pdf' ? { ...storedSettings, flow: 'scroll' } : storedSettings;
+  const isPdf = book?.format === 'pdf';
+  const settings = isPdf ? { ...storedSettings, flow: 'scroll' } : storedSettings;
+  const [pdfWidth, setPdfWidth] = React.useState(0);
+  const pdfWidthRef = React.useRef(0);
   const themeVars = readerThemeVars(settings.theme);
   const labels = React.useMemo(() => chapterLabelMap(engine), [engine, engineVersion]);
 
-  const [html, setHtml] = React.useState('');
+  const [rendered, setRendered] = React.useState({ html: '', key: '' });
+  const html = rendered.html;
+  const setHtml = (html) => setRendered({ html, key: `${bookId}:${chapterIndex}` });
   const [renderError, setRenderError] = React.useState(null);
   const [page, setPageState] = React.useState(0);
   const [pageCount, setPageCount] = React.useState(1);
@@ -247,10 +253,16 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const flowRef = React.useRef(null);
   const measureRef = React.useRef({ pages: 1, perPage: 1, columnWidth: 320, gap: COLUMN_GAP });
   const lastHtmlRef = React.useRef(null);
+  const decoratedRef = React.useRef(null);
   const pendingLandLastRef = React.useRef(false);
   const lastFocusRef = React.useRef('');
   const lastSearchFocusRef = React.useRef(null);
   const scrollTimerRef = React.useRef(null);
+  const pdfAnchorRef = React.useRef(null);
+  const pdfRenderedRef = React.useRef(null);
+  const textAnchorRef = React.useRef(null);
+  const wheelIntentRef = React.useRef(createWheelIntent());
+  const zoomIntentRef = React.useRef(createZoomIntent());
 
   const highlights = React.useMemo(
     () => ((bookState && bookState.highlights) || []).filter(Boolean),
@@ -282,6 +294,105 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     restoreScroll,
   };
 
+  React.useLayoutEffect(() => {
+    if (!isPdf || !viewportRef.current) return undefined;
+    const viewport = viewportRef.current;
+    const update = () => {
+      if (pdfWidthRef.current === viewport.clientWidth) return;
+      pdfWidthRef.current = viewport.clientWidth;
+      const sheet = viewport.querySelector('.qmr-pdf-sheet');
+      if (sheet && !pdfAnchorRef.current) {
+        const x = viewport.clientWidth / 2, y = viewport.clientHeight / 2;
+        const box = viewport.getBoundingClientRect(), paper = sheet.getBoundingClientRect();
+        pdfAnchorRef.current = { x, y, px: (box.left + x - paper.left) / sheet.clientWidth, py: (box.top + y - paper.top) / sheet.clientWidth };
+      }
+      setPdfWidth(viewport.clientWidth);
+    };
+    update();
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null;
+    observer?.observe(viewport);
+    window.addEventListener('resize', update);
+    return () => { observer?.disconnect(); window.removeEventListener('resize', update); };
+  }, [isPdf, bookId]);
+
+  /** Capture visible text before changing typography, without retaining a whole text index. */
+  const captureTextAnchor = React.useCallback(() => {
+    const viewport = viewportRef.current;
+    const flow = flowRef.current;
+    if (!viewport || !flow || isPdf) return;
+    const box = viewport.getBoundingClientRect();
+    const caret = document.caretPositionFromPoint?.(box.left + 4, box.top + 8);
+    const fallback = !caret && document.caretRangeFromPoint?.(box.left + 4, box.top + 8);
+    const caretNode = caret?.offsetNode || fallback?.startContainer;
+    const caretOffset = caret?.offset ?? fallback?.startOffset;
+    if (caretNode?.nodeType === Node.TEXT_NODE && flow.contains(caretNode) && caretOffset < caretNode.length) {
+      const range = document.createRange();
+      range.setStart(caretNode, caretOffset); range.setEnd(caretNode, caretOffset + 1);
+      textAnchorRef.current = { node: caretNode, offset: caretOffset, y: range.getBoundingClientRect().top - box.top, chapterIndex, bookId };
+      return;
+    }
+    const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (!node.textContent.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      for (const rect of range.getClientRects()) {
+        if (rect.bottom > box.top && rect.top < box.bottom && rect.right > box.left && rect.left < box.right) {
+          let offset = 0;
+          // A small range identifies the visible character, not the paragraph start.
+          for (; offset < node.length; offset += 1) {
+            range.setStart(node, offset); range.setEnd(node, offset + 1);
+            const part = range.getBoundingClientRect();
+            if (part.bottom > box.top && part.top < box.bottom && part.right > box.left && part.left < box.right) {
+              textAnchorRef.current = { node, offset, y: part.top - box.top, chapterIndex, bookId };
+              return;
+            }
+          }
+        }
+      }
+    }
+  }, [isPdf, bookId, chapterIndex]);
+
+  const adjustZoom = React.useCallback((direction, point = null) => {
+    const live = liveRef.current;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    if (live.book?.format === 'pdf') {
+      const rect = viewport.getBoundingClientRect();
+      const x = point ? point.x - rect.left : viewport.clientWidth / 2;
+      const y = point ? point.y - rect.top : viewport.clientHeight / 2;
+      const sheet = viewport.querySelector('.qmr-pdf-sheet');
+      const oldWidth = sheet?.clientWidth || viewport.clientWidth;
+      const sheetRect = sheet?.getBoundingClientRect();
+      pdfAnchorRef.current = { x, y, px: (point ? point.x : rect.left + x) - (sheetRect?.left ?? rect.left), py: (point ? point.y : rect.top + y) - (sheetRect?.top ?? rect.top) };
+      pdfAnchorRef.current.px /= oldWidth;
+      pdfAnchorRef.current.py /= oldWidth;
+      const next = zoomValue('pdf', live.settings.pdfZoom, direction);
+      live.settings.pdfZoom = next;
+      ui.updateSettings(live.bookId, { pdfZoom: next });
+    } else {
+      captureTextAnchor();
+      const next = zoomValue(live.book?.format, live.settings.fontSize, direction);
+      live.settings.fontSize = next;
+      ui.updateSettings(live.bookId, { fontSize: next });
+    }
+  }, [ui, captureTextAnchor]);
+
+  React.useEffect(() => {
+    const beforeSettings = () => {
+      if (!isPdf) { captureTextAnchor(); return; }
+      const viewport = viewportRef.current;
+      const sheet = viewport?.querySelector('.qmr-pdf-sheet');
+      if (!sheet) return;
+      const x = viewport.clientWidth / 2, y = viewport.clientHeight / 2;
+      const box = viewport.getBoundingClientRect(), paper = sheet.getBoundingClientRect();
+      pdfAnchorRef.current = { x, y, px: (box.left + x - paper.left) / sheet.clientWidth, py: (box.top + y - paper.top) / sheet.clientWidth };
+    };
+    ui.beforeSettings = beforeSettings;
+    return () => { if (ui.beforeSettings === beforeSettings) delete ui.beforeSettings; };
+  }, [ui, isPdf, captureTextAnchor]);
+
   // ------------------------------------------------------------- 状态加载
 
   React.useEffect(() => {
@@ -292,20 +403,28 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
 
   React.useEffect(() => {
     let cancelled = false;
-    if (!engine || bookId == null) {
+    const abort = new AbortController();
+    if (!engine || bookId == null || (isPdf && !pdfWidth)) {
       setHtml('');
       return undefined;
     }
     ui.store.set({ chapterBusy: true });
-    Promise.resolve()
-      .then(() => engine.render(chapterIndex, ui.resourceResolver(bookId)))
+    let timer;
+    const delayed = new Promise((resolve) => { timer = setTimeout(resolve, isPdf ? 120 : 0); });
+    delayed
+      .then(() => {
+        if (cancelled) return '';
+        return isPdf
+          ? engine.renderPage(chapterIndex, { width: pdfWidth * settings.pdfZoom, pixelRatio: globalThis.devicePixelRatio || 1, signal: abort.signal })
+          : engine.render(chapterIndex, ui.resourceResolver(bookId));
+      })
       .then((out) => {
         if (cancelled) return;
         setHtml(typeof out === 'string' ? out : '');
         setRenderError(null);
       })
       .catch((error) => {
-        if (cancelled) return;
+        if (cancelled || error.name === 'AbortError') return;
         setHtml('');
         setRenderError(ui.reportError(error, true));
       })
@@ -314,8 +433,10 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       }, () => {});
     return () => {
       cancelled = true;
+      clearTimeout(timer);
+      abort.abort();
     };
-  }, [engine, bookId, chapterIndex, engineVersion, imagesVersion, ui]);
+  }, [engine, bookId, chapterIndex, engineVersion, imagesVersion, ui, isPdf, pdfWidth, settings.pdfZoom]);
 
   // ------------------------------------------------------------- 设置页码
 
@@ -342,7 +463,9 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       const perPage = paginated && settings.spread && width >= 900 ? 2 : 1;
       const gap = COLUMN_GAP;
       const columnWidth = (width - (perPage - 1) * gap) / perPage;
-      flow.style.width = `${width}px`;
+      flow.style.width = `${isPdf ? Math.max(width, width * settings.pdfZoom) : width}px`;
+      const sheet = isPdf && flow.querySelector('.qmr-pdf-sheet');
+      if (sheet) sheet.style.width = `${width * settings.pdfZoom}px`;
       flow.style.height = paginated ? `${Math.max(1, viewport.clientHeight)}px` : 'auto';
       if (paginated) {
         flow.style.columnWidth = `${columnWidth}px`;
@@ -372,7 +495,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     } catch (_error) {
       return measureRef.current;
     }
-  }, [settings.flow, settings.spread, setPage]);
+  }, [settings.flow, settings.spread, settings.pdfZoom, isPdf, setPage]);
 
   /** 分页定位必须翻页，不能让浏览器横向滚动裁切容器。 */
   const revealNode = React.useCallback((node) => {
@@ -398,32 +521,48 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
    */
   React.useLayoutEffect(() => {
     const flow = flowRef.current;
-    if (!flow) return;
-    const isNewHtml = lastHtmlRef.current !== html;
-    lastHtmlRef.current = html;
-    try {
-      flow.innerHTML = html || '';
-    } catch (error) {
-      ui.reportError(error, true);
-      return;
+    if (!flow || rendered.key !== `${bookId}:${chapterIndex}`) return;
+    const isNewHtml = lastHtmlRef.current !== rendered;
+    lastHtmlRef.current = rendered;
+    const decoration = `${highlightSignature}:${searchQuery}`;
+    const rebuild = isNewHtml || decoratedRef.current !== decoration;
+    decoratedRef.current = decoration;
+    if (rebuild) {
+      try {
+        flow.innerHTML = html || '';
+      } catch (error) {
+        ui.reportError(error, true);
+        return;
+      }
+      try {
+        const chapterHref = chapterHrefOf(engine, chapterIndex);
+        const forChapter = (highlightsRef.current || []).filter((item) => {
+          if (!item) return false;
+          if (!item.chapterHref) return true;
+          if (item.chapterHref === chapterHref) return true;
+          return chapterIndexForHref(engine, item.chapterHref) === chapterIndex;
+        });
+        if (forChapter.length) wrapHighlights(flow, forChapter);
+        if (searchQuery && String(searchQuery).trim()) wrapTextMatches(flow, searchQuery, 'qm-hit', {});
+      } catch (error) {
+        ui.reportError(error, true);
+      }
     }
-    try {
-      const chapterHref = chapterHrefOf(engine, chapterIndex);
-      const forChapter = (highlightsRef.current || []).filter((item) => {
-        if (!item) return false;
-        if (!item.chapterHref) return true;
-        if (item.chapterHref === chapterHref) return true;
-        return chapterIndexForHref(engine, item.chapterHref) === chapterIndex;
-      });
-      if (forChapter.length) wrapHighlights(flow, forChapter);
-      if (searchQuery && String(searchQuery).trim()) wrapTextMatches(flow, searchQuery, 'qm-hit', {});
-    } catch (error) {
-      ui.reportError(error, true);
-    }
-
     const meta = measure();
 
-    if (isNewHtml) {
+    const samePdfPage = isPdf && pdfRenderedRef.current === `${bookId}:${chapterIndex}`;
+    if (isPdf && html && isNewHtml) pdfRenderedRef.current = rendered.key;
+    if (isNewHtml && samePdfPage && pdfAnchorRef.current) {
+      const anchor = pdfAnchorRef.current;
+      const viewport = viewportRef.current;
+      const width = viewport.clientWidth * settings.pdfZoom;
+      viewport.scrollLeft = anchor.px * width + Math.max(0, (viewport.clientWidth - width) / 2) - anchor.x;
+      viewport.scrollTop = anchor.py * width - anchor.y;
+      pdfAnchorRef.current = null;
+    }
+    if (isNewHtml && !samePdfPage) {
+      pdfAnchorRef.current = null;
+      if (viewportRef.current) viewportRef.current.scrollLeft = 0;
       if (pendingLandLastRef.current) {
         pendingLandLastRef.current = false;
         setPage(Math.max(0, (meta.pages || 1) - 1));
@@ -447,6 +586,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     }
   }, [
     html,
+    rendered,
     highlightSignature,
     searchQuery,
     chapterIndex,
@@ -558,6 +698,22 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     const measureNow = () => {
       try {
         measure();
+        const anchor = textAnchorRef.current;
+        if (anchor && anchor.node.isConnected && anchor.bookId === bookId && anchor.chapterIndex === chapterIndex) {
+          const range = document.createRange();
+          range.setStart(anchor.node, anchor.offset);
+          range.setEnd(anchor.node, Math.min(anchor.node.length, anchor.offset + 1));
+          const rect = range.getClientRects()[0];
+          if (rect && settings.flow === 'paginated') {
+            const x = rect.left - flowRef.current.getBoundingClientRect().left;
+            const meta = measureRef.current;
+            setPage(Math.floor(Math.max(0, x) / (meta.perPage * (meta.columnWidth + meta.gap))));
+          } else if (rect) {
+            viewportRef.current.scrollTop += rect.top - viewportRef.current.getBoundingClientRect().top - anchor.y;
+          }
+          textAnchorRef.current = null;
+        }
+        // The next setting action captures a fresh anchor before mutation.
       } catch (_error) {
         /* 忽略 */
       }
@@ -586,7 +742,17 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
         }
       }
     };
-  }, [measure, html, settings.fontSize, settings.fontFamily, settings.lineHeight, settings.justify]);
+  }, [measure, html, settings.fontSize, settings.fontFamily, settings.lineHeight, settings.justify, captureTextAnchor, bookId, chapterIndex, setPage]);
+
+  React.useEffect(() => {
+    if (isPdf) return undefined;
+    const viewport = viewportRef.current;
+    let frame;
+    const capture = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(captureTextAnchor); };
+    capture();
+    viewport?.addEventListener('scroll', capture);
+    return () => { cancelAnimationFrame(frame); viewport?.removeEventListener('scroll', capture); };
+  }, [isPdf, page, captureTextAnchor]);
 
   // ------------------------------------------------------------- 位置上报
 
@@ -686,6 +852,57 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       ui.registerPager({ next: () => ui.goChapter((ui.store.get().chapterIndex || 0) + 1), prev: () => ui.goChapter((ui.store.get().chapterIndex || 0) - 1) });
     };
   }, [ui, setPage]);
+
+  // Wheel handling is scoped to the content viewport, never the app or companion.
+  React.useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return undefined;
+    const onWheel = (event) => {
+      const live = liveRef.current;
+      const delta = wheelPixels(event, viewport.clientHeight);
+      if (event.ctrlKey) {
+        event.preventDefault();
+        wheelIntentRef.current.reset();
+        // Each wheel notch changes one unit; fine trackpad motion accumulates.
+        const direction = zoomIntentRef.current.push(delta.y, performance.now());
+        if (direction) adjustZoom(-direction, { x: event.clientX, y: event.clientY });
+        return;
+      }
+      zoomIntentRef.current.reset();
+      if (event.metaKey || event.altKey || event.shiftKey || Math.abs(delta.x) > Math.abs(delta.y) || !delta.y) return;
+      if (ui.store.get().chapterBusy) {
+        wheelIntentRef.current.observe(performance.now());
+        return;
+      }
+      let nested = event.target;
+      while (nested && nested !== viewport) {
+        if (nested instanceof HTMLElement && nested.scrollHeight > nested.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(nested).overflowY)) {
+          const available = delta.y > 0 ? nested.scrollTop + nested.clientHeight < nested.scrollHeight - 1 : nested.scrollTop > 1;
+          if (available) { wheelIntentRef.current.observe(performance.now()); return; }
+        }
+        nested = nested.parentElement;
+      }
+      if (live.settings.flow === 'scroll') {
+        const canScroll = delta.y > 0 ? viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 2 : viewport.scrollTop > 2;
+        if (canScroll) { wheelIntentRef.current.observe(performance.now()); return; }
+      }
+      event.preventDefault();
+      const direction = wheelIntentRef.current.push(delta.y, performance.now());
+      if (!direction) return;
+      if (direction > 0 && live.chapterIndex + 1 >= live.chapterCount && (live.settings.flow === 'scroll' || live.page + 1 >= live.pageCount)) return;
+      if (direction < 0 && live.chapterIndex === 0 && (live.settings.flow === 'scroll' || live.page === 0)) return;
+      ui.turnPage(direction);
+    };
+    viewport.addEventListener('wheel', onWheel, { passive: false });
+    return () => viewport.removeEventListener('wheel', onWheel);
+  }, [ui, adjustZoom]);
+
+  React.useEffect(() => {
+    wheelIntentRef.current.reset();
+    zoomIntentRef.current.reset();
+    pdfAnchorRef.current = null;
+    textAnchorRef.current = null;
+  }, [bookId]);
 
   // ------------------------------------------------------------- 键盘
 
@@ -920,7 +1137,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     ? { padding: `56px min(${settings.margin}px, 6vw) 48px` }
     : { padding: `64px min(${settings.margin}px, 6vw) 48px` };
   contentStyle.width = '100%';
-  contentStyle.maxWidth = settings.spread ? '1280px' : '860px';
+  contentStyle.maxWidth = 'none';
   contentStyle.marginInline = 'auto';
   const flowStyle = {
     fontFamily: fontStackOf(settings.fontFamily),
@@ -960,6 +1177,17 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     icon,
   );
 
+  const zoom = isPdf ? settings.pdfZoom : settings.fontSize;
+  const zoomIcon = (direction) => h('svg', { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': true },
+    h('circle', { cx: 12, cy: 12, r: 9, stroke: 'currentColor', strokeWidth: 1.5 }),
+    h('path', { d: direction > 0 ? 'M7 12h10M12 7v10' : 'M7 12h10', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }));
+  const zoomButton = (direction) => {
+    const label = ui.t(direction > 0 ? 'reader.zoomIn' : 'reader.zoomOut', direction > 0 ? '放大' : '缩小');
+    return h('button', { type: 'button', className: 'qmr-btn qmr-btn-icon qmr-zoom-btn', title: label, 'aria-label': label,
+      disabled: direction > 0 ? zoom >= (isPdf ? PDF_ZOOM_MAX : FONT_MAX) : zoom <= (isPdf ? PDF_ZOOM_MIN : FONT_MIN),
+      onClick: () => adjustZoom(direction) }, zoomIcon(direction));
+  };
+
   const topBar = h(
       'div',
       { className: `qmr-topbar${chromeVisible ? '' : ' qmr-chrome-hidden'}` },
@@ -979,6 +1207,9 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       h(
         'div',
         { className: 'qmr-actions' },
+        zoomButton(-1),
+        h('span', { className: 'qmr-zoom-value', 'aria-label': ui.t('reader.zoom', '缩放') }, isPdf ? `${Math.round(zoom * 100)}%` : `${zoom}px`),
+        zoomButton(1),
         toolbarButton('search', h(IconSearch, { width: 16, height: 16 }), '搜索', () => ui.setPanel('search'), panel === 'search'),
         toolbarButton('hl', h(IconHighlight, { width: 16, height: 16 }), '划线', () => ui.setPanel('highlights'), panel === 'highlights' || panel === 'notes'),
         toolbarButton('ai', h(IconSparkles, { width: 16, height: 16 }), 'AI 伴读', () => ui.setPanel('companion'), panel === 'companion'),
@@ -1051,7 +1282,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
 
   return h(
     'div',
-    { className: 'qmr-reader', 'data-qmr-theme': settings.theme, style: themeVars },
+    { className: `qmr-reader${isPdf ? ' qmr-reader-pdf' : ''}`, 'data-qmr-theme': settings.theme, style: themeVars },
     h(
       'div',
       { className: `qmr-reader-main${panel === 'companion' ? ' qmr-has-companion' : ''}`, ref: workareaRef, style: { '--qmr-companion-width': `${companionWidth}%` } },

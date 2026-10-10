@@ -5657,7 +5657,7 @@ var init_pdf = __esm({
         var DOM_EXCEPTION = "DOMException";
         var Error2 = getBuiltIn("Error");
         var NativeDOMException = getBuiltIn(DOM_EXCEPTION);
-        var $DOMException = function DOMException() {
+        var $DOMException = function DOMException2() {
           anInstance(this, DOMExceptionPrototype);
           var argumentsLength = arguments.length;
           var message = normalizeStringArgument(argumentsLength < 1 ? void 0 : arguments[0]);
@@ -99203,8 +99203,19 @@ var init_pdf_worker = __esm({
 // src/client/pdf-book.js
 var pdf_book_exports = {};
 __export(pdf_book_exports, {
-  parsePdfBook: () => parsePdfBook
+  parsePdfBook: () => parsePdfBook,
+  pdfRenderSize: () => pdfRenderSize
 });
+function pdfRenderSize(base, width, pixelRatio = 1) {
+  if (!Number.isFinite(width) || width <= 0) throw new RangeError("PDF width must be positive and finite");
+  if (!Number.isFinite(pixelRatio) || pixelRatio <= 0) throw new RangeError("PDF pixelRatio must be positive and finite");
+  const height = width * base.height / base.width;
+  const ratio = Math.min(pixelRatio, 2, Math.sqrt(16e6 / width / height), 16e6 / width, 16e6 / height);
+  return { width, height, scale: width / base.width, canvasWidth: Math.max(1, Math.floor(width * ratio)), canvasHeight: Math.max(1, Math.floor(height * ratio)) };
+}
+function abortError() {
+  return new DOMException("PDF rendering aborted", "AbortError");
+}
 async function parsePdfBook(bytes, title = "PDF") {
   const task = getDocument({ data: bytes.slice(), useSystemFonts: true });
   let document2;
@@ -99225,6 +99236,70 @@ async function parsePdfBook(bytes, title = "PDF") {
   }));
   const book = { title, author: "", format: "pdf", chapters, toc: chapters.map((chapter) => ({ href: chapter.href, label: chapter.label })) };
   const textCache = /* @__PURE__ */ new Map();
+  const activeRenders = /* @__PURE__ */ new Set();
+  let disposed = false;
+  async function renderPage(index, options, legacy = false) {
+    if (index < 0 || index >= chapters.length) return "";
+    const { width, pixelRatio = 1, signal } = options;
+    let canvas;
+    let renderTask;
+    let cancelled = disposed || Boolean(signal?.aborted);
+    const done = Promise.withResolvers();
+    const operation = { done: done.promise, cancel() {
+      cancelled = true;
+      renderTask?.cancel();
+    } };
+    const checkAbort = () => {
+      if (cancelled) throw abortError();
+    };
+    activeRenders.add(operation);
+    signal?.addEventListener("abort", operation.cancel, { once: true });
+    try {
+      checkAbort();
+      const page = await document2.getPage(index + 1);
+      checkAbort();
+      const base = page.getViewport({ scale: 1 });
+      const legacyScale = Math.min(1.6, 1e3 / Math.max(1, base.width));
+      const size = pdfRenderSize(base, legacy ? base.width * legacyScale : width, pixelRatio);
+      const viewport = page.getViewport({ scale: legacy ? legacyScale : size.scale });
+      const content = await page.getTextContent();
+      checkAbort();
+      let image = "";
+      if (typeof globalThis.document?.createElement === "function") {
+        canvas = globalThis.document.createElement("canvas");
+        const legacyRaster = legacy && Math.ceil(viewport.width) * Math.ceil(viewport.height) <= 16e6;
+        canvas.width = legacyRaster ? Math.ceil(viewport.width) : size.canvasWidth;
+        canvas.height = legacyRaster ? Math.ceil(viewport.height) : size.canvasHeight;
+        const transform = legacyRaster ? void 0 : [canvas.width / viewport.width, 0, 0, canvas.height / viewport.height, 0, 0];
+        renderTask = page.render({ canvasContext: canvas.getContext("2d"), canvas, viewport, transform });
+        if (cancelled) renderTask.cancel();
+        await renderTask.promise;
+        checkAbort();
+        image = canvas.toDataURL("image/jpeg", 0.88);
+        checkAbort();
+      }
+      const spans = content.items.filter((item) => item.str).map((item) => {
+        const matrix = Util.transform(viewport.transform, item.transform);
+        const fontSize = legacy ? Math.max(4, Math.hypot(matrix[2], matrix[3])) : Math.hypot(matrix[2], matrix[3]);
+        const left = matrix[4];
+        const top = matrix[5] - fontSize;
+        const textWidth = legacy ? Math.max(1, item.width * viewport.scale) : item.width * viewport.scale;
+        return `<span style="left:${left / viewport.width * 100}%;top:${top / viewport.height * 100}%;font-size:${fontSize / viewport.width * 100}cqw;min-width:${textWidth / viewport.width * 100}%">${escapeHtml(item.str)}</span>`;
+      }).join("");
+      checkAbort();
+      const displayWidth = legacy ? viewport.width : size.width;
+      const displayHeight = legacy ? viewport.height : size.height;
+      return `<div class="qmr-pdf-sheet" style="width:${displayWidth}px;aspect-ratio:${displayWidth}/${displayHeight}">${image ? `<img src="${escapeAttr(image)}" alt="\u7B2C ${index + 1} \u9875">` : ""}<div class="qmr-pdf-text-layer">${spans}</div></div>`;
+    } catch (error) {
+      if (cancelled) throw abortError();
+      throw error;
+    } finally {
+      signal?.removeEventListener("abort", operation.cancel);
+      if (canvas) canvas.width = canvas.height = 0;
+      activeRenders.delete(operation);
+      done.resolve();
+    }
+  }
   const engine = {
     book,
     chapterCount: () => chapters.length,
@@ -99237,30 +99312,18 @@ async function parsePdfBook(bytes, title = "PDF") {
       textCache.set(index, text2);
       return text2;
     },
-    async render(index) {
-      if (index < 0 || index >= chapters.length) return "";
-      const page = await document2.getPage(index + 1);
-      const base = page.getViewport({ scale: 1 });
-      const scale = Math.min(1.6, 1e3 / Math.max(1, base.width));
-      const viewport = page.getViewport({ scale });
-      const content = await page.getTextContent();
-      let image = "";
-      if (typeof globalThis.document?.createElement === "function") {
-        const canvas = globalThis.document.createElement("canvas");
-        canvas.width = Math.ceil(viewport.width);
-        canvas.height = Math.ceil(viewport.height);
-        await page.render({ canvasContext: canvas.getContext("2d"), canvas, viewport }).promise;
-        image = canvas.toDataURL("image/jpeg", 0.88);
-        canvas.width = canvas.height = 0;
-      }
-      const spans = content.items.filter((item) => item.str).map((item) => {
-        const matrix = Util.transform(viewport.transform, item.transform);
-        const fontSize = Math.max(4, Math.hypot(matrix[2], matrix[3]));
-        const left = matrix[4];
-        const top = matrix[5] - fontSize;
-        return `<span style="left:${left / viewport.width * 100}%;top:${top / viewport.height * 100}%;font-size:${fontSize / viewport.width * 100}cqw;min-width:${Math.max(1, item.width * scale) / viewport.width * 100}%">${escapeHtml(item.str)}</span>`;
-      }).join("");
-      return `<div class="qmr-pdf-sheet" style="width:${viewport.width}px;aspect-ratio:${viewport.width}/${viewport.height}">${image ? `<img src="${escapeAttr(image)}" alt="\u7B2C ${index + 1} \u9875">` : ""}<div class="qmr-pdf-text-layer">${spans}</div></div>`;
+    /** Render the page at the legacy width, returning the selectable sheet HTML. */
+    render(index) {
+      return renderPage(index, {}, true);
+    },
+    /**
+     * Render a page at an explicit CSS width with an independently capped raster.
+     * @param {number} index Zero-based page index; out-of-range indices return an empty string.
+     * @param {{width: number, pixelRatio?: number, signal?: AbortSignal}} options Positive CSS width and pixel ratio (default 1); cancellation rejects with AbortError.
+     * @returns {Promise<string>} Sheet HTML with display-coordinate text and an optional JPEG image.
+     */
+    renderPage(index, options = {}) {
+      return renderPage(index, options);
     },
     tocFor(index) {
       return index >= 0 && index < chapters.length ? [book.toc[index]] : [];
@@ -99281,7 +99344,14 @@ async function parsePdfBook(bytes, title = "PDF") {
       }
       return hits;
     },
-    dispose: () => task.destroy()
+    async dispose() {
+      disposed = true;
+      const pending = [...activeRenders];
+      for (const operation of pending) operation.cancel();
+      await Promise.all(pending.map((operation) => operation.done));
+      textCache.clear();
+      await task.destroy();
+    }
   };
   return { book, engine, bytes };
 }
@@ -100874,6 +100944,7 @@ module.exports = __toCommonJS(client_entry_exports);
 // src/ui/library-locale.js
 var LIBRARY_MESSAGES = {
   "zh": {
+    "reader": { "zoom": "\u7F29\u653E", "zoomIn": "\u653E\u5927\uFF08Ctrl\uFF0B\u6EDA\u8F6E\u5411\u4E0A\uFF09", "zoomOut": "\u7F29\u5C0F\uFF08Ctrl\uFF0B\u6EDA\u8F6E\u5411\u4E0B\uFF09" },
     "catalog": {
       "queue": {
         "title": "\u5BFC\u5165\u961F\u5217",
@@ -100955,6 +101026,7 @@ var LIBRARY_MESSAGES = {
     }
   },
   "en": {
+    "reader": { "zoom": "Zoom", "zoomIn": "Zoom in (Ctrl + wheel up)", "zoomOut": "Zoom out (Ctrl + wheel down)" },
     "catalog": {
       "queue": {
         "title": "Import queue",
@@ -101040,10 +101112,79 @@ var LIBRARY_MESSAGES = {
 // src/client/index.js
 var React15 = __toESM(require("react"), 1);
 
+// src/core/reader-input.js
+var FONT_MIN = 12;
+var FONT_MAX = 48;
+var PDF_ZOOM_MIN = 0.5;
+var PDF_ZOOM_MAX = 3;
+function bounded(value, fallback, min, max) {
+  const number = Number(value);
+  return Math.max(min, Math.min(max, Number.isFinite(number) && number > 0 ? number : fallback));
+}
+function zoomValue(format, value, direction) {
+  return format === "pdf" ? Math.round(bounded(value + direction * 0.1, 1, PDF_ZOOM_MIN, PDF_ZOOM_MAX) * 100) / 100 : Math.round(bounded(value + direction, 18, FONT_MIN, FONT_MAX));
+}
+function wheelPixels(event, height) {
+  const factor = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? height : 1;
+  return { x: event.deltaX * factor, y: event.deltaY * factor };
+}
+function createZoomIntent() {
+  let sum = 0;
+  let previous = -Infinity;
+  return { reset() {
+    sum = 0;
+    previous = -Infinity;
+  }, push(delta, now = 0) {
+    if (now - previous >= 180) sum = 0;
+    previous = now;
+    if (Math.sign(sum) !== Math.sign(delta)) sum = 0;
+    sum += delta;
+    if (Math.abs(sum) < 40) return 0;
+    const direction = Math.sign(sum);
+    sum = 0;
+    return direction;
+  } };
+}
+function createWheelIntent() {
+  let sum = 0;
+  let previous = -Infinity;
+  let blockedUntil = -Infinity;
+  let needsGap = false;
+  return {
+    reset() {
+      sum = 0;
+      previous = -Infinity;
+      blockedUntil = -Infinity;
+      needsGap = false;
+    },
+    observe(now) {
+      previous = now;
+      sum = 0;
+      needsGap = true;
+    },
+    push(delta, now) {
+      const gap = now - previous;
+      previous = now;
+      if (needsGap && gap < 180) return 0;
+      if (now < blockedUntil) return 0;
+      needsGap = false;
+      if (gap >= 180 || Math.sign(delta) !== Math.sign(sum)) sum = 0;
+      sum += delta;
+      if (Math.abs(sum) < 80) return 0;
+      const direction = Math.sign(sum);
+      sum = 0;
+      blockedUntil = now + 350;
+      needsGap = true;
+      return direction;
+    }
+  };
+}
+
 // src/core/state.js
 var DEFAULT_READER_SETTINGS = Object.freeze({
   theme: "paper",
   fontSize: 18,
+  pdfZoom: 1,
   lineHeight: 1.75,
   fontFamily: "serif",
   margin: 64,
@@ -101126,7 +101267,8 @@ function normalizeSettings(raw) {
     ...DEFAULT_READER_SETTINGS,
     ...source,
     theme: str(source.theme).trim() || DEFAULT_READER_SETTINGS.theme,
-    fontSize: positiveNum(source.fontSize, DEFAULT_READER_SETTINGS.fontSize),
+    fontSize: bounded(source.fontSize, DEFAULT_READER_SETTINGS.fontSize, FONT_MIN, FONT_MAX),
+    pdfZoom: bounded(source.pdfZoom, 1, PDF_ZOOM_MIN, PDF_ZOOM_MAX),
     lineHeight: positiveNum(source.lineHeight, DEFAULT_READER_SETTINGS.lineHeight),
     fontFamily: str(source.fontFamily).trim() || DEFAULT_READER_SETTINGS.fontFamily,
     margin: nonNegativeNum(source.margin, DEFAULT_READER_SETTINGS.margin),
@@ -102795,6 +102937,7 @@ var READER_FONT_LABELS = Object.freeze({
 var UI_SETTING_DEFAULTS = Object.freeze({
   theme: "paper",
   fontSize: 18,
+  pdfZoom: 1,
   lineHeight: 1.75,
   fontFamily: "serif",
   margin: 64,
@@ -103031,7 +103174,11 @@ var UI_CSS = `
 .qmr-pdf-text-layer span{position:absolute;display:block;white-space:pre;color:transparent;line-height:1;user-select:text}
 .qmr-pdf-text-layer span::selection{background:var(--qmr-selection);color:transparent}
 .qmr-pdf-text-layer mark.qmr-hl,.qmr-pdf-text-layer mark.qm-hit{color:transparent;padding:0;mix-blend-mode:multiply}
-.qmr-txt-body{max-width:70ch;margin:0 auto}
+.qmr-txt-body{max-width:none;margin:0}
+.qmr-reader-pdf .qmr-page-viewport{overflow:auto;overscroll-behavior:contain}
+.qmr-reader-pdf .qmr-pdf-sheet{max-width:none;margin:0 auto}
+.qmr-reader-content .qmr-zoom-btn{border-radius:50%}
+.qmr-zoom-value{min-width:44px;text-align:center;font-size:12px;font-variant-numeric:tabular-nums;color:var(--qmr-muted)}
 .qmr-md-preview h3{font-size:15px;margin:0 0 16px}.qmr-md-preview h4{font-size:13px;margin:18px 0 8px}
 .qmr-md-quote{padding:8px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .qmr-md-quote blockquote{margin:0 0 6px;line-height:1.65}.qmr-md-quote p{margin:0 0 6px}
@@ -103477,7 +103624,8 @@ function createController(getProps, store) {
     const base = { ...UI_SETTING_DEFAULTS, ...DEFAULT_READER_SETTINGS || {} };
     const own = state && state.settings || {};
     const merged = { ...base, ...own };
-    merged.fontSize = clampInt(merged.fontSize || base.fontSize, 14, 28);
+    merged.fontSize = Math.round(bounded(merged.fontSize, base.fontSize, FONT_MIN, FONT_MAX));
+    merged.pdfZoom = bounded(merged.pdfZoom, 1, PDF_ZOOM_MIN, PDF_ZOOM_MAX);
     merged.lineHeight = Math.min(2.2, Math.max(1.4, Number(merged.lineHeight) || base.lineHeight));
     merged.margin = clampInt(merged.margin || base.margin, 32, 120);
     if (!READER_THEMES[merged.theme]) merged.theme = base.theme;
@@ -105421,7 +105569,11 @@ function SettingsPanel({ ui }) {
     if (bookId != null) ui.loadState(bookId);
   }, [bookId, ui]);
   const settings = ui.settingsOf(bookId);
-  const update = (patch) => ui.updateSettings(bookId, patch);
+  const isPdf = ui.bookOf(bookId)?.format === "pdf";
+  const update = (patch) => {
+    ui.beforeSettings?.();
+    ui.updateSettings(bookId, patch);
+  };
   const themeCards = READER_THEME_IDS.map((id) => {
     const theme = READER_THEMES[id];
     return h10(
@@ -105462,147 +105614,166 @@ function SettingsPanel({ ui }) {
       !isLoaded ? h10("div", { className: "qmr-muted qmr-small", style: { marginBottom: 8 } }, "\u6B63\u5728\u8BFB\u53D6\u5DF2\u4FDD\u5B58\u7684\u8BBE\u7F6E\u2026") : null,
       h10("div", { className: "qmr-group-title" }, "\u4E3B\u9898"),
       h10("div", { className: "qmr-theme-grid" }, themeCards),
-      h10("div", { className: "qmr-group-title" }, "\u6392\u7248"),
-      h10(
+      isPdf ? h10(
         "div",
         { className: "qmr-field" },
-        h10("span", { className: "qmr-field-label" }, "\u5B57\u53F7"),
+        h10("span", { className: "qmr-field-label" }, ui.t("reader.zoom", "\u7F29\u653E")),
+        h10("input", {
+          className: "qmr-range",
+          type: "range",
+          min: 50,
+          max: 300,
+          step: 10,
+          value: Math.round(settings.pdfZoom * 100),
+          "aria-label": ui.t("reader.zoom", "\u7F29\u653E"),
+          onChange: (event) => update({ pdfZoom: Number(event.target.value) / 100 })
+        }),
+        h10("span", { className: "qmr-field-value" }, `${Math.round(settings.pdfZoom * 100)}%`)
+      ) : h10(
+        React11.Fragment,
+        null,
+        h10("div", { className: "qmr-group-title" }, "\u6392\u7248"),
         h10(
-          "span",
-          { className: "qmr-field-ctl" },
-          h10("input", {
-            className: "qmr-range",
-            type: "range",
-            min: 14,
-            max: 28,
-            step: 1,
-            value: settings.fontSize,
-            "aria-label": "\u5B57\u53F7",
-            onChange: (event) => update({ fontSize: Number(event.target.value) })
-          })
-        ),
-        h10("span", { className: "qmr-field-value" }, `${settings.fontSize}px`)
-      ),
-      h10(
-        "div",
-        { className: "qmr-field" },
-        h10("span", { className: "qmr-field-label" }, "\u884C\u9AD8"),
-        h10(
-          "span",
-          { className: "qmr-field-ctl" },
-          h10("input", {
-            className: "qmr-range",
-            type: "range",
-            min: 1.4,
-            max: 2.2,
-            step: 0.05,
-            value: settings.lineHeight,
-            "aria-label": "\u884C\u9AD8",
-            onChange: (event) => update({ lineHeight: Number(event.target.value) })
-          })
-        ),
-        h10("span", { className: "qmr-field-value" }, Number(settings.lineHeight).toFixed(2))
-      ),
-      h10(
-        "div",
-        { className: "qmr-field" },
-        h10("span", { className: "qmr-field-label" }, "\u5B57\u4F53"),
-        h10(
-          "span",
-          { className: "qmr-field-ctl" },
-          h10("select", {
-            className: "qmr-select",
-            style: { flex: "1 1 auto" },
-            value: settings.fontFamily,
-            "aria-label": "\u5B57\u4F53",
-            onChange: (event) => update({ fontFamily: event.target.value })
-          }, Object.keys(READER_FONT_LABELS).map((key) => h10("option", { key, value: key }, READER_FONT_LABELS[key])))
-        )
-      ),
-      h10(
-        "div",
-        { className: "qmr-field" },
-        h10("span", { className: "qmr-field-label" }, "\u9875\u8FB9\u8DDD"),
-        h10(
-          "span",
-          { className: "qmr-field-ctl" },
-          h10("input", {
-            className: "qmr-range",
-            type: "range",
-            min: 32,
-            max: 120,
-            step: 4,
-            value: settings.margin,
-            "aria-label": "\u9875\u8FB9\u8DDD",
-            onChange: (event) => update({ margin: Number(event.target.value) })
-          })
-        ),
-        h10("span", { className: "qmr-field-value" }, `${settings.margin}px`)
-      ),
-      h10("div", { className: "qmr-group-title" }, "\u7FFB\u9875"),
-      h10(
-        "div",
-        { className: "qmr-field" },
-        h10("span", { className: "qmr-field-label" }, "\u65B9\u5F0F"),
-        h10(
-          "span",
-          { className: "qmr-field-ctl" },
+          "div",
+          { className: "qmr-field" },
+          h10("span", { className: "qmr-field-label" }, "\u5B57\u53F7"),
           h10(
             "span",
-            { className: "qmr-seg", role: "group", "aria-label": "\u7FFB\u9875\u65B9\u5F0F" },
-            h10("button", {
-              type: "button",
-              className: settings.flow === "paginated" ? "is-active" : "",
-              "aria-pressed": settings.flow === "paginated",
-              onClick: () => update({ flow: "paginated" })
-            }, "\u5206\u9875"),
-            h10("button", {
-              type: "button",
-              className: settings.flow === "scroll" ? "is-active" : "",
-              "aria-pressed": settings.flow === "scroll",
-              onClick: () => update({ flow: "scroll" })
-            }, "\u8FDE\u7EED\u6EDA\u52A8")
-          )
-        )
-      ),
-      h10(
-        "div",
-        { className: "qmr-field" },
-        h10("span", { className: "qmr-field-label" }, "\u7248\u5F0F"),
-        h10(
-          "span",
-          { className: "qmr-field-ctl" },
-          h10(
-            "label",
-            { className: "qmr-switch" },
+            { className: "qmr-field-ctl" },
             h10("input", {
-              type: "checkbox",
-              checked: settings.spread,
-              disabled: settings.flow !== "paginated",
-              "aria-label": "\u53CC\u9875\u5E03\u5C40",
-              onChange: (event) => update({ spread: !!event.target.checked })
-            }),
-            "\u53CC\u9875\uFF08\u5BBD\u5C4F\u65F6\u5DE6\u53F3\u5E76\u6392\uFF09"
-          )
-        )
-      ),
-      h10(
-        "div",
-        { className: "qmr-field" },
-        h10("span", { className: "qmr-field-label" }, "\u5BF9\u9F50"),
+              className: "qmr-range",
+              type: "range",
+              min: FONT_MIN,
+              max: FONT_MAX,
+              step: 1,
+              value: settings.fontSize,
+              "aria-label": "\u5B57\u53F7",
+              onChange: (event) => update({ fontSize: Number(event.target.value) })
+            })
+          ),
+          h10("span", { className: "qmr-field-value" }, `${settings.fontSize}px`)
+        ),
         h10(
-          "span",
-          { className: "qmr-field-ctl" },
+          "div",
+          { className: "qmr-field" },
+          h10("span", { className: "qmr-field-label" }, "\u884C\u9AD8"),
           h10(
-            "label",
-            { className: "qmr-switch" },
+            "span",
+            { className: "qmr-field-ctl" },
             h10("input", {
-              type: "checkbox",
-              checked: settings.justify,
-              "aria-label": "\u4E24\u7AEF\u5BF9\u9F50",
-              onChange: (event) => update({ justify: !!event.target.checked })
-            }),
-            "\u4E24\u7AEF\u5BF9\u9F50"
+              className: "qmr-range",
+              type: "range",
+              min: 1.4,
+              max: 2.2,
+              step: 0.05,
+              value: settings.lineHeight,
+              "aria-label": "\u884C\u9AD8",
+              onChange: (event) => update({ lineHeight: Number(event.target.value) })
+            })
+          ),
+          h10("span", { className: "qmr-field-value" }, Number(settings.lineHeight).toFixed(2))
+        ),
+        h10(
+          "div",
+          { className: "qmr-field" },
+          h10("span", { className: "qmr-field-label" }, "\u5B57\u4F53"),
+          h10(
+            "span",
+            { className: "qmr-field-ctl" },
+            h10("select", {
+              className: "qmr-select",
+              style: { flex: "1 1 auto" },
+              value: settings.fontFamily,
+              "aria-label": "\u5B57\u4F53",
+              onChange: (event) => update({ fontFamily: event.target.value })
+            }, Object.keys(READER_FONT_LABELS).map((key) => h10("option", { key, value: key }, READER_FONT_LABELS[key])))
+          )
+        ),
+        h10(
+          "div",
+          { className: "qmr-field" },
+          h10("span", { className: "qmr-field-label" }, "\u9875\u8FB9\u8DDD"),
+          h10(
+            "span",
+            { className: "qmr-field-ctl" },
+            h10("input", {
+              className: "qmr-range",
+              type: "range",
+              min: 32,
+              max: 120,
+              step: 4,
+              value: settings.margin,
+              "aria-label": "\u9875\u8FB9\u8DDD",
+              onChange: (event) => update({ margin: Number(event.target.value) })
+            })
+          ),
+          h10("span", { className: "qmr-field-value" }, `${settings.margin}px`)
+        ),
+        h10("div", { className: "qmr-group-title" }, "\u7FFB\u9875"),
+        h10(
+          "div",
+          { className: "qmr-field" },
+          h10("span", { className: "qmr-field-label" }, "\u65B9\u5F0F"),
+          h10(
+            "span",
+            { className: "qmr-field-ctl" },
+            h10(
+              "span",
+              { className: "qmr-seg", role: "group", "aria-label": "\u7FFB\u9875\u65B9\u5F0F" },
+              h10("button", {
+                type: "button",
+                className: settings.flow === "paginated" ? "is-active" : "",
+                "aria-pressed": settings.flow === "paginated",
+                onClick: () => update({ flow: "paginated" })
+              }, "\u5206\u9875"),
+              h10("button", {
+                type: "button",
+                className: settings.flow === "scroll" ? "is-active" : "",
+                "aria-pressed": settings.flow === "scroll",
+                onClick: () => update({ flow: "scroll" })
+              }, "\u8FDE\u7EED\u6EDA\u52A8")
+            )
+          )
+        ),
+        h10(
+          "div",
+          { className: "qmr-field" },
+          h10("span", { className: "qmr-field-label" }, "\u7248\u5F0F"),
+          h10(
+            "span",
+            { className: "qmr-field-ctl" },
+            h10(
+              "label",
+              { className: "qmr-switch" },
+              h10("input", {
+                type: "checkbox",
+                checked: settings.spread,
+                disabled: settings.flow !== "paginated",
+                "aria-label": "\u53CC\u9875\u5E03\u5C40",
+                onChange: (event) => update({ spread: !!event.target.checked })
+              }),
+              "\u53CC\u9875\uFF08\u5BBD\u5C4F\u65F6\u5DE6\u53F3\u5E76\u6392\uFF09"
+            )
+          )
+        ),
+        h10(
+          "div",
+          { className: "qmr-field" },
+          h10("span", { className: "qmr-field-label" }, "\u5BF9\u9F50"),
+          h10(
+            "span",
+            { className: "qmr-field-ctl" },
+            h10(
+              "label",
+              { className: "qmr-switch" },
+              h10("input", {
+                type: "checkbox",
+                checked: settings.justify,
+                "aria-label": "\u4E24\u7AEF\u5BF9\u9F50",
+                onChange: (event) => update({ justify: !!event.target.checked })
+              }),
+              "\u4E24\u7AEF\u5BF9\u9F50"
+            )
           )
         )
       ),
@@ -105838,10 +106009,15 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const sectionUnit = book?.format === "pdf" ? "\u9875" : book?.format === "txt" ? "\u90E8\u5206" : "\u7AE0";
   const engine = ui.engineOf(bookId);
   const storedSettings = ui.settingsOf(bookId);
-  const settings = book?.format === "pdf" ? { ...storedSettings, flow: "scroll" } : storedSettings;
+  const isPdf = book?.format === "pdf";
+  const settings = isPdf ? { ...storedSettings, flow: "scroll" } : storedSettings;
+  const [pdfWidth, setPdfWidth] = React13.useState(0);
+  const pdfWidthRef = React13.useRef(0);
   const themeVars = readerThemeVars(settings.theme);
   const labels = React13.useMemo(() => chapterLabelMap(engine), [engine, engineVersion]);
-  const [html, setHtml] = React13.useState("");
+  const [rendered, setRendered] = React13.useState({ html: "", key: "" });
+  const html = rendered.html;
+  const setHtml = (html2) => setRendered({ html: html2, key: `${bookId}:${chapterIndex}` });
   const [renderError, setRenderError] = React13.useState(null);
   const [page, setPageState] = React13.useState(0);
   const [pageCount, setPageCount] = React13.useState(1);
@@ -105849,10 +106025,16 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const flowRef = React13.useRef(null);
   const measureRef = React13.useRef({ pages: 1, perPage: 1, columnWidth: 320, gap: COLUMN_GAP });
   const lastHtmlRef = React13.useRef(null);
+  const decoratedRef = React13.useRef(null);
   const pendingLandLastRef = React13.useRef(false);
   const lastFocusRef = React13.useRef("");
   const lastSearchFocusRef = React13.useRef(null);
   const scrollTimerRef = React13.useRef(null);
+  const pdfAnchorRef = React13.useRef(null);
+  const pdfRenderedRef = React13.useRef(null);
+  const textAnchorRef = React13.useRef(null);
+  const wheelIntentRef = React13.useRef(createWheelIntent());
+  const zoomIntentRef = React13.useRef(createZoomIntent());
   const highlights = React13.useMemo(
     () => (bookState && bookState.highlights || []).filter(Boolean),
     [bookState]
@@ -105879,22 +106061,133 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     focusHighlightId,
     restoreScroll
   };
+  React13.useLayoutEffect(() => {
+    if (!isPdf || !viewportRef.current) return void 0;
+    const viewport = viewportRef.current;
+    const update = () => {
+      if (pdfWidthRef.current === viewport.clientWidth) return;
+      pdfWidthRef.current = viewport.clientWidth;
+      const sheet = viewport.querySelector(".qmr-pdf-sheet");
+      if (sheet && !pdfAnchorRef.current) {
+        const x = viewport.clientWidth / 2, y = viewport.clientHeight / 2;
+        const box = viewport.getBoundingClientRect(), paper = sheet.getBoundingClientRect();
+        pdfAnchorRef.current = { x, y, px: (box.left + x - paper.left) / sheet.clientWidth, py: (box.top + y - paper.top) / sheet.clientWidth };
+      }
+      setPdfWidth(viewport.clientWidth);
+    };
+    update();
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(update) : null;
+    observer?.observe(viewport);
+    window.addEventListener("resize", update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [isPdf, bookId]);
+  const captureTextAnchor = React13.useCallback(() => {
+    const viewport = viewportRef.current;
+    const flow = flowRef.current;
+    if (!viewport || !flow || isPdf) return;
+    const box = viewport.getBoundingClientRect();
+    const caret = document.caretPositionFromPoint?.(box.left + 4, box.top + 8);
+    const fallback = !caret && document.caretRangeFromPoint?.(box.left + 4, box.top + 8);
+    const caretNode = caret?.offsetNode || fallback?.startContainer;
+    const caretOffset = caret?.offset ?? fallback?.startOffset;
+    if (caretNode?.nodeType === Node.TEXT_NODE && flow.contains(caretNode) && caretOffset < caretNode.length) {
+      const range = document.createRange();
+      range.setStart(caretNode, caretOffset);
+      range.setEnd(caretNode, caretOffset + 1);
+      textAnchorRef.current = { node: caretNode, offset: caretOffset, y: range.getBoundingClientRect().top - box.top, chapterIndex, bookId };
+      return;
+    }
+    const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT);
+    let node;
+    while (node = walker.nextNode()) {
+      if (!node.textContent.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      for (const rect of range.getClientRects()) {
+        if (rect.bottom > box.top && rect.top < box.bottom && rect.right > box.left && rect.left < box.right) {
+          let offset = 0;
+          for (; offset < node.length; offset += 1) {
+            range.setStart(node, offset);
+            range.setEnd(node, offset + 1);
+            const part = range.getBoundingClientRect();
+            if (part.bottom > box.top && part.top < box.bottom && part.right > box.left && part.left < box.right) {
+              textAnchorRef.current = { node, offset, y: part.top - box.top, chapterIndex, bookId };
+              return;
+            }
+          }
+        }
+      }
+    }
+  }, [isPdf, bookId, chapterIndex]);
+  const adjustZoom = React13.useCallback((direction, point = null) => {
+    const live = liveRef.current;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    if (live.book?.format === "pdf") {
+      const rect = viewport.getBoundingClientRect();
+      const x = point ? point.x - rect.left : viewport.clientWidth / 2;
+      const y = point ? point.y - rect.top : viewport.clientHeight / 2;
+      const sheet = viewport.querySelector(".qmr-pdf-sheet");
+      const oldWidth = sheet?.clientWidth || viewport.clientWidth;
+      const sheetRect = sheet?.getBoundingClientRect();
+      pdfAnchorRef.current = { x, y, px: (point ? point.x : rect.left + x) - (sheetRect?.left ?? rect.left), py: (point ? point.y : rect.top + y) - (sheetRect?.top ?? rect.top) };
+      pdfAnchorRef.current.px /= oldWidth;
+      pdfAnchorRef.current.py /= oldWidth;
+      const next = zoomValue("pdf", live.settings.pdfZoom, direction);
+      live.settings.pdfZoom = next;
+      ui.updateSettings(live.bookId, { pdfZoom: next });
+    } else {
+      captureTextAnchor();
+      const next = zoomValue(live.book?.format, live.settings.fontSize, direction);
+      live.settings.fontSize = next;
+      ui.updateSettings(live.bookId, { fontSize: next });
+    }
+  }, [ui, captureTextAnchor]);
+  React13.useEffect(() => {
+    const beforeSettings = () => {
+      if (!isPdf) {
+        captureTextAnchor();
+        return;
+      }
+      const viewport = viewportRef.current;
+      const sheet = viewport?.querySelector(".qmr-pdf-sheet");
+      if (!sheet) return;
+      const x = viewport.clientWidth / 2, y = viewport.clientHeight / 2;
+      const box = viewport.getBoundingClientRect(), paper = sheet.getBoundingClientRect();
+      pdfAnchorRef.current = { x, y, px: (box.left + x - paper.left) / sheet.clientWidth, py: (box.top + y - paper.top) / sheet.clientWidth };
+    };
+    ui.beforeSettings = beforeSettings;
+    return () => {
+      if (ui.beforeSettings === beforeSettings) delete ui.beforeSettings;
+    };
+  }, [ui, isPdf, captureTextAnchor]);
   React13.useEffect(() => {
     if (bookId != null) ui.loadState(bookId);
   }, [bookId, ui]);
   React13.useEffect(() => {
     let cancelled = false;
-    if (!engine || bookId == null) {
+    const abort = new AbortController();
+    if (!engine || bookId == null || isPdf && !pdfWidth) {
       setHtml("");
       return void 0;
     }
     ui.store.set({ chapterBusy: true });
-    Promise.resolve().then(() => engine.render(chapterIndex, ui.resourceResolver(bookId))).then((out) => {
+    let timer;
+    const delayed = new Promise((resolve) => {
+      timer = setTimeout(resolve, isPdf ? 120 : 0);
+    });
+    delayed.then(() => {
+      if (cancelled) return "";
+      return isPdf ? engine.renderPage(chapterIndex, { width: pdfWidth * settings.pdfZoom, pixelRatio: globalThis.devicePixelRatio || 1, signal: abort.signal }) : engine.render(chapterIndex, ui.resourceResolver(bookId));
+    }).then((out) => {
       if (cancelled) return;
       setHtml(typeof out === "string" ? out : "");
       setRenderError(null);
     }).catch((error) => {
-      if (cancelled) return;
+      if (cancelled || error.name === "AbortError") return;
       setHtml("");
       setRenderError(ui.reportError(error, true));
     }).then(() => {
@@ -105903,8 +106196,10 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     });
     return () => {
       cancelled = true;
+      clearTimeout(timer);
+      abort.abort();
     };
-  }, [engine, bookId, chapterIndex, engineVersion, imagesVersion, ui]);
+  }, [engine, bookId, chapterIndex, engineVersion, imagesVersion, ui, isPdf, pdfWidth, settings.pdfZoom]);
   const setPage = React13.useCallback((next) => {
     setPageState((previous) => {
       const max = Math.max(0, (measureRef.current.pages || 1) - 1);
@@ -105926,7 +106221,9 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       const perPage = paginated && settings.spread && width >= 900 ? 2 : 1;
       const gap = COLUMN_GAP;
       const columnWidth = (width - (perPage - 1) * gap) / perPage;
-      flow.style.width = `${width}px`;
+      flow.style.width = `${isPdf ? Math.max(width, width * settings.pdfZoom) : width}px`;
+      const sheet = isPdf && flow.querySelector(".qmr-pdf-sheet");
+      if (sheet) sheet.style.width = `${width * settings.pdfZoom}px`;
       flow.style.height = paginated ? `${Math.max(1, viewport.clientHeight)}px` : "auto";
       if (paginated) {
         flow.style.columnWidth = `${columnWidth}px`;
@@ -105955,7 +106252,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     } catch (_error) {
       return measureRef.current;
     }
-  }, [settings.flow, settings.spread, setPage]);
+  }, [settings.flow, settings.spread, settings.pdfZoom, isPdf, setPage]);
   const revealNode = React13.useCallback((node) => {
     if (!node) return;
     if (settings.flow === "scroll") {
@@ -105972,30 +106269,47 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   }, [settings.flow, setPage]);
   React13.useLayoutEffect(() => {
     const flow = flowRef.current;
-    if (!flow) return;
-    const isNewHtml = lastHtmlRef.current !== html;
-    lastHtmlRef.current = html;
-    try {
-      flow.innerHTML = html || "";
-    } catch (error) {
-      ui.reportError(error, true);
-      return;
-    }
-    try {
-      const chapterHref = chapterHrefOf(engine, chapterIndex);
-      const forChapter = (highlightsRef.current || []).filter((item) => {
-        if (!item) return false;
-        if (!item.chapterHref) return true;
-        if (item.chapterHref === chapterHref) return true;
-        return chapterIndexForHref(engine, item.chapterHref) === chapterIndex;
-      });
-      if (forChapter.length) wrapHighlights(flow, forChapter);
-      if (searchQuery && String(searchQuery).trim()) wrapTextMatches(flow, searchQuery, "qm-hit", {});
-    } catch (error) {
-      ui.reportError(error, true);
+    if (!flow || rendered.key !== `${bookId}:${chapterIndex}`) return;
+    const isNewHtml = lastHtmlRef.current !== rendered;
+    lastHtmlRef.current = rendered;
+    const decoration = `${highlightSignature}:${searchQuery}`;
+    const rebuild = isNewHtml || decoratedRef.current !== decoration;
+    decoratedRef.current = decoration;
+    if (rebuild) {
+      try {
+        flow.innerHTML = html || "";
+      } catch (error) {
+        ui.reportError(error, true);
+        return;
+      }
+      try {
+        const chapterHref = chapterHrefOf(engine, chapterIndex);
+        const forChapter = (highlightsRef.current || []).filter((item) => {
+          if (!item) return false;
+          if (!item.chapterHref) return true;
+          if (item.chapterHref === chapterHref) return true;
+          return chapterIndexForHref(engine, item.chapterHref) === chapterIndex;
+        });
+        if (forChapter.length) wrapHighlights(flow, forChapter);
+        if (searchQuery && String(searchQuery).trim()) wrapTextMatches(flow, searchQuery, "qm-hit", {});
+      } catch (error) {
+        ui.reportError(error, true);
+      }
     }
     const meta = measure();
-    if (isNewHtml) {
+    const samePdfPage = isPdf && pdfRenderedRef.current === `${bookId}:${chapterIndex}`;
+    if (isPdf && html && isNewHtml) pdfRenderedRef.current = rendered.key;
+    if (isNewHtml && samePdfPage && pdfAnchorRef.current) {
+      const anchor = pdfAnchorRef.current;
+      const viewport = viewportRef.current;
+      const width = viewport.clientWidth * settings.pdfZoom;
+      viewport.scrollLeft = anchor.px * width + Math.max(0, (viewport.clientWidth - width) / 2) - anchor.x;
+      viewport.scrollTop = anchor.py * width - anchor.y;
+      pdfAnchorRef.current = null;
+    }
+    if (isNewHtml && !samePdfPage) {
+      pdfAnchorRef.current = null;
+      if (viewportRef.current) viewportRef.current.scrollLeft = 0;
       if (pendingLandLastRef.current) {
         pendingLandLastRef.current = false;
         setPage(Math.max(0, (meta.pages || 1) - 1));
@@ -106019,6 +106333,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     }
   }, [
     html,
+    rendered,
     highlightSignature,
     searchQuery,
     chapterIndex,
@@ -106113,6 +106428,21 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     const measureNow = () => {
       try {
         measure();
+        const anchor = textAnchorRef.current;
+        if (anchor && anchor.node.isConnected && anchor.bookId === bookId && anchor.chapterIndex === chapterIndex) {
+          const range = document.createRange();
+          range.setStart(anchor.node, anchor.offset);
+          range.setEnd(anchor.node, Math.min(anchor.node.length, anchor.offset + 1));
+          const rect = range.getClientRects()[0];
+          if (rect && settings.flow === "paginated") {
+            const x = rect.left - flowRef.current.getBoundingClientRect().left;
+            const meta = measureRef.current;
+            setPage(Math.floor(Math.max(0, x) / (meta.perPage * (meta.columnWidth + meta.gap))));
+          } else if (rect) {
+            viewportRef.current.scrollTop += rect.top - viewportRef.current.getBoundingClientRect().top - anchor.y;
+          }
+          textAnchorRef.current = null;
+        }
       } catch (_error) {
       }
     };
@@ -106139,7 +106469,22 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
         }
       }
     };
-  }, [measure, html, settings.fontSize, settings.fontFamily, settings.lineHeight, settings.justify]);
+  }, [measure, html, settings.fontSize, settings.fontFamily, settings.lineHeight, settings.justify, captureTextAnchor, bookId, chapterIndex, setPage]);
+  React13.useEffect(() => {
+    if (isPdf) return void 0;
+    const viewport = viewportRef.current;
+    let frame;
+    const capture = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(captureTextAnchor);
+    };
+    capture();
+    viewport?.addEventListener("scroll", capture);
+    return () => {
+      cancelAnimationFrame(frame);
+      viewport?.removeEventListener("scroll", capture);
+    };
+  }, [isPdf, page, captureTextAnchor]);
   const reportPosition = React13.useCallback(() => {
     const live = liveRef.current;
     if (live.bookId == null) return;
@@ -106232,6 +106577,59 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       ui.registerPager({ next: () => ui.goChapter((ui.store.get().chapterIndex || 0) + 1), prev: () => ui.goChapter((ui.store.get().chapterIndex || 0) - 1) });
     };
   }, [ui, setPage]);
+  React13.useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return void 0;
+    const onWheel = (event) => {
+      const live = liveRef.current;
+      const delta = wheelPixels(event, viewport.clientHeight);
+      if (event.ctrlKey) {
+        event.preventDefault();
+        wheelIntentRef.current.reset();
+        const direction2 = zoomIntentRef.current.push(delta.y, performance.now());
+        if (direction2) adjustZoom(-direction2, { x: event.clientX, y: event.clientY });
+        return;
+      }
+      zoomIntentRef.current.reset();
+      if (event.metaKey || event.altKey || event.shiftKey || Math.abs(delta.x) > Math.abs(delta.y) || !delta.y) return;
+      if (ui.store.get().chapterBusy) {
+        wheelIntentRef.current.observe(performance.now());
+        return;
+      }
+      let nested = event.target;
+      while (nested && nested !== viewport) {
+        if (nested instanceof HTMLElement && nested.scrollHeight > nested.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(nested).overflowY)) {
+          const available = delta.y > 0 ? nested.scrollTop + nested.clientHeight < nested.scrollHeight - 1 : nested.scrollTop > 1;
+          if (available) {
+            wheelIntentRef.current.observe(performance.now());
+            return;
+          }
+        }
+        nested = nested.parentElement;
+      }
+      if (live.settings.flow === "scroll") {
+        const canScroll = delta.y > 0 ? viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 2 : viewport.scrollTop > 2;
+        if (canScroll) {
+          wheelIntentRef.current.observe(performance.now());
+          return;
+        }
+      }
+      event.preventDefault();
+      const direction = wheelIntentRef.current.push(delta.y, performance.now());
+      if (!direction) return;
+      if (direction > 0 && live.chapterIndex + 1 >= live.chapterCount && (live.settings.flow === "scroll" || live.page + 1 >= live.pageCount)) return;
+      if (direction < 0 && live.chapterIndex === 0 && (live.settings.flow === "scroll" || live.page === 0)) return;
+      ui.turnPage(direction);
+    };
+    viewport.addEventListener("wheel", onWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", onWheel);
+  }, [ui, adjustZoom]);
+  React13.useEffect(() => {
+    wheelIntentRef.current.reset();
+    zoomIntentRef.current.reset();
+    pdfAnchorRef.current = null;
+    textAnchorRef.current = null;
+  }, [bookId]);
   React13.useEffect(() => {
     const onKeyDown = (event) => {
       const state = ui.store.get();
@@ -106435,7 +106833,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const viewportClass = `qmr-page-viewport`;
   const contentStyle = settings.flow === "scroll" ? { padding: `56px min(${settings.margin}px, 6vw) 48px` } : { padding: `64px min(${settings.margin}px, 6vw) 48px` };
   contentStyle.width = "100%";
-  contentStyle.maxWidth = settings.spread ? "1280px" : "860px";
+  contentStyle.maxWidth = "none";
   contentStyle.marginInline = "auto";
   const flowStyle = {
     fontFamily: fontStackOf(settings.fontFamily),
@@ -106461,6 +106859,24 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     },
     icon
   );
+  const zoom = isPdf ? settings.pdfZoom : settings.fontSize;
+  const zoomIcon = (direction) => h12(
+    "svg",
+    { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+    h12("circle", { cx: 12, cy: 12, r: 9, stroke: "currentColor", strokeWidth: 1.5 }),
+    h12("path", { d: direction > 0 ? "M7 12h10M12 7v10" : "M7 12h10", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round" })
+  );
+  const zoomButton = (direction) => {
+    const label = ui.t(direction > 0 ? "reader.zoomIn" : "reader.zoomOut", direction > 0 ? "\u653E\u5927" : "\u7F29\u5C0F");
+    return h12("button", {
+      type: "button",
+      className: "qmr-btn qmr-btn-icon qmr-zoom-btn",
+      title: label,
+      "aria-label": label,
+      disabled: direction > 0 ? zoom >= (isPdf ? PDF_ZOOM_MAX : FONT_MAX) : zoom <= (isPdf ? PDF_ZOOM_MIN : FONT_MIN),
+      onClick: () => adjustZoom(direction)
+    }, zoomIcon(direction));
+  };
   const topBar = h12(
     "div",
     { className: `qmr-topbar${chromeVisible ? "" : " qmr-chrome-hidden"}` },
@@ -106484,6 +106900,9 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     h12(
       "div",
       { className: "qmr-actions" },
+      zoomButton(-1),
+      h12("span", { className: "qmr-zoom-value", "aria-label": ui.t("reader.zoom", "\u7F29\u653E") }, isPdf ? `${Math.round(zoom * 100)}%` : `${zoom}px`),
+      zoomButton(1),
       toolbarButton("search", h12(IconSearch, { width: 16, height: 16 }), "\u641C\u7D22", () => ui.setPanel("search"), panel === "search"),
       toolbarButton("hl", h12(IconHighlight, { width: 16, height: 16 }), "\u5212\u7EBF", () => ui.setPanel("highlights"), panel === "highlights" || panel === "notes"),
       toolbarButton("ai", h12(IconSparkles, { width: 16, height: 16 }), "AI \u4F34\u8BFB", () => ui.setPanel("companion"), panel === "companion"),
@@ -106560,7 +106979,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   );
   return h12(
     "div",
-    { className: "qmr-reader", "data-qmr-theme": settings.theme, style: themeVars },
+    { className: `qmr-reader${isPdf ? " qmr-reader-pdf" : ""}`, "data-qmr-theme": settings.theme, style: themeVars },
     h12(
       "div",
       { className: `qmr-reader-main${panel === "companion" ? " qmr-has-companion" : ""}`, ref: workareaRef, style: { "--qmr-companion-width": `${companionWidth}%` } },

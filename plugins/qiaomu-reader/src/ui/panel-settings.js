@@ -10,6 +10,7 @@ import {
   UI_SETTING_DEFAULTS,
 } from './theme.js';
 import { IconClose, IconSettings } from './icons.js';
+import { FONT_MIN, FONT_MAX } from '../core/reader-input.js';
 
 const h = React.createElement;
 
@@ -29,7 +30,11 @@ export function SettingsPanel({ ui }) {
   }, [bookId, ui]);
 
   const settings = ui.settingsOf(bookId);
-  const update = (patch) => ui.updateSettings(bookId, patch);
+  const isPdf = ui.bookOf(bookId)?.format === 'pdf';
+  const update = (patch) => {
+    ui.beforeSettings?.();
+    ui.updateSettings(bookId, patch);
+  };
 
   const themeCards = READER_THEME_IDS.map((id) => {
     const theme = READER_THEMES[id];
@@ -74,6 +79,11 @@ export function SettingsPanel({ ui }) {
       h('div', { className: 'qmr-group-title' }, '主题'),
       h('div', { className: 'qmr-theme-grid' }, themeCards),
 
+      isPdf ? h('div', { className: 'qmr-field' },
+        h('span', { className: 'qmr-field-label' }, ui.t('reader.zoom', '缩放')),
+        h('input', { className: 'qmr-range', type: 'range', min: 50, max: 300, step: 10, value: Math.round(settings.pdfZoom * 100),
+          'aria-label': ui.t('reader.zoom', '缩放'), onChange: (event) => update({ pdfZoom: Number(event.target.value) / 100 }) }),
+        h('span', { className: 'qmr-field-value' }, `${Math.round(settings.pdfZoom * 100)}%`)) : h(React.Fragment, null,
       h('div', { className: 'qmr-group-title' }, '排版'),
       h(
         'div',
@@ -83,8 +93,8 @@ export function SettingsPanel({ ui }) {
           h('input', {
             className: 'qmr-range',
             type: 'range',
-            min: 14,
-            max: 28,
+            min: FONT_MIN,
+            max: FONT_MAX,
             step: 1,
             value: settings.fontSize,
             'aria-label': '字号',
@@ -194,6 +204,7 @@ export function SettingsPanel({ ui }) {
             '两端对齐')),
       ),
 
+      ),
       h('div', { className: 'qmr-divider' }),
       h(
         'div',
