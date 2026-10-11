@@ -69,6 +69,8 @@ dsh plugin --profile desktop add "$PWD/qiaomu-reader-dsh-1.0.2.tgz"
 
 普通滚轮在分页文本中翻屏；在 PDF 或连续滚动文本中先滚动当前页/章，到边界后新的滚轮手势进入前后页/章。横向滚动不翻页，Ctrl＋滚轮只缩放正文，不缩放 Harness。目录、设置、AI 会话中的滚轮不触发正文翻页，方向键和原有翻页操作保持可用。
 
+macOS 收起 Harness 左侧边栏时，阅读标题栏会避开系统窗口按钮和宿主控件；系统全屏仍为打开侧栏及新建会话按钮保留空间。阅读器自身的元素全屏只显示阅读器，标题栏恢复普通间距，退出后恢复宿主避让。正文宽度不受该避让影响。
+
 ## 标签搜索与整理
 
 书库顶部的「标签」按钮可搜索并多选已有标签，按「任一」或「全部」匹配整个书库；「无标签」仅显示未分类书籍。标签条件可叠加书名／作者关键词、阅读状态和文件格式，清空筛选不改变排序。书籍作者下显示标签，更多标签可在编辑面板查看。
@@ -117,6 +119,8 @@ The library screenshot shows the actual component using starter books and test f
 **Batch imports:** select multiple EPUB/PDF/TXT files and process them sequentially. Append files while importing, stop after the current file, continue manually, cancel waiting items, or retry individual/all failures at the tail. Stopped queues remain stopped when files are added or retried. Identical content updates one book; identical names with different content create separate books. Outcomes distinguish host library saves, browser-only saves and failures. Browser-only saves require both bytes and a recoverable index; retry them to save to the host. A host save remains successful if its auxiliary browser cache fails. Page switches keep the queue running, but reloads, restarts and plugin unloads do not restore it. Clearing processed records keeps books but releases files needed for retries. Host index mutations are serialized per plugin instance, not across independent host processes.
 
 **Tags:** use the top tag filter to search existing tags and match any or all selected tags across the library, combined with title/author, reading status and format filters. Tags appear below each author. Edit one book or select filtered books to add/remove specific tags without replacing their other tags. Pending edits and new names are committed on Save; cancelling does not write. A single input searches existing tags or stages a new tag on Enter, with no writes until confirmation. Removal offers only tags assigned to selected books. Stable automatic colours identify tag chips throughout the UI. There is no standalone tag manager, rename or delete entry; unused tags remain available. Tags do not move or duplicate files, and imports are unchanged. Host-confirmed tags are cached for offline viewing/filtering; editing requires a host connection and a refreshed library.
+
+**macOS titlebar:** when the Harness sidebar is collapsed, the reader header clears the native window buttons and host controls. Window fullscreen retains space for the sidebar-open and new-session controls. Reader element fullscreen restores normal header spacing; exiting restores host clearance. Reading content keeps its width.
 
 Reading does not require a model key. AI companion actions require a configured Harness model and send the relevant reading context to that provider. Library files remain on the host under `乔木阅读`: the root is configured `workspaceRoot`, then `DSH_WORKSPACE`, then the host process working directory. Back up the entire folder before migrating. No independent cloud sync is provided.
 
