@@ -117,8 +117,9 @@ export async function loadLocalState(bookId) {
 
 /** 写入某本书的阅读状态。 */
 export async function saveLocalState(bookId, state) {
-  await withStore(STORE_STATE, 'readwrite', (store) => store.put(state, bookId));
-  localSet(`state:${bookId}`, state);
+  const saved = await withStore(STORE_STATE, 'readwrite', (store) => store.put(state, bookId));
+  const fallback = localSet(`state:${bookId}`, state);
+  return saved !== undefined || fallback;
 }
 
 /** 删除某本书的阅读状态。 */

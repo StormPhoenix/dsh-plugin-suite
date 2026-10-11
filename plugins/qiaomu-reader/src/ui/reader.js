@@ -5,6 +5,7 @@
  * 宽屏 + 设置里开启「双页」时每页并排两列。连续滚动模式退化为普通 overflow 容器。
  */
 import * as React from 'react';
+import { prepareImageResources } from './image-resources.js';
 import {
   fontStackOf,
   readerThemeVars,
@@ -258,6 +259,13 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const lastFocusRef = React.useRef('');
   const lastSearchFocusRef = React.useRef(null);
   const scrollTimerRef = React.useRef(null);
+  const positionReadyRef = React.useRef(false);
+  const positionIdentityRef = React.useRef('');
+  const restoreEpochRef = React.useRef(0);
+  const restoredBookRef = React.useRef(null);
+  const restoredIdentityRef = React.useRef('');
+  const restoreAbortRef = React.useRef(null);
+  const pendingRestoreRef = React.useRef(null);
   const pdfAnchorRef = React.useRef(null);
   const pdfRenderedRef = React.useRef(null);
   const textAnchorRef = React.useRef(null);
@@ -396,6 +404,9 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   // ------------------------------------------------------------- 状态加载
 
   React.useEffect(() => {
+    positionReadyRef.current = false;
+    restoreAbortRef.current?.abort();
+    ++restoreEpochRef.current;
     if (bookId != null) ui.loadState(bookId);
   }, [bookId, ui]);
 
@@ -412,7 +423,9 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     let timer;
     const delayed = new Promise((resolve) => { timer = setTimeout(resolve, isPdf ? 120 : 0); });
     delayed
-      .then(() => {
+      .then(async () => {
+        if (cancelled) return '';
+        if (!isPdf) await prepareImageResources(engine);
         if (cancelled) return '';
         return isPdf
           ? engine.renderPage(chapterIndex, { width: pdfWidth * settings.pdfZoom, pixelRatio: globalThis.devicePixelRatio || 1, signal: abort.signal })
@@ -500,6 +513,10 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   /** 分页定位必须翻页，不能让浏览器横向滚动裁切容器。 */
   const revealNode = React.useCallback((node) => {
     if (!node) return;
+    ++restoreEpochRef.current;
+    restoreAbortRef.current?.abort();
+    pendingRestoreRef.current = null;
+    positionReadyRef.current = true;
     if (settings.flow === 'scroll') {
       node.scrollIntoView?.({ block: 'center', inline: 'nearest' });
       return;
@@ -521,7 +538,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
    */
   React.useLayoutEffect(() => {
     const flow = flowRef.current;
-    if (!flow || rendered.key !== `${bookId}:${chapterIndex}`) return;
+    if (!flow || !html || rendered.key !== `${bookId}:${chapterIndex}`) return;
     const isNewHtml = lastHtmlRef.current !== rendered;
     lastHtmlRef.current = rendered;
     const decoration = `${highlightSignature}:${searchQuery}`;
@@ -560,30 +577,52 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       viewport.scrollTop = anchor.py * width - anchor.y;
       pdfAnchorRef.current = null;
     }
-    if (isNewHtml && !samePdfPage) {
+    const identityChanged = restoredIdentityRef.current !== `${bookId}:${chapterIndex}`;
+    if ((isNewHtml && !samePdfPage && identityChanged) || (rebuild && !positionReadyRef.current)) {
+      positionReadyRef.current = false;
+      positionIdentityRef.current = `${bookId}:${chapterIndex}`;
       pdfAnchorRef.current = null;
       if (viewportRef.current) viewportRef.current.scrollLeft = 0;
-      if (pendingLandLastRef.current) {
-        pendingLandLastRef.current = false;
-        setPage(Math.max(0, (meta.pages || 1) - 1));
-        if (settings.flow === 'scroll') {
-          requestAnimationFrame(() => {
+      const previousRestore = !identityChanged && pendingRestoreRef.current;
+      const landLast = previousRestore ? previousRestore.landLast : pendingLandLastRef.current;
+      pendingLandLastRef.current = false;
+      const initial = previousRestore ? previousRestore.initial : restoredBookRef.current !== bookId;
+      restoredBookRef.current = bookId;
+      restoredIdentityRef.current = `${bookId}:${chapterIndex}`;
+      pendingRestoreRef.current = { initial, landLast };
+      restoreAbortRef.current?.abort();
+      const restoreAbort = new AbortController();
+      restoreAbortRef.current = restoreAbort;
+      const epoch = ++restoreEpochRef.current;
+      const identity = positionIdentityRef.current;
+      (async () => {
+        const saved = await ui.loadState(bookId);
+        const locator = saved?.locator || ui.store.get().states?.[bookId]?.locator;
+        const initialFraction = locator?.chapterIndex === chapterIndex ? locator.scroll : restoreScroll;
+        const fraction = Math.min(1, Math.max(0, Number(initial ? initialFraction : restoreScroll) || 0));
+        const images = Array.from(flow.querySelectorAll('img'));
+        await Promise.all(images.map((image) => image.complete ? Promise.resolve() : new Promise((resolve) => {
+          const done = () => { image.removeEventListener('load', done); image.removeEventListener('error', done); restoreAbort.signal.removeEventListener('abort', done); resolve(); };
+          image.addEventListener('load', done); image.addEventListener('error', done);
+          restoreAbort.signal.addEventListener('abort', done, { once: true });
+          if (image.complete || restoreAbort.signal.aborted) done();
+        })));
+        if (restoreAbort.signal.aborted) return;
+        if (typeof document !== 'undefined' && document.fonts?.ready) await document.fonts.ready;
+        if (restoreEpochRef.current !== epoch || liveRef.current.bookId !== bookId || liveRef.current.chapterIndex !== chapterIndex) return;
+        requestAnimationFrame(() => {
+          if (restoreEpochRef.current !== epoch || positionIdentityRef.current !== identity) return;
+          const measured = measure();
+          if (settings.flow === 'scroll') {
             const viewport = viewportRef.current;
-            if (viewport) viewport.scrollTop = viewport.scrollHeight;
-          });
-        }
-      } else {
-        setPage(0);
-        if (settings.flow === 'scroll') {
-          const fraction = Math.min(1, Math.max(0, Number(restoreScroll) || 0));
-          requestAnimationFrame(() => {
-            const viewport = viewportRef.current;
-            if (!viewport) return;
-            viewport.scrollTop = fraction * Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-          });
-        }
-      }
+            if (viewport) viewport.scrollTop = (landLast ? 1 : fraction) * Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+          }
+          setPage(landLast ? Math.max(0, measured.pages - 1) : Math.round(fraction * Math.max(0, measured.pages - 1)));
+          positionReadyRef.current = true;
+        });
+      })().catch((error) => { if (restoreEpochRef.current === epoch) ui.reportError(error, true); });
     }
+
   }, [
     html,
     rendered,
@@ -758,7 +797,8 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
 
   const reportPosition = React.useCallback(() => {
     const live = liveRef.current;
-    if (live.bookId == null) return;
+    if (live.bookId == null || !positionReadyRef.current ||
+        positionIdentityRef.current !== `${live.bookId}:${live.chapterIndex}`) return;
     let scroll = 0;
     if (live.settings && live.settings.flow === 'scroll') {
       const viewport = viewportRef.current;
@@ -795,6 +835,45 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
     };
   }, [page, pageCount, chapterIndex, ui, reportPosition]);
+
+  // Capture real scroll events, including a final sample before DOM refs are detached.
+  React.useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    let frame;
+    const capture = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(reportPosition);
+    };
+    const interrupt = (event) => {
+      if (event.type === 'wheel' && event.ctrlKey) return;
+      if (!positionReadyRef.current && positionIdentityRef.current === `${liveRef.current.bookId}:${liveRef.current.chapterIndex}`) {
+        ++restoreEpochRef.current;
+        restoreAbortRef.current?.abort();
+        positionReadyRef.current = true;
+      }
+    };
+    const hide = () => {
+      if (document.visibilityState === 'hidden') { reportPosition(); void ui.flushPendingSaves?.(); }
+    };
+    viewport?.addEventListener('scroll', capture);
+    viewport?.addEventListener('wheel', interrupt, { passive: true });
+    viewport?.addEventListener('pointerdown', interrupt);
+    viewport?.addEventListener('keydown', interrupt);
+    document.addEventListener?.('visibilitychange', hide);
+    return () => {
+      cancelAnimationFrame(frame);
+      reportPosition();
+      void ui.flushPendingSaves?.();
+      positionReadyRef.current = false;
+      ++restoreEpochRef.current;
+      restoreAbortRef.current?.abort();
+      viewport?.removeEventListener('scroll', capture);
+      viewport?.removeEventListener('wheel', interrupt);
+      viewport?.removeEventListener('pointerdown', interrupt);
+      viewport?.removeEventListener('keydown', interrupt);
+      document.removeEventListener?.('visibilitychange', hide);
+    };
+  }, [ui, reportPosition]);
 
   // ------------------------------------------------------------- pager 注册
 

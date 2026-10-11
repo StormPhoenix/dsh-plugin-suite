@@ -79,6 +79,12 @@ macOS 收起 Harness 左侧边栏时，阅读标题栏会避开系统窗口按�
 
 标签使用自动配色的胶囊展示，同一标签在书目、筛选和编辑中颜色一致。编辑弹窗只有一个输入框：输入已有名称并按 Enter 选择，输入新名称并按 Enter 加入待保存标签；确认后标签及关联一同保存，取消不创建标签。批量移除只搜索所选书籍已有的标签，不创建新标签。没有独立标签管理、重命名或删除入口；移除书籍关联后仍保留标签供再次使用，不移动或复制文件。标签及关联保存在宿主书库索引并缓存到浏览器。宿主不可用时可查看和筛选缓存，但不能编辑标签；恢复连接后刷新书库再编辑。
 
+## 页面切换与阅读位置
+
+切换会话或应用后返回阅读器，会复用当前解析引擎的 EPUB 图片资源，并从最新阅读状态恢复章内位置。滚动模式记录章内滚动比例，分页模式恢复对应页；图片与字体布局就绪前不会用初始化位置覆盖进度。改变窗口或字体后按章内比例恢复，不保证定位到同一字符。
+
+阅读位置在滚动或翻页时更新，正常离开阅读器时提交最后位置。状态写入按书籍串行执行，浏览器缓存或宿主至少一处保存成功后才确认；两处都失败时最新状态仍保留在内存，后续正常操作可再次提交。操作系统强杀或浏览器立即退出可能中断尚未完成的异步保存。
+
 ## 本地书库与隐私
 
 宿主书库目录名默认为 `乔木阅读`，包含 `books/`、`state/`、`notes/` 和 `library.json`。根目录优先采用插件配置 `workspaceRoot`，其次是 `DSH_WORKSPACE` 环境变量，最后是宿主进程的启动目录。书库根目录不随当前聊天工作区切换；需要稳定位置时显式配置 `workspaceRoot`。
@@ -119,6 +125,8 @@ The library screenshot shows the actual component using starter books and test f
 **Batch imports:** select multiple EPUB/PDF/TXT files and process them sequentially. Append files while importing, stop after the current file, continue manually, cancel waiting items, or retry individual/all failures at the tail. Stopped queues remain stopped when files are added or retried. Identical content updates one book; identical names with different content create separate books. Outcomes distinguish host library saves, browser-only saves and failures. Browser-only saves require both bytes and a recoverable index; retry them to save to the host. A host save remains successful if its auxiliary browser cache fails. Page switches keep the queue running, but reloads, restarts and plugin unloads do not restore it. Clearing processed records keeps books but releases files needed for retries. Host index mutations are serialized per plugin instance, not across independent host processes.
 
 **Tags:** use the top tag filter to search existing tags and match any or all selected tags across the library, combined with title/author, reading status and format filters. Tags appear below each author. Edit one book or select filtered books to add/remove specific tags without replacing their other tags. Pending edits and new names are committed on Save; cancelling does not write. A single input searches existing tags or stages a new tag on Enter, with no writes until confirmation. Removal offers only tags assigned to selected books. Stable automatic colours identify tag chips throughout the UI. There is no standalone tag manager, rename or delete entry; unused tags remain available. Tags do not move or duplicate files, and imports are unchanged. Host-confirmed tags are cached for offline viewing/filtering; editing requires a host connection and a refreshed library.
+
+**Reading restoration:** returning from another session or app reuses EPUB image resources and restores the latest chapter-relative scroll position or paginated page. Restoration waits for image and font layout and does not overwrite progress with initial zero values. Layout changes restore a proportion, not an exact character. Normal departure submits a final position; per-book writes are ordered and acknowledged when at least one of browser or host storage succeeds. Failed saves retain memory state for a later submission. Forced termination can interrupt unfinished asynchronous writes.
 
 **macOS titlebar:** when the Harness sidebar is collapsed, the reader header clears the native window buttons and host controls. Window fullscreen retains space for the sidebar-open and new-session controls. Reader element fullscreen restores normal header spacing; exiting restores host clearance. Reading content keeps its width.
 

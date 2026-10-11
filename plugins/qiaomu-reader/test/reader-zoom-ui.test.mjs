@@ -75,7 +75,7 @@ class Element extends Target {
   get textContent() { return this._html; }
 }
 
-function harness({ format = 'epub', fontSize = 18, pdfZoom = 1, flow = 'scroll', panel = null, render } = {}) {
+function harness({ format = 'epub', fontSize = 18, pdfZoom = 1, flow = 'scroll', panel = null, render, sharedState, initialScroll = 0, contentWidth = 800 } = {}) {
   let cursor = 0, dirty = true, tree, now = 0, nextTimer = 1;
   const slots = [], timers = new Map(), frames = new Map(), elements = new Map();
   const window = new Target();
@@ -83,9 +83,11 @@ function harness({ format = 'epub', fontSize = 18, pdfZoom = 1, flow = 'scroll',
   const computed = (node) => ({ paddingLeft: '0', paddingRight: '0', overflowY: node.style.overflowY || 'visible' });
   window.getComputedStyle = computed;
   const document = { createTreeWalker: () => ({ nextNode: () => null }) };
-  const state = { bookId: 'book', chapterIndex: 0, chapterCount: 3, panel, states: {}, visible: true, view: 'reader', searchResults: [], chapterBusy: false };
+  const state = sharedState || { bookId: 'book', chapterIndex: 0, chapterCount: 3, panel, states: {}, visible: true, view: 'reader', searchResults: [], chapterBusy: false };
   let settings = { fontSize, pdfZoom, flow, margin: 48, lineHeight: 1.6, theme: 'paper', fontFamily: 'serif', spread: false };
-  const requests = [], updates = [], turns = [], errors = [], storeWrites = [];
+  const requests = [], updates = [], turns = [], errors = [], storeWrites = [], positions = [];
+  state.states.book ||= { locator: { chapterIndex: state.chapterIndex, scroll: initialScroll } };
+  let flushes = 0;
   const engine = { book: { chapters: [{ href: '0' }, { href: '1' }, { href: '2' }] } };
   const request = (index, options) => {
     requests.push({ index, options });
@@ -97,7 +99,7 @@ function harness({ format = 'epub', fontSize = 18, pdfZoom = 1, flow = 'scroll',
     t: (key, fallback) => ({ 'reader.zoomIn': 'Zoom in', 'reader.zoomOut': 'Zoom out', 'reader.zoom': 'Zoom' }[key] || fallback),
     store: { get: () => state, set: (patch) => { storeWrites.push(patch); Object.assign(state, patch); dirty = true; } },
     updateSettings: (id, patch) => { updates.push([id, { ...patch }]); settings = { ...settings, ...patch }; dirty = true; },
-    loadState() {}, resourceResolver: () => undefined, reportError: (error) => { errors.push(error); return error.message; }, reportPosition() {},
+    loadState: () => state.states.book, resourceResolver: () => undefined, reportError: (error) => { errors.push(error); return error.message; }, reportPosition(id, position) { positions.push(position); state.states[id] = { ...state.states[id], locator: position }; }, flushPendingSaves() { flushes++; },
     registerPager(pager) { ui.pager = pager; }, turnPage: (direction) => turns.push(direction),
     goChapter: (index) => { state.chapterIndex = index; dirty = true; }, goPercent() {}, toast() {},
   };
@@ -149,6 +151,7 @@ function harness({ format = 'epub', fontSize = 18, pdfZoom = 1, flow = 'scroll',
         const name = node.props.className;
         if (!elements.has(name)) elements.set(name, new Element(name));
         const element = elements.get(name);
+        if (name === 'qmr-page-flow qmr-paper-body') element.scrollWidth = contentWidth;
         Object.assign(element.style, node.props.style);
         node.props.ref.current = element;
       }
@@ -166,6 +169,8 @@ function harness({ format = 'epub', fontSize = 18, pdfZoom = 1, flow = 'scroll',
     // Drain the reader's bounded render promise chain, including assimilated engine promises.
     for (let i = 0; i < 12; i += 1) await Promise.resolve();
     commit();
+    for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    commit();
   }
   function frame() { const pending = [...frames.values()]; frames.clear(); pending.forEach((fn) => fn()); commit(); }
   function dispose() {
@@ -173,7 +178,7 @@ function harness({ format = 'epub', fontSize = 18, pdfZoom = 1, flow = 'scroll',
     timers.clear(); frames.clear();
   }
   commit();
-  return { ui, state, requests, updates, turns, errors, storeWrites, window, elements, commit, advance, frame, dispose,
+  return { ui, state, positions, flushCount: () => flushes, requests, updates, turns, errors, storeWrites, window, elements, commit, advance, frame, dispose,
     nodes: () => walk(tree), element: (name) => elements.get(name),
     setSettings: (patch) => { settings = { ...settings, ...patch }; dirty = true; commit(); },
   };
@@ -217,7 +222,7 @@ for (const format of ['epub', 'pdf']) {
 test('wheel zoom is non-passive, viewport-scoped, reads current settings and cleans up on rerender/unmount', async (t) => {
   const app = harness({ panel: 'companion' }); t.after(app.dispose);
   const viewport = app.element('qmr-page-viewport');
-  const first = viewport.listeners.find((item) => item.type === 'wheel');
+  const first = viewport.listeners.find((item) => item.type === 'wheel' && item.options?.passive === false);
   assert.ok(first); assert.equal(first.options.passive, false);
   assert.equal(app.window.listeners.filter((item) => item.type === 'wheel').length, 0);
   const companion = new Element('companion'); companion.parentElement = app.window;
@@ -230,7 +235,7 @@ test('wheel zoom is non-passive, viewport-scoped, reads current settings and cle
   assert.deepEqual(app.updates.at(-1), ['book', { fontSize: 31 }]);
   app.ui.goChapter(1); app.commit();
   assert.ok(viewport.removals.some((item) => item.type === 'wheel' && item.listener === first.listener));
-  assert.equal(viewport.listeners.filter((item) => item.type === 'wheel').length, 1);
+  assert.equal(viewport.listeners.filter((item) => item.type === 'wheel' && item.options?.passive === false).length, 1);
   await app.advance(0);
   app.dispose();
   assert.equal(viewport.listeners.filter((item) => item.type === 'wheel').length, 0);
@@ -304,4 +309,89 @@ test('pending PDF chapter does not mark old HTML as the new page before zoomed r
   assert.ok(flow.innerHTML.includes('new page'));
   assert.equal(viewport.scrollTop, 0, 'a newly committed chapter resets rather than applying an old-page zoom anchor');
   assert.equal(app.state.chapterBusy, false); assert.deepEqual(app.errors, []);
+});
+
+
+for (const format of ['epub', 'txt', 'pdf']) {
+  test(`${format} restores saved scroll after remount and captures scroll before departure`, async () => {
+    const first = harness({ format, initialScroll: 0.5 });
+    await first.advance(format === 'pdf' ? 120 : 0); first.frame();
+    const viewport = first.element('qmr-page-viewport');
+    assert.equal(viewport.scrollTop, 600);
+    viewport.scrollTop = 900;
+    viewport.dispatch('scroll', { target: viewport }); first.frame();
+    assert.equal(first.state.states.book.locator.scroll, 0.75);
+    viewport.scrollTop = 840;
+    first.dispose();
+    assert.equal(first.state.states.book.locator.scroll, 0.7);
+    assert.ok(first.flushCount() > 0);
+    const returned = harness({ format, sharedState: first.state });
+    await returned.advance(format === 'pdf' ? 120 : 0); returned.frame();
+    assert.equal(returned.element('qmr-page-viewport').scrollTop, 840);
+    returned.dispose();
+  });
+}
+
+test('pending rendering never reports initial zero over saved position', async () => {
+  const pending = deferred();
+  const app = harness({ initialScroll: 0.7, render: () => pending.promise });
+  await app.advance(400);
+  assert.equal(app.positions.length, 0);
+  assert.equal(app.state.states.book.locator.scroll, 0.7);
+  app.dispose();
+  pending.resolve('<p>late</p>');
+  await app.advance(0);
+  assert.equal(app.state.states.book.locator.scroll, 0.7);
+});
+
+
+test('empty render does not consume restoration before real content arrives', async () => {
+  let ready = false;
+  const app = harness({ initialScroll: 0.7, render: () => Promise.resolve(ready ? '<p>ready</p>' : '') });
+  await app.advance(0); app.frame();
+  assert.equal(app.positions.length, 0);
+  ready = true;
+  app.ui.store.set({ engineVersion: 1 }); app.commit();
+  await app.advance(0); app.frame();
+  assert.equal(app.element('qmr-page-viewport').scrollTop, 840);
+  app.dispose();
+});
+
+test('paginated resume restores the saved page rather than page zero', async () => {
+  const app = harness({ flow: 'paginated', contentWidth: 3200, initialScroll: 2 / 3 });
+  await app.advance(0); app.frame();
+  assert.equal(app.state.pageCount, 4);
+  assert.equal(app.state.page, 2);
+  await app.advance(350);
+  assert.equal(app.state.states.book.locator.scroll, 2 / 3);
+  app.dispose();
+});
+
+test('user scroll gesture interrupts pending layout restoration', async () => {
+  const app = harness({ initialScroll: 0.7 });
+  await app.advance(0);
+  const viewport = app.element('qmr-page-viewport');
+  wheel(viewport, { deltaY: 20 });
+  viewport.scrollTop = 240;
+  viewport.dispatch('scroll', { target: viewport });
+  app.frame();
+  assert.equal(viewport.scrollTop, 240);
+  assert.equal(app.state.states.book.locator.scroll, 0.2);
+  app.dispose();
+});
+
+
+test('paginated chapters restore the corresponding page after remount', async () => {
+  const app = harness({ flow: 'paginated', contentWidth: 3200, initialScroll: 0.75 });
+  await app.advance(0); app.frame();
+  assert.equal(app.state.page, 2);
+  app.ui.pager.prev(); await app.advance(0); app.frame();
+  await app.advance(350);
+  assert.equal(app.state.states.book.locator.scroll, 1 / 3);
+  app.dispose();
+  assert.equal(app.state.states.book.locator.scroll, 1 / 3);
+  const returned = harness({ flow: 'paginated', contentWidth: 3200, sharedState: app.state });
+  await returned.advance(0); returned.frame();
+  assert.equal(returned.state.page, 1);
+  returned.dispose();
 });

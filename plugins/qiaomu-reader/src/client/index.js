@@ -215,7 +215,7 @@ export function apply(ctx) {
       async saveState(bookId, nextState) {
         try {
           data.persistState(bookId, nextState);
-          return { ok: true };
+          return await data.awaitPendingStateSaves(bookId);
         } catch (error) {
           return { ok: false, error: error instanceof Error ? error.message : String(error) };
         }

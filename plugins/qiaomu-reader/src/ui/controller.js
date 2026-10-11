@@ -17,6 +17,7 @@ import {
   updateHighlightNote as coreUpdateHighlightNote,
 } from '../core/state.js';
 import { createUiStore } from './store.js';
+import { prepareImageResources, resolveImageResource } from './image-resources.js';
 import { bounded, FONT_MIN, FONT_MAX, PDF_ZOOM_MIN, PDF_ZOOM_MAX } from '../core/reader-input.js';
 import { UI_SETTING_DEFAULTS, READER_THEMES } from './theme.js';
 import { chapterIndexForHref, copyText, formatPercent, localId, normalizePercent, toMarkdown } from './format.js';
@@ -41,23 +42,6 @@ function clampInt(value, min, max) {
   if (n < min) return min;
   if (n > max) return max;
   return n;
-}
-
-/** Uint8Array -> dataURL（EPUB 插图用；失败返回 null） */
-function bytesToDataUrl(bytes, mediaType) {
-  try {
-    if (!bytes || !bytes.length) return null;
-    const type = String(mediaType || 'image/png');
-    let binary = '';
-    const chunk = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunk) {
-      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-    }
-    const base64 = typeof btoa === 'function' ? btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
-    return `data:${type};base64,${base64}`;
-  } catch (_error) {
-    return null;
-  }
 }
 
 /** 判断某个对象是否像 UI store */
@@ -100,8 +84,6 @@ export function createController(getProps, store) {
   const uiStore = looksLikeStore(store) ? store : createUiStore();
   const saveTimers = new Map();
   const noticeTimer = { id: null };
-  /** bookId -> Map(zipPath -> dataURL) */
-  const imageCaches = new Map();
   /** bookId -> Promise<state>（幂等加载） */
   const stateLoads = new Map();
   let searchToken = 0;
@@ -292,7 +274,7 @@ export function createController(getProps, store) {
         const fn = actions().saveState;
         if (typeof fn !== 'function') return;
         try {
-          const result = fn(id, state);
+          const result = fn(id, stateOr(id));
           if (result && typeof result.then === 'function') result.then(() => {}, () => {});
         } catch (_error) {
           /* 持久化失败不打断阅读 */
@@ -303,6 +285,14 @@ export function createController(getProps, store) {
       /* 忽略 */
     }
   }
+
+  /** Submit the latest pending snapshots and cancel timers that could publish stale saves. */
+  async function flushPendingSaves() {
+    const ids = [...saveTimers.keys()];
+    for (const id of ids) { clearTimeout(saveTimers.get(id)); saveTimers.delete(id); }
+    return Promise.all(ids.map((id) => callAction('saveState', id, stateOr(id))));
+  }
+
 
   /** 合并后的阅读设置（永不返回 null） */
   function settingsOf(id) {
@@ -484,62 +474,10 @@ export function createController(getProps, store) {
 
   // ---------------------------------------------------------------- 打开书籍
 
-  /** EPUB 插图预取 */
-  function startImagePrefetch(id, engine) {
-    try {
-      const book = engine && engine.book;
-      if (!book || !book.resources || typeof book.resourceBytes !== 'function') return;
-      const cache = imageCaches.get(id) || new Map();
-      imageCaches.set(id, cache);
-      const entries = Object.keys(book.resources)
-        .map((key) => [key, book.resources[key]])
-        .filter(([, res]) => res && /^image\//i.test(String(res.mediaType || '')));
-      let pending = 0;
-      const done = () => {
-        pending -= 1;
-        if (pending <= 0) uiStore.set({ imagesVersion: (uiStore.get().imagesVersion || 0) + 1 });
-      };
-      for (const [zipPath, res] of entries) {
-        if (cache.has(zipPath)) continue;
-        pending += 1;
-        Promise.resolve()
-          .then(() => book.resourceBytes(zipPath))
-          .then((bytes) => {
-            const dataUrl = bytesToDataUrl(bytes, res.mediaType);
-            if (dataUrl) cache.set(zipPath, dataUrl);
-          })
-          .catch(() => {})
-          .then(done, done);
-      }
-    } catch (_error) {
-      /* 图片不可用不影响阅读 */
-    }
-  }
-
-  /** render(chapterIndex, resolveResource) 需要的同步资源解析器 */
+  /** Resolve shared image addresses without owning page-local resource bytes. */
   function resourceResolver(id) {
-    return (zipPath) => {
-      try {
-        const cache = imageCaches.get(id);
-        if (!cache || !cache.size) return null;
-        const raw = String(zipPath || '');
-        if (cache.has(raw)) return cache.get(raw);
-        let decoded = raw;
-        try {
-          decoded = decodeURIComponent(raw);
-        } catch (_error) {
-          decoded = raw;
-        }
-        if (cache.has(decoded)) return cache.get(decoded);
-        const base = decoded.split('/').pop();
-        for (const [key, value] of cache) {
-          if (key.split('/').pop() === base) return value;
-        }
-        return null;
-      } catch (_error) {
-        return null;
-      }
-    };
+    const engine = engineOf(id);
+    return (path) => resolveImageResource(engine, path);
   }
 
   /**
@@ -580,7 +518,7 @@ export function createController(getProps, store) {
         busyBookId: null,
         lastError: null,
       });
-      startImagePrefetch(id, engine);
+      void prepareImageResources(engine);
       return true;
     } catch (error) {
       const text = reportError(error, true);
@@ -927,7 +865,6 @@ export function createController(getProps, store) {
     }
     const states = { ...(uiStore.get().states || {}) };
     delete states[id];
-    imageCaches.delete(id);
     setStates(states);
     uiStore.set({ lastError: null });
     await refreshLibrary();
@@ -1023,6 +960,7 @@ export function createController(getProps, store) {
     goPercent,
     updateLocator,
     reportPosition,
+    flushPendingSaves,
     setPanel,
     addHighlight,
     removeHighlight,

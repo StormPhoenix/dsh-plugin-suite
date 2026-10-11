@@ -37155,10 +37155,10 @@ function _parseVisibilityExpression(xref, array, nestingCounter, currentResult) 
     }
   }
 }
-function parseMarkedContentProps(xref, contentProperties, resources) {
+function parseMarkedContentProps(xref, contentProperties, resources2) {
   let optionalContent;
   if (contentProperties instanceof Name) {
-    const properties = resources.get("Properties");
+    const properties = resources2.get("Properties");
     optionalContent = properties.get(contentProperties.name);
   } else if (contentProperties instanceof Dict) {
     optionalContent = contentProperties;
@@ -46695,7 +46695,7 @@ var init_pdf_worker = __esm({
       static parse({
         cs,
         xref,
-        resources = null,
+        resources: resources2 = null,
         pdfFunctionFactory,
         globalColorSpaceCache,
         localColorSpaceCache,
@@ -46703,7 +46703,7 @@ var init_pdf_worker = __esm({
       }) {
         const options = {
           xref,
-          resources,
+          resources: resources2,
           pdfFunctionFactory,
           globalColorSpaceCache,
           localColorSpaceCache
@@ -46761,7 +46761,7 @@ var init_pdf_worker = __esm({
       static #parse(cs, options) {
         const {
           xref,
-          resources,
+          resources: resources2,
           pdfFunctionFactory,
           globalColorSpaceCache
         } = options;
@@ -46782,8 +46782,8 @@ var init_pdf_worker = __esm({
             case "Pattern":
               return new PatternCS(null);
             default:
-              if (resources instanceof Dict) {
-                const colorSpaces = resources.get("ColorSpace");
+              if (resources2 instanceof Dict) {
+                const colorSpaces = resources2.get("ColorSpace");
                 if (colorSpaces instanceof Dict) {
                   const resourcesCS = colorSpaces.get(cs.name);
                   if (resourcesCS) {
@@ -48202,7 +48202,7 @@ var init_pdf_worker = __esm({
       }
     };
     RadialAxialShading = class extends BaseShading {
-      constructor(dict, xref, resources, pdfFunctionFactory, globalColorSpaceCache, localColorSpaceCache) {
+      constructor(dict, xref, resources2, pdfFunctionFactory, globalColorSpaceCache, localColorSpaceCache) {
         super();
         this.shadingType = dict.get("ShadingType");
         let coordsLen = 0;
@@ -48218,7 +48218,7 @@ var init_pdf_worker = __esm({
         const cs = ColorSpaceUtils.parse({
           cs: dict.getRaw("CS") || dict.getRaw("ColorSpace"),
           xref,
-          resources,
+          resources: resources2,
           pdfFunctionFactory,
           globalColorSpaceCache,
           localColorSpaceCache
@@ -48339,13 +48339,13 @@ var init_pdf_worker = __esm({
     };
     FunctionBasedShading = class _FunctionBasedShading extends BaseShading {
       static MAX_STEP_COUNT = 512;
-      constructor(dict, xref, resources, pdfFunctionFactory, globalColorSpaceCache, localColorSpaceCache) {
+      constructor(dict, xref, resources2, pdfFunctionFactory, globalColorSpaceCache, localColorSpaceCache) {
         super();
         this.bbox = lookupNormalRect(dict.getArray("BBox"), null);
         const cs = ColorSpaceUtils.parse({
           cs: dict.getRaw("CS") || dict.getRaw("ColorSpace"),
           xref,
-          resources,
+          resources: resources2,
           pdfFunctionFactory,
           globalColorSpaceCache,
           localColorSpaceCache
@@ -48521,7 +48521,7 @@ var init_pdf_worker = __esm({
       static MIN_SPLIT_PATCH_CHUNKS_AMOUNT = 3;
       static MAX_SPLIT_PATCH_CHUNKS_AMOUNT = 20;
       static TRIANGLE_DENSITY = 20;
-      constructor(stream, xref, resources, pdfFunctionFactory, globalColorSpaceCache, localColorSpaceCache) {
+      constructor(stream, xref, resources2, pdfFunctionFactory, globalColorSpaceCache, localColorSpaceCache) {
         super();
         if (!(stream instanceof BaseStream)) {
           throw new FormatError2("Mesh data is not a stream");
@@ -48532,7 +48532,7 @@ var init_pdf_worker = __esm({
         const cs = ColorSpaceUtils.parse({
           cs: dict.getRaw("CS") || dict.getRaw("ColorSpace"),
           xref,
-          resources,
+          resources: resources2,
           pdfFunctionFactory,
           globalColorSpaceCache,
           localColorSpaceCache
@@ -71578,18 +71578,18 @@ var init_pdf_worker = __esm({
         newEvaluator.options = Object.assign(/* @__PURE__ */ Object.create(null), this.options, newOptions);
         return newEvaluator;
       }
-      hasBlendModes(resources, nonBlendModesSet) {
-        if (!(resources instanceof Dict)) {
+      hasBlendModes(resources2, nonBlendModesSet) {
+        if (!(resources2 instanceof Dict)) {
           return false;
         }
-        if (resources.objId && nonBlendModesSet.has(resources.objId)) {
+        if (resources2.objId && nonBlendModesSet.has(resources2.objId)) {
           return false;
         }
         const processed = new RefSet(nonBlendModesSet);
-        if (resources.objId) {
-          processed.put(resources.objId);
+        if (resources2.objId) {
+          processed.put(resources2.objId);
         }
-        const nodes = [resources], xref = this.xref;
+        const nodes = [resources2], xref = this.xref;
         while (nodes.length) {
           const node = nodes.shift();
           const graphicStates = node.get("ExtGState");
@@ -71719,7 +71719,7 @@ var init_pdf_worker = __esm({
         this.standardFontDataCache.set(name, data);
         return new Stream(data);
       }
-      async buildFormXObject(resources, xobj, smask, operatorList, task, initialState, localColorSpaceCache, seenRefs) {
+      async buildFormXObject(resources2, xobj, smask, operatorList, task, initialState, localColorSpaceCache, seenRefs) {
         const {
           dict
         } = xobj;
@@ -71731,7 +71731,7 @@ var init_pdf_worker = __esm({
         }
         let optionalContent, groupOptions;
         if (dict.has("OC")) {
-          optionalContent = await this.parseMarkedContentProps(dict.get("OC"), resources);
+          optionalContent = await this.parseMarkedContentProps(dict.get("OC"), resources2);
         }
         if (optionalContent !== void 0) {
           operatorList.addOp(OPS2.beginMarkedContentProps, ["OC", optionalContent]);
@@ -71758,7 +71758,7 @@ var init_pdf_worker = __esm({
             groupOptions.isolated = group.get("I") || false;
             groupOptions.knockout = group.get("K") || false;
             if (group.has("CS")) {
-              const cs = this._getColorSpace(group.getRaw("CS"), resources, localColorSpaceCache);
+              const cs = this._getColorSpace(group.getRaw("CS"), resources2, localColorSpaceCache);
               colorSpace = cs instanceof ColorSpace ? cs : await this._handleColorSpace(cs);
             }
           }
@@ -71777,7 +71777,7 @@ var init_pdf_worker = __esm({
         await this.getOperatorList({
           stream: xobj,
           task,
-          resources: localResources instanceof Dict ? localResources : resources,
+          resources: localResources instanceof Dict ? localResources : resources2,
           operatorList: newOpList,
           initialState,
           prevRefs: seenRefs
@@ -71805,7 +71805,7 @@ var init_pdf_worker = __esm({
         return this.handler.send("obj", [objId, this.pageIndex, "Image", imgData], transfers);
       }
       async buildPaintImageXObject({
-        resources,
+        resources: resources2,
         image,
         isInline = false,
         operatorList,
@@ -71838,7 +71838,7 @@ var init_pdf_worker = __esm({
         }
         let optionalContent;
         if (dict.has("OC")) {
-          optionalContent = await this.parseMarkedContentProps(dict.get("OC"), resources);
+          optionalContent = await this.parseMarkedContentProps(dict.get("OC"), resources2);
         }
         const imageMask = dict.get("IM", "ImageMask") || false;
         let imgData, fn, args;
@@ -71907,7 +71907,7 @@ var init_pdf_worker = __esm({
           try {
             const imageObj = new PDFImage({
               xref: this.xref,
-              res: resources,
+              res: resources2,
               image,
               isInline,
               pdfFunctionFactory: this._pdfFunctionFactory,
@@ -71966,7 +71966,7 @@ var init_pdf_worker = __esm({
         }
         PDFImage.buildImage({
           xref: this.xref,
-          res: resources,
+          res: resources2,
           image,
           isInline,
           pdfFunctionFactory: this._pdfFunctionFactory,
@@ -72005,7 +72005,7 @@ var init_pdf_worker = __esm({
           }
         }
       }
-      handleSMask(smask, resources, operatorList, task, stateManager, localColorSpaceCache, seenRefs) {
+      handleSMask(smask, resources2, operatorList, task, stateManager, localColorSpaceCache, seenRefs) {
         const smaskContent = smask.get("G");
         const smaskOptions = {
           subtype: smask.get("S").name,
@@ -72023,7 +72023,7 @@ var init_pdf_worker = __esm({
           }
           smaskOptions.transferMap = transferMap;
         }
-        return this.buildFormXObject(resources, smaskContent, smaskOptions, operatorList, task, stateManager.state.clone({
+        return this.buildFormXObject(resources2, smaskContent, smaskOptions, operatorList, task, stateManager.state.clone({
           newPath: true
         }), localColorSpaceCache, seenRefs);
       }
@@ -72068,11 +72068,11 @@ var init_pdf_worker = __esm({
         }
         return transferMaps;
       }
-      handleTilingType(fn, color, resources, pattern, patternDict, operatorList, task, localTilingPatternCache, seenRefs) {
+      handleTilingType(fn, color, resources2, pattern, patternDict, operatorList, task, localTilingPatternCache, seenRefs) {
         const tilingOpList = new CheckedOperatorList();
         const patternResources = Dict.merge({
           xref: this.xref,
-          dictArray: [patternDict.get("Resources"), resources]
+          dictArray: [patternDict.get("Resources"), resources2]
         });
         return this.getOperatorList({
           stream: pattern,
@@ -72106,9 +72106,9 @@ var init_pdf_worker = __esm({
           throw reason;
         });
       }
-      async handleSetFont(resources, fontArgs, fontRef, operatorList, task, state, fallbackFontDict = null, cssFontInfo = null, seenRefs = null) {
+      async handleSetFont(resources2, fontArgs, fontRef, operatorList, task, state, fallbackFontDict = null, cssFontInfo = null, seenRefs = null) {
         const fontName = fontArgs?.[0] instanceof Name ? fontArgs[0].name : null;
-        const translated = await this.loadFont(fontName, fontRef, resources, task, fallbackFontDict, cssFontInfo, seenRefs);
+        const translated = await this.loadFont(fontName, fontRef, resources2, task, fallbackFontDict, cssFontInfo, seenRefs);
         if (translated.font.isType3Font) {
           operatorList.addDependencies(translated.type3Dependencies);
         }
@@ -72139,7 +72139,7 @@ var init_pdf_worker = __esm({
         throw reason;
       }
       async setGState({
-        resources,
+        resources: resources2,
         gState,
         operatorList,
         cacheKey,
@@ -72176,7 +72176,7 @@ var init_pdf_worker = __esm({
               break;
             case "Font":
               isSimpleGState = false;
-              promise = promise.then(() => this.handleSetFont(resources, null, value[0], operatorList, task, stateManager.state, null, null, seenRefs).then(function(loadedName) {
+              promise = promise.then(() => this.handleSetFont(resources2, null, value[0], operatorList, task, stateManager.state, null, null, seenRefs).then(function(loadedName) {
                 operatorList.addDependency(loadedName);
                 gStateObj.push([key, [loadedName, value[1]]]);
               }));
@@ -72191,7 +72191,7 @@ var init_pdf_worker = __esm({
               }
               if (value instanceof Dict) {
                 isSimpleGState = false;
-                promise = promise.then(() => this.handleSMask(value, resources, operatorList, task, stateManager, localColorSpaceCache, seenRefs));
+                promise = promise.then(() => this.handleSMask(value, resources2, operatorList, task, stateManager, localColorSpaceCache, seenRefs));
                 gStateObj.push([key, true]);
               } else {
                 warn2("Unsupported SMask type");
@@ -72233,7 +72233,7 @@ var init_pdf_worker = __esm({
           localGStateCache.set(cacheKey, gStateRef, gStateObj);
         }
       }
-      loadFont(fontName, font, resources, task, fallbackFontDict = null, cssFontInfo = null, seenRefs = null) {
+      loadFont(fontName, font, resources2, task, fallbackFontDict = null, cssFontInfo = null, seenRefs = null) {
         const errorFont = async () => new TranslatedFont({
           loadedName: "g_font_error",
           font: new ErrorFont(`Font "${fontName}" is not available.`),
@@ -72245,7 +72245,7 @@ var init_pdf_worker = __esm({
             fontRef = font;
           }
         } else {
-          const fontRes = resources.get("Font");
+          const fontRes = resources2.get("Font");
           if (fontRes) {
             fontRef = fontRes.getRaw(fontName);
           }
@@ -72328,7 +72328,7 @@ var init_pdf_worker = __esm({
           });
           if (translatedFont.isType3Font) {
             try {
-              await translated.loadType3Data(this, resources, task, seenRefs);
+              await translated.loadType3Data(this, resources2, task, seenRefs);
             } catch (reason) {
               throw new Error(`Type3 font load error: ${reason}`);
             }
@@ -72414,11 +72414,11 @@ var init_pdf_worker = __esm({
             break;
         }
       }
-      _getColorSpace(cs, resources, localColorSpaceCache) {
+      _getColorSpace(cs, resources2, localColorSpaceCache) {
         return ColorSpaceUtils.parse({
           cs,
           xref: this.xref,
-          resources,
+          resources: resources2,
           pdfFunctionFactory: this._pdfFunctionFactory,
           globalColorSpaceCache: this.globalColorSpaceCache,
           localColorSpaceCache,
@@ -72441,7 +72441,7 @@ var init_pdf_worker = __esm({
       }
       parseShading({
         shading,
-        resources,
+        resources: resources2,
         localColorSpaceCache,
         localShadingPatternCache
       }) {
@@ -72451,7 +72451,7 @@ var init_pdf_worker = __esm({
         }
         let patternIR;
         try {
-          const shadingFill = Pattern.parseShading(shading, this.xref, resources, this._pdfFunctionFactory, this.globalColorSpaceCache, localColorSpaceCache);
+          const shadingFill = Pattern.parseShading(shading, this.xref, resources2, this._pdfFunctionFactory, this.globalColorSpaceCache, localColorSpaceCache);
           patternIR = shadingFill.getIR();
         } catch (reason) {
           if (reason instanceof AbortException2) {
@@ -72477,7 +72477,7 @@ var init_pdf_worker = __esm({
         }
         return id;
       }
-      handleColorN(operatorList, fn, args, cs, patterns, resources, task, localColorSpaceCache, localTilingPatternCache, localShadingPatternCache, seenRefs) {
+      handleColorN(operatorList, fn, args, cs, patterns, resources2, task, localColorSpaceCache, localTilingPatternCache, localShadingPatternCache, seenRefs) {
         const patternName = args.pop();
         if (patternName instanceof Name) {
           const rawPattern = patterns.getRaw(patternName.name);
@@ -72497,12 +72497,12 @@ var init_pdf_worker = __esm({
             const typeNum = dict.get("PatternType");
             if (typeNum === PatternType.TILING) {
               const color = cs.base ? cs.base.getRgbHex(args, 0) : null;
-              return this.handleTilingType(fn, color, resources, pattern, dict, operatorList, task, localTilingPatternCache, seenRefs);
+              return this.handleTilingType(fn, color, resources2, pattern, dict, operatorList, task, localTilingPatternCache, seenRefs);
             } else if (typeNum === PatternType.SHADING) {
               const shading = dict.get("Shading");
               const objId = this.parseShading({
                 shading,
-                resources,
+                resources: resources2,
                 localColorSpaceCache,
                 localShadingPatternCache
               });
@@ -72517,13 +72517,13 @@ var init_pdf_worker = __esm({
         }
         throw new FormatError2(`Unknown PatternName: ${patternName}`);
       }
-      async parseMarkedContentProps(contentProperties, resources) {
-        return parseMarkedContentProps(this.xref, contentProperties, resources);
+      async parseMarkedContentProps(contentProperties, resources2) {
+        return parseMarkedContentProps(this.xref, contentProperties, resources2);
       }
       async getOperatorList({
         stream,
         task,
-        resources,
+        resources: resources2,
         operatorList,
         initialState = null,
         fallbackFontDict = null,
@@ -72543,7 +72543,7 @@ var init_pdf_worker = __esm({
           }
           seenRefs.put(objId);
         }
-        resources ||= Dict.empty;
+        resources2 ||= Dict.empty;
         initialState ||= new EvalState();
         if (!operatorList) {
           throw new Error('getOperatorList: missing "operatorList" parameter');
@@ -72555,8 +72555,8 @@ var init_pdf_worker = __esm({
         const localGStateCache = new LocalGStateCache();
         const localTilingPatternCache = new LocalTilingPatternCache();
         const localShadingPatternCache = /* @__PURE__ */ new Map();
-        const xobjs = resources.get("XObject") || Dict.empty;
-        const patterns = resources.get("Pattern") || Dict.empty;
+        const xobjs = resources2.get("XObject") || Dict.empty;
+        const patterns = resources2.get("Pattern") || Dict.empty;
         const stateManager = new StateManager(initialState);
         const preprocessor = new EvaluatorPreprocessor(stream, xref, stateManager);
         const timeSlotManager = new TimeSlotManager();
@@ -72621,7 +72621,7 @@ var init_pdf_worker = __esm({
                   }
                   if (type.name === "Form") {
                     stateManager.save();
-                    self2.buildFormXObject(resources, xobj, null, operatorList, task, stateManager.state.clone({
+                    self2.buildFormXObject(resources2, xobj, null, operatorList, task, stateManager.state.clone({
                       newPath: true
                     }), localColorSpaceCache, seenRefs).then(function() {
                       stateManager.restore();
@@ -72630,7 +72630,7 @@ var init_pdf_worker = __esm({
                     return;
                   } else if (type.name === "Image") {
                     self2.buildPaintImageXObject({
-                      resources,
+                      resources: resources2,
                       image: xobj,
                       operatorList,
                       cacheKey: name,
@@ -72657,7 +72657,7 @@ var init_pdf_worker = __esm({
                 return;
               case OPS2.setFont:
                 const fontSize = args[1];
-                next(self2.handleSetFont(resources, args, null, operatorList, task, stateManager.state, fallbackFontDict, null, seenRefs).then(function(loadedName) {
+                next(self2.handleSetFont(resources2, args, null, operatorList, task, stateManager.state, fallbackFontDict, null, seenRefs).then(function(loadedName) {
                   operatorList.addDependency(loadedName);
                   operatorList.addOp(OPS2.setFont, [loadedName, fontSize]);
                 }));
@@ -72673,7 +72673,7 @@ var init_pdf_worker = __esm({
                   }
                 }
                 next(self2.buildPaintImageXObject({
-                  resources,
+                  resources: resources2,
                   image: args[0],
                   isInline: true,
                   operatorList,
@@ -72729,7 +72729,7 @@ var init_pdf_worker = __esm({
                 stateManager.state.textRenderingMode = args[0];
                 break;
               case OPS2.setFillColorSpace: {
-                const fillCS = self2._getColorSpace(args[0], resources, localColorSpaceCache);
+                const fillCS = self2._getColorSpace(args[0], resources2, localColorSpaceCache);
                 if (fillCS instanceof ColorSpace) {
                   stateManager.state.fillColorSpace = fillCS;
                   continue;
@@ -72740,7 +72740,7 @@ var init_pdf_worker = __esm({
                 return;
               }
               case OPS2.setStrokeColorSpace: {
-                const strokeCS = self2._getColorSpace(args[0], resources, localColorSpaceCache);
+                const strokeCS = self2._getColorSpace(args[0], resources2, localColorSpaceCache);
                 if (strokeCS instanceof ColorSpace) {
                   stateManager.state.strokeColorSpace = strokeCS;
                   continue;
@@ -72828,7 +72828,7 @@ var init_pdf_worker = __esm({
                   if (!Array.isArray(args)) {
                     continue;
                   }
-                  next(self2.handleColorN(operatorList, OPS2.setFillColorN, args, cs, patterns, resources, task, localColorSpaceCache, localTilingPatternCache, localShadingPatternCache, seenRefs));
+                  next(self2.handleColorN(operatorList, OPS2.setFillColorN, args, cs, patterns, resources2, task, localColorSpaceCache, localTilingPatternCache, localShadingPatternCache, seenRefs));
                   return;
                 }
                 if (!isNumberArray(args, null)) {
@@ -72853,7 +72853,7 @@ var init_pdf_worker = __esm({
                   if (!Array.isArray(args)) {
                     continue;
                   }
-                  next(self2.handleColorN(operatorList, OPS2.setStrokeColorN, args, cs, patterns, resources, task, localColorSpaceCache, localTilingPatternCache, localShadingPatternCache, seenRefs));
+                  next(self2.handleColorN(operatorList, OPS2.setStrokeColorN, args, cs, patterns, resources2, task, localColorSpaceCache, localTilingPatternCache, localShadingPatternCache, seenRefs));
                   return;
                 }
                 if (!isNumberArray(args, null)) {
@@ -72865,7 +72865,7 @@ var init_pdf_worker = __esm({
               case OPS2.shadingFill:
                 let shading;
                 try {
-                  const shadingRes = resources.get("Shading");
+                  const shadingRes = resources2.get("Shading");
                   if (!shadingRes) {
                     throw new FormatError2("No shading resource found");
                   }
@@ -72885,7 +72885,7 @@ var init_pdf_worker = __esm({
                 }
                 const patternId = self2.parseShading({
                   shading,
-                  resources,
+                  resources: resources2,
                   localColorSpaceCache,
                   localShadingPatternCache
                 });
@@ -72912,7 +72912,7 @@ var init_pdf_worker = __esm({
                   if (!isValidName) {
                     throw new FormatError2("GState must be referred to by name.");
                   }
-                  const extGState = resources.get("ExtGState");
+                  const extGState = resources2.get("ExtGState");
                   if (!(extGState instanceof Dict)) {
                     throw new FormatError2("ExtGState should be a dictionary.");
                   }
@@ -72921,7 +72921,7 @@ var init_pdf_worker = __esm({
                     throw new FormatError2("GState should be a dictionary.");
                   }
                   self2.setGState({
-                    resources,
+                    resources: resources2,
                     gState,
                     operatorList,
                     cacheKey: name,
@@ -73018,7 +73018,7 @@ var init_pdf_worker = __esm({
                   continue;
                 }
                 if (args[0].name === "OC") {
-                  next(self2.parseMarkedContentProps(args[1], resources).then((data) => {
+                  next(self2.parseMarkedContentProps(args[1], resources2).then((data) => {
                     operatorList.addOp(OPS2.beginMarkedContentProps, ["OC", data]);
                   }).catch((reason) => {
                     if (reason instanceof AbortException2) {
@@ -73073,7 +73073,7 @@ var init_pdf_worker = __esm({
       async getTextContent({
         stream,
         task,
-        resources,
+        resources: resources2,
         stateManager = null,
         includeMarkedContent = false,
         sink,
@@ -73101,7 +73101,7 @@ var init_pdf_worker = __esm({
           }
           seenRefs.put(objId);
         }
-        resources ||= Dict.empty;
+        resources2 ||= Dict.empty;
         stateManager ||= new StateManager(new TextState());
         if (includeMarkedContent) {
           markedContentData ||= {
@@ -73275,7 +73275,7 @@ var init_pdf_worker = __esm({
           };
         }
         async function handleSetFont(fontName, fontRef) {
-          const translated = await self2.loadFont(fontName, fontRef, resources, task, null, null, seenRefs);
+          const translated = await self2.loadFont(fontName, fontRef, resources2, task, null, null, seenRefs);
           textState.loadedName = translated.loadedName;
           textState.font = translated.font;
           textState.fontMatrix = translated.font.fontMatrix || FONT_IDENTITY_MATRIX2;
@@ -73720,7 +73720,7 @@ var init_pdf_worker = __esm({
                 break;
               case OPS2.paintXObject:
                 flushTextContentItem();
-                xobjs ??= resources.get("XObject") || Dict.empty;
+                xobjs ??= resources2.get("XObject") || Dict.empty;
                 isValidName = args[0] instanceof Name;
                 name = args[0].name;
                 if (isValidName && emptyXObjectCache.getByName(name)) {
@@ -73770,7 +73770,7 @@ var init_pdf_worker = __esm({
                   self2.getTextContent({
                     stream: xobj,
                     task,
-                    resources: localResources instanceof Dict ? localResources : resources,
+                    resources: localResources instanceof Dict ? localResources : resources2,
                     stateManager: xObjStateManager,
                     includeMarkedContent,
                     sink: sinkWrapper,
@@ -73808,7 +73808,7 @@ var init_pdf_worker = __esm({
                   if (!isValidName) {
                     throw new FormatError2("GState must be referred to by name.");
                   }
-                  const extGState = resources.get("ExtGState");
+                  const extGState = resources2.get("ExtGState");
                   if (!(extGState instanceof Dict)) {
                     throw new FormatError2("ExtGState should be a dictionary.");
                   }
@@ -74809,7 +74809,7 @@ var init_pdf_worker = __esm({
         this.font.disableFontFace = true;
         PartialEvaluator.buildFontPaths(this.font, this.font.glyphCacheValues, handler, evaluatorOptions);
       }
-      loadType3Data(evaluator, resources, task, seenRefs = null) {
+      loadType3Data(evaluator, resources2, task, seenRefs = null) {
         if (this.#type3Loaded) {
           return this.#type3Loaded;
         }
@@ -74828,7 +74828,7 @@ var init_pdf_worker = __esm({
         type3Evaluator.type3FontRefs = type3FontRefs;
         let loadCharProcsPromise = Promise.resolve();
         const charProcs = this.dict.get("CharProcs");
-        const fontResources = this.dict.get("Resources") || resources;
+        const fontResources = this.dict.get("Resources") || resources2;
         const charProcOperatorList = /* @__PURE__ */ Object.create(null);
         const [x0, y0, x1, y1] = font.bbox, width = x1 - x0, height = y1 - y0;
         const fontBBoxSize = Math.hypot(width, height);
@@ -75767,11 +75767,11 @@ var init_pdf_worker = __esm({
         return this.xref.getNewPersistentRef(baseFont);
       }
       get resources() {
-        const resources = new Dict(this.xref);
+        const resources2 = new Dict(this.xref);
         const font = new Dict(this.xref);
         font.set(this.fontName.name, this.baseFontRef);
-        resources.set("Font", font);
-        return resources;
+        resources2.set("Font", font);
+        return resources2;
       }
       _createContext() {
         this.widths = /* @__PURE__ */ new Map();
@@ -75861,7 +75861,7 @@ var init_pdf_worker = __esm({
         const newFontSize = fontSize * fscale;
         const buffer = ["q", `0 0 ${numberToString(w)} ${numberToString(h15)} re W n`, `BT`, `1 0 0 1 0 ${numberToString(h15 + lineDescent)} Tm 0 Tc ${getPdfColor(bgColor, true)}`, `/${this.fontName.name} ${numberToString(newFontSize)} Tf`];
         const {
-          resources
+          resources: resources2
         } = this;
         strokeAlpha = typeof strokeAlpha === "number" && strokeAlpha >= 0 && strokeAlpha <= 1 ? strokeAlpha : 1;
         if (strokeAlpha !== 1) {
@@ -75872,7 +75872,7 @@ var init_pdf_worker = __esm({
           r0.set("CA", strokeAlpha);
           r0.setIfName("Type", "ExtGState");
           extGState.set("R0", r0);
-          resources.set("ExtGState", extGState);
+          resources2.set("ExtGState", extGState);
         }
         const vShift = numberToString(lineHeight);
         for (const line of lines) {
@@ -75885,7 +75885,7 @@ var init_pdf_worker = __esm({
         appearanceStreamDict.setIfName("Type", "XObject");
         appearanceStreamDict.set("BBox", [0, 0, w, h15]);
         appearanceStreamDict.set("Length", appearance.length);
-        appearanceStreamDict.set("Resources", resources);
+        appearanceStreamDict.set("Resources", resources2);
         if (rotation) {
           const matrix = getRotationMatrix(rotation, w, h15);
           appearanceStreamDict.set("Matrix", matrix);
@@ -88811,11 +88811,11 @@ var init_pdf_worker = __esm({
         }
       }
       async loadResources(keys, appearance) {
-        const resources = await appearance.dict.getAsync("Resources");
-        if (resources) {
-          await ObjectLoader.load(resources, keys, resources.xref);
+        const resources2 = await appearance.dict.getAsync("Resources");
+        if (resources2) {
+          await ObjectLoader.load(resources2, keys, resources2.xref);
         }
-        return resources;
+        return resources2;
       }
       get _ownCanvasRequiresForms() {
         return false;
@@ -88839,7 +88839,7 @@ var init_pdf_worker = __esm({
           appearance = new StringStream("", new Dict());
         }
         const appearanceDict = appearance.dict;
-        const resources = await this.loadResources(RESOURCES_KEYS_OPERATOR_LIST, appearance);
+        const resources2 = await this.loadResources(RESOURCES_KEYS_OPERATOR_LIST, appearance);
         const bbox = lookupRect(appearanceDict.getArray("BBox"), [0, 0, this.width, this.height]);
         const matrix = lookupMatrix(appearanceDict.getArray("Matrix"), IDENTITY_MATRIX);
         const transform = getTransformMatrix(rect, bbox, matrix);
@@ -88852,7 +88852,7 @@ var init_pdf_worker = __esm({
         await evaluator.getOperatorList({
           stream: appearance,
           task,
-          resources,
+          resources: resources2,
           operatorList: opList,
           fallbackFontDict: this._fallbackFontDict
         });
@@ -88880,7 +88880,7 @@ var init_pdf_worker = __esm({
         if (!this.appearance) {
           return;
         }
-        const resources = await this.loadResources(RESOURCES_KEYS_TEXT_CONTENT, this.appearance);
+        const resources2 = await this.loadResources(RESOURCES_KEYS_TEXT_CONTENT, this.appearance);
         const text2 = [];
         const buffer = [];
         let firstPositionX = Infinity;
@@ -88907,7 +88907,7 @@ var init_pdf_worker = __esm({
         await evaluator.getTextContent({
           stream: this.appearance,
           task,
-          resources,
+          resources: resources2,
           includeMarkedContent: true,
           keepWhiteSpace: true,
           sink,
@@ -89190,11 +89190,11 @@ var init_pdf_worker = __esm({
         gsDict.setIfNumber("ca", fillAlpha);
         const stateDict = new Dict(xref);
         stateDict.set("GS0", gsDict);
-        const resources = new Dict(xref);
-        resources.set("ExtGState", stateDict);
-        resources.set("XObject", formDict);
+        const resources2 = new Dict(xref);
+        resources2.set("ExtGState", stateDict);
+        resources2.set("XObject", formDict);
         const appearanceDict = new Dict(xref);
-        appearanceDict.set("Resources", resources);
+        appearanceDict.set("Resources", resources2);
         appearanceDict.set("BBox", bbox);
         this.appearance = new StringStream("/GS0 gs /Fm0 Do", appearanceDict);
         this._streams.push(this.appearance, appearanceStream);
@@ -89533,9 +89533,9 @@ var init_pdf_worker = __esm({
           const AP = new Dict(xref);
           dict.set("AP", AP);
           AP.set("N", newRef);
-          const resources = this._getSaveFieldResources(xref), appearanceDict = new Dict(xref);
+          const resources2 = this._getSaveFieldResources(xref), appearanceDict = new Dict(xref);
           appearanceDict.setIfName("Subtype", "Form");
-          appearanceDict.set("Resources", resources);
+          appearanceDict.set("Resources", resources2);
           const bbox = rotation % 180 === 0 ? [0, 0, this.width, this.height] : [0, 0, this.height, this.width];
           appearanceDict.set("BBox", bbox);
           const appearanceStream = new StringStream(appearance, appearanceDict);
@@ -89629,8 +89629,8 @@ var init_pdf_worker = __esm({
         if (encodingError && this._isOffscreenCanvasSupported) {
           const fontFamily = this.data.comb ? "monospace" : "sans-serif";
           const fakeUnicodeFont = new FakeUnicodeFont(evaluator.xref, fontFamily);
-          const resources = fakeUnicodeFont.createFontResources(lines.join(""));
-          const newFont = resources.getRaw("Font");
+          const resources2 = fakeUnicodeFont.createFontResources(lines.join(""));
+          const newFont = resources2.getRaw("Font");
           if (this._fieldResources.mergedResources.has("Font")) {
             const oldFont = this._fieldResources.mergedResources.get("Font");
             for (const [key, rawVal] of newFont.getRawEntries()) {
@@ -89643,7 +89643,7 @@ var init_pdf_worker = __esm({
           font = await _WidgetAnnotation._getFontData(evaluator, task, {
             fontName,
             fontSize: 0
-          }, resources);
+          }, resources2);
           for (let i = 0, ii = encodedLines.length; i < ii; i++) {
             encodedLines[i] = stringToUTF16String(lines[i]);
           }
@@ -89682,7 +89682,7 @@ var init_pdf_worker = __esm({
         const renderedText = this._renderText(encodedLines[0], font, fontSize, totalWidth, alignment, prevInfo, defaultHPadding, bottomPadding);
         return `/Tx BMC q ${colors}BT ` + defaultAppearance + ` 1 0 0 1 0 0 Tm ${renderedText} ET Q EMC`;
       }
-      static async _getFontData(evaluator, task, appearanceData, resources) {
+      static async _getFontData(evaluator, task, appearanceData, resources2) {
         const operatorList = new OperatorList();
         const initialState = {
           font: null,
@@ -89694,7 +89694,7 @@ var init_pdf_worker = __esm({
           fontName,
           fontSize
         } = appearanceData;
-        await evaluator.handleSetFont(resources, [fontName && Name.get(fontName), fontSize], null, operatorList, task, initialState, null);
+        await evaluator.handleSetFont(resources2, [fontName && Name.get(fontName), fontSize], null, operatorList, task, initialState, null);
         return initialState.font;
       }
       _getTextWidth(text2, font) {
@@ -89787,11 +89787,11 @@ var init_pdf_worker = __esm({
         if (!fontName) {
           return localResources || Dict.empty;
         }
-        for (const resources of [localResources, appearanceResources]) {
-          if (resources instanceof Dict) {
-            const localFont = resources.get("Font");
+        for (const resources2 of [localResources, appearanceResources]) {
+          if (resources2 instanceof Dict) {
+            const localFont = resources2.get("Font");
             if (localFont instanceof Dict && localFont.has(fontName)) {
-              return resources;
+              return resources2;
             }
           }
         }
@@ -90261,11 +90261,11 @@ var init_pdf_worker = __esm({
         appearanceStreamDict.set("BBox", bbox);
         appearanceStreamDict.set("Matrix", [1, 0, 0, 1, 0, 0]);
         appearanceStreamDict.set("Length", appearance.length);
-        const resources = new Dict(params.xref);
+        const resources2 = new Dict(params.xref);
         const font = new Dict(params.xref);
         font.set("PdfJsZaDb", this.fallbackFontDict);
-        resources.set("Font", font);
-        appearanceStreamDict.set("Resources", resources);
+        resources2.set("Font", font);
+        appearanceStreamDict.set("Resources", resources2);
         this.checkedAppearance = new StringStream(appearance, appearanceStreamDict);
         this._streams.push(this.checkedAppearance);
       }
@@ -90937,7 +90937,7 @@ var init_pdf_worker = __esm({
         if (!color) {
           return null;
         }
-        const resources = new Dict(xref);
+        const resources2 = new Dict(xref);
         const font = new Dict(xref);
         if (baseFontRef) {
           font.set("Helv", baseFontRef);
@@ -90949,11 +90949,11 @@ var init_pdf_worker = __esm({
           baseFont.setIfName("Encoding", "WinAnsiEncoding");
           font.set("Helv", baseFont);
         }
-        resources.set("Font", font);
+        resources2.set("Font", font);
         const helv = await WidgetAnnotation._getFontData(evaluator, task, {
           fontName: "Helv",
           fontSize
-        }, resources);
+        }, resources2);
         const [x1, y1, x2, y2] = rect;
         let w = x2 - x1;
         let h15 = y2 - y1;
@@ -91032,7 +91032,7 @@ var init_pdf_worker = __esm({
         appearanceStreamDict.setIfName("Subtype", "Form");
         appearanceStreamDict.setIfName("Type", "XObject");
         appearanceStreamDict.set("BBox", rect);
-        appearanceStreamDict.set("Resources", resources);
+        appearanceStreamDict.set("Resources", resources2);
         appearanceStreamDict.set("Matrix", [1, 0, 0, 1, -rect[0], -rect[1]]);
         return new StringStream(appearance, appearanceStreamDict);
       }
@@ -91371,14 +91371,14 @@ var init_pdf_worker = __esm({
         appearanceStreamDict.set("BBox", rect);
         appearanceStreamDict.set("Length", appearance.length);
         if (opacity !== 1) {
-          const resources = new Dict(xref);
+          const resources2 = new Dict(xref);
           const extGState = new Dict(xref);
           const r0 = new Dict(xref);
           r0.set("CA", opacity);
           r0.setIfName("Type", "ExtGState");
           extGState.set("R0", r0);
-          resources.set("ExtGState", extGState);
-          appearanceStreamDict.set("Resources", resources);
+          resources2.set("ExtGState", extGState);
+          appearanceStreamDict.set("Resources", resources2);
         }
         return new StringStream(appearance, appearanceStreamDict);
       }
@@ -91412,10 +91412,10 @@ var init_pdf_worker = __esm({
         appearanceStreamDict.setIfName("Type", "XObject");
         appearanceStreamDict.set("BBox", rect);
         appearanceStreamDict.set("Length", appearance.length);
-        const resources = new Dict(xref);
+        const resources2 = new Dict(xref);
         const extGState = new Dict(xref);
-        resources.set("ExtGState", extGState);
-        appearanceStreamDict.set("Resources", resources);
+        resources2.set("ExtGState", extGState);
+        appearanceStreamDict.set("Resources", resources2);
         const r0 = new Dict(xref);
         extGState.set("R0", r0);
         r0.setIfName("BM", "Multiply");
@@ -91521,10 +91521,10 @@ var init_pdf_worker = __esm({
         appearanceStreamDict.setIfName("Type", "XObject");
         appearanceStreamDict.set("BBox", rect);
         appearanceStreamDict.set("Length", appearance.length);
-        const resources = new Dict(xref);
+        const resources2 = new Dict(xref);
         const extGState = new Dict(xref);
-        resources.set("ExtGState", extGState);
-        appearanceStreamDict.set("Resources", resources);
+        resources2.set("ExtGState", extGState);
+        appearanceStreamDict.set("Resources", resources2);
         const r0 = new Dict(xref);
         extGState.set("R0", r0);
         r0.setIfName("BM", "Multiply");
@@ -91740,9 +91740,9 @@ var init_pdf_worker = __esm({
           width,
           height
         } = params.image;
-        const resources = new Dict(xref);
+        const resources2 = new Dict(xref);
         const xobject = new Dict(xref);
-        resources.set("XObject", xobject);
+        resources2.set("XObject", xobject);
         xobject.set("Im0", imageRef);
         const appearance = `q ${width} 0 0 ${height} 0 0 cm /Im0 Do Q`;
         const appearanceStreamDict = new Dict(xref);
@@ -91750,7 +91750,7 @@ var init_pdf_worker = __esm({
         appearanceStreamDict.setIfName("Subtype", "Form");
         appearanceStreamDict.setIfName("Type", "XObject");
         appearanceStreamDict.set("BBox", [0, 0, width, height]);
-        appearanceStreamDict.set("Resources", resources);
+        appearanceStreamDict.set("Resources", resources2);
         if (rotation) {
           const matrix = getRotationMatrix(rotation, width, height);
           appearanceStreamDict.set("Matrix", matrix);
@@ -93956,8 +93956,8 @@ var init_pdf_worker = __esm({
         return this.pageDict.getArray("Contents");
       }
       get resources() {
-        const resources = this.#getInheritableProperty("Resources");
-        return shadow2(this, "resources", resources instanceof Dict ? resources : Dict.empty);
+        const resources2 = this.#getInheritableProperty("Resources");
+        return shadow2(this, "resources", resources2 instanceof Dict ? resources2 : Dict.empty);
       }
       getBoundingBox(name) {
         if (this.xfaData) {
@@ -94200,17 +94200,17 @@ var init_pdf_worker = __esm({
           });
         }
         const pageListPromise = Promise.all([contentStreamPromise, resourcesPromise]).then(async ([contentStream]) => {
-          const resources = await this.#getMergedResources(contentStream.dict, RESOURCES_KEYS_OPERATOR_LIST);
+          const resources2 = await this.#getMergedResources(contentStream.dict, RESOURCES_KEYS_OPERATOR_LIST);
           const opList = new OperatorList(intent, sink);
           handler.send("StartRenderPage", {
-            transparency: partialEvaluator.hasBlendModes(resources, this.nonBlendModesSet),
+            transparency: partialEvaluator.hasBlendModes(resources2, this.nonBlendModesSet),
             pageIndex,
             cacheKey
           });
           await partialEvaluator.getOperatorList({
             stream: contentStream,
             task,
-            resources,
+            resources: resources2,
             operatorList: opList
           });
           return opList;
@@ -94282,12 +94282,12 @@ var init_pdf_worker = __esm({
         const resourcesPromise = this.loadResources(RESOURCES_KEYS_TEXT_CONTENT);
         const langPromise = this.pdfManager.ensureCatalog("lang");
         const [contentStream, , lang] = await Promise.all([contentStreamPromise, resourcesPromise, langPromise]);
-        const resources = await this.#getMergedResources(contentStream.dict, RESOURCES_KEYS_TEXT_CONTENT);
+        const resources2 = await this.#getMergedResources(contentStream.dict, RESOURCES_KEYS_TEXT_CONTENT);
         const partialEvaluator = this.#createPartialEvaluator(handler);
         return partialEvaluator.getTextContent({
           stream: contentStream,
           task,
-          resources,
+          resources: resources2,
           includeMarkedContent,
           disableNormalization,
           sink,
@@ -94697,12 +94697,12 @@ var init_pdf_worker = __esm({
         if (!acroForm) {
           return;
         }
-        const resources = await acroForm.getAsync("DR");
-        if (!(resources instanceof Dict)) {
+        const resources2 = await acroForm.getAsync("DR");
+        if (!(resources2 instanceof Dict)) {
           return;
         }
-        await ObjectLoader.load(resources, ["Font"], this.xref);
-        const fontRes = resources.get("Font");
+        await ObjectLoader.load(resources2, ["Font"], this.xref);
+        const fontRes = resources2.get("Font");
         if (!(fontRes instanceof Dict)) {
           return;
         }
@@ -94737,7 +94737,7 @@ var init_pdf_worker = __esm({
             return this;
           }
         };
-        const parseFont = (fontName, fallbackFontDict, cssFontInfo) => partialEvaluator.handleSetFont(resources, [Name.get(fontName), 1], null, operatorList, task, initialState, fallbackFontDict, cssFontInfo).catch((reason) => {
+        const parseFont = (fontName, fallbackFontDict, cssFontInfo) => partialEvaluator.handleSetFont(resources2, [Name.get(fontName), 1], null, operatorList, task, initialState, fallbackFontDict, cssFontInfo).catch((reason) => {
           warn2(`loadXfaFonts: "${reason}".`);
           return null;
         });
@@ -97591,15 +97591,15 @@ var init_pdf_worker = __esm({
         }
         const resourcesValuesCache = /* @__PURE__ */ new Map();
         const fixAppearanceResources = async (stream) => {
-          let resources = stream.dict.getRaw("Resources");
-          resources &&= this.xrefWrapper.fetchIfRef(resources);
-          if (!(resources instanceof Dict)) {
+          let resources2 = stream.dict.getRaw("Resources");
+          resources2 &&= this.xrefWrapper.fetchIfRef(resources2);
+          if (!(resources2 instanceof Dict)) {
             const newResourcesRef = await resourcesValuesCache.getOrInsertComputed(acroFormDefaultResources, () => this.#cloneObject(acroFormDefaultResources, xref));
             stream.dict.set("Resources", newResourcesRef);
             return;
           }
           for (const [resKey, resValue] of acroFormDefaultResources.getRawEntries()) {
-            if (resources.has(resKey)) {
+            if (resources2.has(resKey)) {
               continue;
             }
             let newResValue = resValue;
@@ -97608,7 +97608,7 @@ var init_pdf_worker = __esm({
             } else if (resValue instanceof Dict || resValue instanceof BaseStream || Array.isArray(resValue)) {
               newResValue = await resourcesValuesCache.getOrInsertComputed(resValue, () => this.#cloneObject(resValue, xref));
             }
-            resources.set(resKey, newResValue);
+            resources2.set(resKey, newResValue);
           }
         };
         for (const field of drToFix) {
@@ -97703,7 +97703,7 @@ var init_pdf_worker = __esm({
           xref,
           rotate,
           mediaBox,
-          resources,
+          resources: resources2,
           ref: oldPageRef
         } = page;
         const pageRef = this.newRef;
@@ -97733,7 +97733,7 @@ var init_pdf_worker = __esm({
         if (userUnit !== 1) {
           pageDict.set("UserUnit", userUnit);
         }
-        pageDict.setIfDict("Resources", await this.#collectDependencies(resources, true, xref));
+        pageDict.setIfDict("Resources", await this.#collectDependencies(resources2, true, xref));
         let newAnnots = null;
         if (annotations) {
           const newAnnotations2 = await this.#collectDependencies(annotations, true, xref);
@@ -100809,7 +100809,7 @@ async function parseEpub(bytes) {
   const identifier = cleanTextOf(firstDescendant(metadata, "identifier"));
   const manifestNode = firstDescendant(pkg, "manifest");
   const items = [];
-  const resources = {};
+  const resources2 = {};
   for (const item of childrenNamed(manifestNode, "item")) {
     const id = attr(item, "id") || "";
     const rawHref = attr(item, "href");
@@ -100819,7 +100819,7 @@ async function parseEpub(bytes) {
     const href = resolveFrom2(rootDir, rawHref);
     if (!href) continue;
     items.push({ id, href, mediaType, properties });
-    resources[href] = { mediaType, href };
+    resources2[href] = { mediaType, href };
   }
   const spineNode = firstDescendant(pkg, "spine");
   if (!spineNode) throw new Error("EPUB \u89E3\u6790\u5931\u8D25\uFF1AOPF \u91CC\u627E\u4E0D\u5230 spine");
@@ -100872,7 +100872,7 @@ async function parseEpub(bytes) {
     identifier,
     chapters,
     toc,
-    resources,
+    resources: resources2,
     coverHref,
     rootDir,
     /**
@@ -102073,8 +102073,9 @@ async function loadLocalState(bookId) {
   return localGet(`state:${bookId}`);
 }
 async function saveLocalState(bookId, state) {
-  await withStore(STORE_STATE, "readwrite", (store) => store.put(state, bookId));
-  localSet(`state:${bookId}`, state);
+  const saved = await withStore(STORE_STATE, "readwrite", (store) => store.put(state, bookId));
+  const fallback = localSet(`state:${bookId}`, state);
+  return saved !== void 0 || fallback;
 }
 async function removeLocalState(bookId) {
   await withStore(STORE_STATE, "readwrite", (store) => store.delete(bookId));
@@ -102199,6 +102200,7 @@ function createDataLayer(options = {}) {
   const engines = /* @__PURE__ */ new Map();
   const opening = /* @__PURE__ */ new Map();
   const pendingStateWrites = /* @__PURE__ */ new Map();
+  const stateWriteResults = /* @__PURE__ */ new Map();
   const migratedLocalIds = /* @__PURE__ */ new Set();
   const listeners = /* @__PURE__ */ new Set();
   let status = "idle";
@@ -102245,7 +102247,9 @@ function createDataLayer(options = {}) {
         });
         const nextId = result?.book?.id;
         if (!nextId) continue;
-        const localState = await loadLocalState(book.id).catch(() => null);
+        await pendingStateWrites.get(book.id);
+        await pendingStateWrites.get(nextId);
+        const localState = states.get(book.id) ?? await loadLocalState(book.id).catch(() => null);
         if (localState) {
           const remoteState = await api.loadState(nextId).catch(() => null);
           const merged = mergeStates(normalizeState(remoteState, nextId), normalizeState({ ...localState, bookId: nextId }, nextId));
@@ -102306,6 +102310,7 @@ function createDataLayer(options = {}) {
     return library;
   }
   async function ensureState(bookId) {
+    await pendingStateWrites.get(bookId);
     if (states.has(bookId)) return states.get(bookId);
     let raw = null;
     if (host !== null) {
@@ -102322,21 +102327,38 @@ function createDataLayer(options = {}) {
         raw = null;
       }
     }
+    if (states.has(bookId)) {
+      await pendingStateWrites.get(bookId);
+      return states.get(bookId);
+    }
     const state = normalizeState(raw, bookId);
     states.set(bookId, state);
     return state;
   }
+  async function awaitPendingStateSaves(bookId) {
+    const pending = pendingStateWrites.get(bookId);
+    return pending ? await pending : stateWriteResults.get(bookId) ?? { ok: false, error: "\u9605\u8BFB\u72B6\u6001\u5C1A\u672A\u4FDD\u5B58" };
+  }
   function persistState(bookId, nextState) {
     const state = { ...nextState, bookId };
+    const targetHost = host;
+    const previous = pendingStateWrites.get(bookId) ?? Promise.resolve();
+    const pending = previous.catch(() => void 0).then(async () => {
+      const writes = [Promise.resolve().then(() => saveLocalState(bookId, state))];
+      if (targetHost !== null) writes.push(Promise.resolve().then(() => targetHost.saveState(bookId, state)));
+      const results = await Promise.allSettled(writes);
+      const localSaved = results[0].status === "fulfilled" && results[0].value === true;
+      const hostSaved = results[1]?.status === "fulfilled";
+      const result = localSaved || hostSaved ? { ok: true } : { ok: false, error: "\u9605\u8BFB\u72B6\u6001\u4FDD\u5B58\u5931\u8D25\uFF1A\u6D4F\u89C8\u5668\u7F13\u5B58\u4E0E\u5BBF\u4E3B\u4E66\u5E93\u5747\u4E0D\u53EF\u7528" };
+      if (pendingStateWrites.get(bookId) === pending) {
+        stateWriteResults.set(bookId, result);
+        pendingStateWrites.delete(bookId);
+      }
+      return result;
+    });
+    pendingStateWrites.set(bookId, pending);
     states.set(bookId, state);
     emit();
-    const writes = [saveLocalState(bookId, state).catch(() => void 0)];
-    if (host !== null) writes.push(host.saveState(bookId, state).catch(() => void 0));
-    const pending = Promise.all(writes);
-    pendingStateWrites.set(bookId, pending);
-    void pending.finally(() => {
-      if (pendingStateWrites.get(bookId) === pending) pendingStateWrites.delete(bookId);
-    });
     return state;
   }
   async function loadBookBytes2(bookId) {
@@ -102476,6 +102498,8 @@ function createDataLayer(options = {}) {
     let migrationWarning = "";
     if (storage === "host" && localPrevious && book.id !== fallbackId) {
       try {
+        await pendingStateWrites.get(fallbackId);
+        await pendingStateWrites.get(book.id);
         const localState = states.get(fallbackId) ?? await loadLocalState(fallbackId);
         if (localState) {
           const remoteState = await host.loadState(book.id);
@@ -102600,6 +102624,7 @@ function createDataLayer(options = {}) {
     deleteTag: (request) => serializeLibrary(() => editTags("deleteTag", request)),
     updateBookTags: (request) => serializeLibrary(() => editTags("updateBookTags", request)),
     ensureState,
+    awaitPendingStateSaves,
     openBook,
     importBook: (file) => serializeLibrary(() => importBook(file)),
     removeBook: (id) => serializeLibrary(() => removeBook(id)),
@@ -103638,6 +103663,55 @@ function StyleSheet() {
   return h("style", { "data-qmr-style": "1" }, UI_CSS);
 }
 
+// src/ui/image-resources.js
+var resources = /* @__PURE__ */ new WeakMap();
+function dataUrl(bytes, type) {
+  if (!bytes?.length) return null;
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 32768) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(index, index + 32768));
+  }
+  const encoded = typeof btoa === "function" ? btoa(binary) : Buffer.from(binary, "binary").toString("base64");
+  return `data:${type};base64,${encoded}`;
+}
+function prepareImageResources(engine) {
+  const book = engine?.book;
+  if (!book?.resources || typeof book.resourceBytes !== "function") return Promise.resolve();
+  let record = resources.get(engine);
+  if (!record) {
+    record = { addresses: /* @__PURE__ */ new Map(), pending: null };
+    resources.set(engine, record);
+  }
+  if (record.pending) return record.pending;
+  const entries = Object.entries(book.resources).filter(([path, resource]) => /^image\//i.test(String(resource?.mediaType || "")) && !record.addresses.has(path));
+  const task = Promise.all(entries.map(async ([path, resource]) => {
+    try {
+      const address = dataUrl(await book.resourceBytes(path), resource.mediaType);
+      if (address) record.addresses.set(path, address);
+    } catch (_error) {
+    }
+  })).then(() => void 0);
+  record.pending = task;
+  return task.finally(() => {
+    if (record.pending === task) record.pending = null;
+  });
+}
+function resolveImageResource(engine, zipPath) {
+  const cache = engine && resources.get(engine)?.addresses;
+  if (!cache?.size) return null;
+  const raw = String(zipPath || "");
+  if (cache.has(raw)) return cache.get(raw);
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch (_error) {
+  }
+  if (cache.has(decoded)) return cache.get(decoded);
+  const base = decoded.split("/").pop();
+  for (const [path, address] of cache) if (path.split("/").pop() === base) return address;
+  return null;
+}
+
 // src/ui/controller.js
 var SAVE_DEBOUNCE_MS = 500;
 var NOTICE_MS = 3200;
@@ -103655,21 +103729,6 @@ function clampInt(value, min, max) {
   if (n < min) return min;
   if (n > max) return max;
   return n;
-}
-function bytesToDataUrl(bytes, mediaType) {
-  try {
-    if (!bytes || !bytes.length) return null;
-    const type = String(mediaType || "image/png");
-    let binary = "";
-    const chunk = 32768;
-    for (let i = 0; i < bytes.length; i += chunk) {
-      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-    }
-    const base64 = typeof btoa === "function" ? btoa(binary) : Buffer.from(binary, "binary").toString("base64");
-    return `data:${type};base64,${base64}`;
-  } catch (_error) {
-    return null;
-  }
 }
 function looksLikeStore(value) {
   return !!value && typeof value.get === "function" && typeof value.set === "function" && typeof value.subscribe === "function";
@@ -103699,7 +103758,6 @@ function createController(getProps, store) {
   const uiStore = looksLikeStore(store) ? store : createUiStore();
   const saveTimers = /* @__PURE__ */ new Map();
   const noticeTimer = { id: null };
-  const imageCaches = /* @__PURE__ */ new Map();
   const stateLoads = /* @__PURE__ */ new Map();
   let searchToken = 0;
   let overlayEl = null;
@@ -103838,7 +103896,7 @@ function createController(getProps, store) {
         const fn = actions().saveState;
         if (typeof fn !== "function") return;
         try {
-          const result = fn(id, state);
+          const result = fn(id, stateOr(id));
           if (result && typeof result.then === "function") result.then(() => {
           }, () => {
           });
@@ -103848,6 +103906,14 @@ function createController(getProps, store) {
       saveTimers.set(id, timer);
     } catch (_error) {
     }
+  }
+  async function flushPendingSaves() {
+    const ids = [...saveTimers.keys()];
+    for (const id of ids) {
+      clearTimeout(saveTimers.get(id));
+      saveTimers.delete(id);
+    }
+    return Promise.all(ids.map((id) => callAction("saveState", id, stateOr(id))));
   }
   function settingsOf(id) {
     const state = stateOfBook(id);
@@ -103989,53 +104055,9 @@ function createController(getProps, store) {
     focusHighlightId: null,
     editingHighlightId: null
   });
-  function startImagePrefetch(id, engine) {
-    try {
-      const book = engine && engine.book;
-      if (!book || !book.resources || typeof book.resourceBytes !== "function") return;
-      const cache = imageCaches.get(id) || /* @__PURE__ */ new Map();
-      imageCaches.set(id, cache);
-      const entries = Object.keys(book.resources).map((key) => [key, book.resources[key]]).filter(([, res]) => res && /^image\//i.test(String(res.mediaType || "")));
-      let pending = 0;
-      const done = () => {
-        pending -= 1;
-        if (pending <= 0) uiStore.set({ imagesVersion: (uiStore.get().imagesVersion || 0) + 1 });
-      };
-      for (const [zipPath, res] of entries) {
-        if (cache.has(zipPath)) continue;
-        pending += 1;
-        Promise.resolve().then(() => book.resourceBytes(zipPath)).then((bytes) => {
-          const dataUrl = bytesToDataUrl(bytes, res.mediaType);
-          if (dataUrl) cache.set(zipPath, dataUrl);
-        }).catch(() => {
-        }).then(done, done);
-      }
-    } catch (_error) {
-    }
-  }
   function resourceResolver(id) {
-    return (zipPath) => {
-      try {
-        const cache = imageCaches.get(id);
-        if (!cache || !cache.size) return null;
-        const raw = String(zipPath || "");
-        if (cache.has(raw)) return cache.get(raw);
-        let decoded = raw;
-        try {
-          decoded = decodeURIComponent(raw);
-        } catch (_error) {
-          decoded = raw;
-        }
-        if (cache.has(decoded)) return cache.get(decoded);
-        const base = decoded.split("/").pop();
-        for (const [key, value] of cache) {
-          if (key.split("/").pop() === base) return value;
-        }
-        return null;
-      } catch (_error) {
-        return null;
-      }
-    };
+    const engine = engineOf(id);
+    return (path) => resolveImageResource(engine, path);
   }
   async function openBook(id) {
     if (id == null) return false;
@@ -104070,7 +104092,7 @@ function createController(getProps, store) {
         busyBookId: null,
         lastError: null
       });
-      startImagePrefetch(id, engine);
+      void prepareImageResources(engine);
       return true;
     } catch (error) {
       const text2 = reportError(error, true);
@@ -104360,7 +104382,6 @@ function createController(getProps, store) {
     }
     const states = { ...uiStore.get().states || {} };
     delete states[id];
-    imageCaches.delete(id);
     setStates(states);
     uiStore.set({ lastError: null });
     await refreshLibrary();
@@ -104450,6 +104471,7 @@ function createController(getProps, store) {
     goPercent,
     updateLocator,
     reportPosition,
+    flushPendingSaves,
     setPanel,
     addHighlight: addHighlight2,
     removeHighlight: removeHighlight2,
@@ -106517,6 +106539,13 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const lastFocusRef = React14.useRef("");
   const lastSearchFocusRef = React14.useRef(null);
   const scrollTimerRef = React14.useRef(null);
+  const positionReadyRef = React14.useRef(false);
+  const positionIdentityRef = React14.useRef("");
+  const restoreEpochRef = React14.useRef(0);
+  const restoredBookRef = React14.useRef(null);
+  const restoredIdentityRef = React14.useRef("");
+  const restoreAbortRef = React14.useRef(null);
+  const pendingRestoreRef = React14.useRef(null);
   const pdfAnchorRef = React14.useRef(null);
   const pdfRenderedRef = React14.useRef(null);
   const textAnchorRef = React14.useRef(null);
@@ -106652,6 +106681,9 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     };
   }, [ui, isPdf, captureTextAnchor]);
   React14.useEffect(() => {
+    positionReadyRef.current = false;
+    restoreAbortRef.current?.abort();
+    ++restoreEpochRef.current;
     if (bookId != null) ui.loadState(bookId);
   }, [bookId, ui]);
   React14.useEffect(() => {
@@ -106666,7 +106698,9 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     const delayed = new Promise((resolve) => {
       timer = setTimeout(resolve, isPdf ? 120 : 0);
     });
-    delayed.then(() => {
+    delayed.then(async () => {
+      if (cancelled) return "";
+      if (!isPdf) await prepareImageResources(engine);
       if (cancelled) return "";
       return isPdf ? engine.renderPage(chapterIndex, { width: pdfWidth * settings.pdfZoom, pixelRatio: globalThis.devicePixelRatio || 1, signal: abort.signal }) : engine.render(chapterIndex, ui.resourceResolver(bookId));
     }).then((out) => {
@@ -106742,6 +106776,10 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   }, [settings.flow, settings.spread, settings.pdfZoom, isPdf, setPage]);
   const revealNode = React14.useCallback((node) => {
     if (!node) return;
+    ++restoreEpochRef.current;
+    restoreAbortRef.current?.abort();
+    pendingRestoreRef.current = null;
+    positionReadyRef.current = true;
     if (settings.flow === "scroll") {
       node.scrollIntoView?.({ block: "center", inline: "nearest" });
       return;
@@ -106756,7 +106794,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   }, [settings.flow, setPage]);
   React14.useLayoutEffect(() => {
     const flow = flowRef.current;
-    if (!flow || rendered.key !== `${bookId}:${chapterIndex}`) return;
+    if (!flow || !html || rendered.key !== `${bookId}:${chapterIndex}`) return;
     const isNewHtml = lastHtmlRef.current !== rendered;
     lastHtmlRef.current = rendered;
     const decoration = `${highlightSignature}:${searchQuery}`;
@@ -106794,29 +106832,58 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       viewport.scrollTop = anchor.py * width - anchor.y;
       pdfAnchorRef.current = null;
     }
-    if (isNewHtml && !samePdfPage) {
+    const identityChanged = restoredIdentityRef.current !== `${bookId}:${chapterIndex}`;
+    if (isNewHtml && !samePdfPage && identityChanged || rebuild && !positionReadyRef.current) {
+      positionReadyRef.current = false;
+      positionIdentityRef.current = `${bookId}:${chapterIndex}`;
       pdfAnchorRef.current = null;
       if (viewportRef.current) viewportRef.current.scrollLeft = 0;
-      if (pendingLandLastRef.current) {
-        pendingLandLastRef.current = false;
-        setPage(Math.max(0, (meta.pages || 1) - 1));
-        if (settings.flow === "scroll") {
-          requestAnimationFrame(() => {
+      const previousRestore = !identityChanged && pendingRestoreRef.current;
+      const landLast = previousRestore ? previousRestore.landLast : pendingLandLastRef.current;
+      pendingLandLastRef.current = false;
+      const initial = previousRestore ? previousRestore.initial : restoredBookRef.current !== bookId;
+      restoredBookRef.current = bookId;
+      restoredIdentityRef.current = `${bookId}:${chapterIndex}`;
+      pendingRestoreRef.current = { initial, landLast };
+      restoreAbortRef.current?.abort();
+      const restoreAbort = new AbortController();
+      restoreAbortRef.current = restoreAbort;
+      const epoch = ++restoreEpochRef.current;
+      const identity = positionIdentityRef.current;
+      (async () => {
+        const saved = await ui.loadState(bookId);
+        const locator = saved?.locator || ui.store.get().states?.[bookId]?.locator;
+        const initialFraction = locator?.chapterIndex === chapterIndex ? locator.scroll : restoreScroll;
+        const fraction = Math.min(1, Math.max(0, Number(initial ? initialFraction : restoreScroll) || 0));
+        const images = Array.from(flow.querySelectorAll("img"));
+        await Promise.all(images.map((image) => image.complete ? Promise.resolve() : new Promise((resolve) => {
+          const done = () => {
+            image.removeEventListener("load", done);
+            image.removeEventListener("error", done);
+            restoreAbort.signal.removeEventListener("abort", done);
+            resolve();
+          };
+          image.addEventListener("load", done);
+          image.addEventListener("error", done);
+          restoreAbort.signal.addEventListener("abort", done, { once: true });
+          if (image.complete || restoreAbort.signal.aborted) done();
+        })));
+        if (restoreAbort.signal.aborted) return;
+        if (typeof document !== "undefined" && document.fonts?.ready) await document.fonts.ready;
+        if (restoreEpochRef.current !== epoch || liveRef.current.bookId !== bookId || liveRef.current.chapterIndex !== chapterIndex) return;
+        requestAnimationFrame(() => {
+          if (restoreEpochRef.current !== epoch || positionIdentityRef.current !== identity) return;
+          const measured = measure();
+          if (settings.flow === "scroll") {
             const viewport = viewportRef.current;
-            if (viewport) viewport.scrollTop = viewport.scrollHeight;
-          });
-        }
-      } else {
-        setPage(0);
-        if (settings.flow === "scroll") {
-          const fraction = Math.min(1, Math.max(0, Number(restoreScroll) || 0));
-          requestAnimationFrame(() => {
-            const viewport = viewportRef.current;
-            if (!viewport) return;
-            viewport.scrollTop = fraction * Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-          });
-        }
-      }
+            if (viewport) viewport.scrollTop = (landLast ? 1 : fraction) * Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+          }
+          setPage(landLast ? Math.max(0, measured.pages - 1) : Math.round(fraction * Math.max(0, measured.pages - 1)));
+          positionReadyRef.current = true;
+        });
+      })().catch((error) => {
+        if (restoreEpochRef.current === epoch) ui.reportError(error, true);
+      });
     }
   }, [
     html,
@@ -106974,7 +107041,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   }, [isPdf, page, captureTextAnchor]);
   const reportPosition = React14.useCallback(() => {
     const live = liveRef.current;
-    if (live.bookId == null) return;
+    if (live.bookId == null || !positionReadyRef.current || positionIdentityRef.current !== `${live.bookId}:${live.chapterIndex}`) return;
     let scroll = 0;
     if (live.settings && live.settings.flow === "scroll") {
       const viewport = viewportRef.current;
@@ -107010,6 +107077,46 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
     };
   }, [page, pageCount, chapterIndex, ui, reportPosition]);
+  React14.useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    let frame;
+    const capture = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(reportPosition);
+    };
+    const interrupt = (event) => {
+      if (event.type === "wheel" && event.ctrlKey) return;
+      if (!positionReadyRef.current && positionIdentityRef.current === `${liveRef.current.bookId}:${liveRef.current.chapterIndex}`) {
+        ++restoreEpochRef.current;
+        restoreAbortRef.current?.abort();
+        positionReadyRef.current = true;
+      }
+    };
+    const hide = () => {
+      if (document.visibilityState === "hidden") {
+        reportPosition();
+        void ui.flushPendingSaves?.();
+      }
+    };
+    viewport?.addEventListener("scroll", capture);
+    viewport?.addEventListener("wheel", interrupt, { passive: true });
+    viewport?.addEventListener("pointerdown", interrupt);
+    viewport?.addEventListener("keydown", interrupt);
+    document.addEventListener?.("visibilitychange", hide);
+    return () => {
+      cancelAnimationFrame(frame);
+      reportPosition();
+      void ui.flushPendingSaves?.();
+      positionReadyRef.current = false;
+      ++restoreEpochRef.current;
+      restoreAbortRef.current?.abort();
+      viewport?.removeEventListener("scroll", capture);
+      viewport?.removeEventListener("wheel", interrupt);
+      viewport?.removeEventListener("pointerdown", interrupt);
+      viewport?.removeEventListener("keydown", interrupt);
+      document.removeEventListener?.("visibilitychange", hide);
+    };
+  }, [ui, reportPosition]);
   React14.useEffect(() => {
     const isScroll = () => {
       const live = liveRef.current;
@@ -108041,7 +108148,7 @@ function apply(ctx) {
       async saveState(bookId, nextState) {
         try {
           data.persistState(bookId, nextState);
-          return { ok: true };
+          return await data.awaitPendingStateSaves(bookId);
         } catch (error) {
           return { ok: false, error: error instanceof Error ? error.message : String(error) };
         }

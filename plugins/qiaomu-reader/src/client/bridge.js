@@ -114,6 +114,7 @@ export function createDataLayer(options = {}) {
   /** 打开中的书，避免重复解析。 */
   const opening = new Map();
   const pendingStateWrites = new Map();
+  const stateWriteResults = new Map();
   const migratedLocalIds = new Set();
   const listeners = new Set();
   let status = 'idle';
@@ -161,7 +162,9 @@ export function createDataLayer(options = {}) {
         });
         const nextId = result?.book?.id;
         if (!nextId) continue;
-        const localState = await loadLocalState(book.id).catch(() => null);
+        await pendingStateWrites.get(book.id);
+        await pendingStateWrites.get(nextId);
+        const localState = states.get(book.id) ?? await loadLocalState(book.id).catch(() => null);
         if (localState) {
           const remoteState = await api.loadState(nextId).catch(() => null);
           const merged = mergeStates(normalizeState(remoteState, nextId), normalizeState({ ...localState, bookId: nextId }, nextId));
@@ -236,6 +239,7 @@ export function createDataLayer(options = {}) {
 
   /** 读取某本书的状态：内存 → 宿主 → 本地缓存 → 空壳。 */
   async function ensureState(bookId) {
+    await pendingStateWrites.get(bookId);
     if (states.has(bookId)) return states.get(bookId);
     let raw = null;
     if (host !== null) {
@@ -252,21 +256,44 @@ export function createDataLayer(options = {}) {
         raw = null;
       }
     }
+    if (states.has(bookId)) {
+      await pendingStateWrites.get(bookId);
+      return states.get(bookId);
+    }
     const state = normalizeState(raw, bookId);
     states.set(bookId, state);
     return state;
   }
 
-  /** 写入状态：先更新内存并通知 UI，再异步落两处。 */
+  /** 等待调用时已排队的状态写入；至少一处成功才返回 ok。 */
+  async function awaitPendingStateSaves(bookId) {
+    const pending = pendingStateWrites.get(bookId);
+    return pending ? await pending : stateWriteResults.get(bookId) ?? { ok: false, error: '阅读状态尚未保存' };
+  }
+
+  /** 同步更新内存并返回状态；同一本书的两处持久化按调用顺序完成。 */
   function persistState(bookId, nextState) {
     const state = { ...nextState, bookId };
+    const targetHost = host;
+    const previous = pendingStateWrites.get(bookId) ?? Promise.resolve();
+    const pending = previous.catch(() => undefined).then(async () => {
+      const writes = [Promise.resolve().then(() => saveLocalState(bookId, state))];
+      if (targetHost !== null) writes.push(Promise.resolve().then(() => targetHost.saveState(bookId, state)));
+      const results = await Promise.allSettled(writes);
+      const localSaved = results[0].status === 'fulfilled' && results[0].value === true;
+      const hostSaved = results[1]?.status === 'fulfilled';
+      const result = localSaved || hostSaved
+        ? { ok: true }
+        : { ok: false, error: '阅读状态保存失败：浏览器缓存与宿主书库均不可用' };
+      if (pendingStateWrites.get(bookId) === pending) {
+        stateWriteResults.set(bookId, result);
+        pendingStateWrites.delete(bookId);
+      }
+      return result;
+    });
+    pendingStateWrites.set(bookId, pending);
     states.set(bookId, state);
     emit();
-    const writes = [saveLocalState(bookId, state).catch(() => undefined)];
-    if (host !== null) writes.push(host.saveState(bookId, state).catch(() => undefined));
-    const pending = Promise.all(writes);
-    pendingStateWrites.set(bookId, pending);
-    void pending.finally(() => { if (pendingStateWrites.get(bookId) === pending) pendingStateWrites.delete(bookId); });
     return state;
   }
 
@@ -421,6 +448,8 @@ export function createDataLayer(options = {}) {
     let migrationWarning = '';
     if (storage === 'host' && localPrevious && book.id !== fallbackId) {
       try {
+        await pendingStateWrites.get(fallbackId);
+        await pendingStateWrites.get(book.id);
         const localState = states.get(fallbackId) ?? await loadLocalState(fallbackId);
         if (localState) {
           const remoteState = await host.loadState(book.id);
@@ -551,6 +580,7 @@ export function createDataLayer(options = {}) {
     deleteTag: (request) => serializeLibrary(() => editTags('deleteTag', request)),
     updateBookTags: (request) => serializeLibrary(() => editTags('updateBookTags', request)),
     ensureState,
+    awaitPendingStateSaves,
     openBook,
     importBook: (file) => serializeLibrary(() => importBook(file)),
     removeBook: (id) => serializeLibrary(() => removeBook(id)),
