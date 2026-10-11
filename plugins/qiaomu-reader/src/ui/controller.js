@@ -564,21 +564,18 @@ export function createController(getProps, store) {
   }
 
   /** 跳到指定章 */
-  function goChapter(index) {
+  function goChapter(index, options = {}) {
     const state = uiStore.get();
     const count = Number(state.chapterCount) || chapterCountOf(state.bookId) || 1;
     const target = clampInt(index, 0, Math.max(0, count - 1));
-    if (target === state.chapterIndex && !state.restoreScroll) {
-      uiStore.set({ page: 0 });
-      return;
-    }
+    const scroll = options.landLast ? 1 : 0;
     try {
-      pager.goChapter(target);
+      pager.goChapter(target, options);
     } catch (_error) {
       /* 忽略 */
     }
-    uiStore.set({ chapterIndex: target, page: 0, restoreScroll: null });
-    updateLocator(state.bookId, { chapterIndex: target, scroll: 0 });
+    uiStore.set({ chapterIndex: target, page: 0, restoreScroll: scroll });
+    updateLocator(state.bookId, { chapterIndex: target, scroll });
   }
 
   /** 跳到全书百分比位置 */

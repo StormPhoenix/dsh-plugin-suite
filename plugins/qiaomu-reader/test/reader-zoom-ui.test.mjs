@@ -53,6 +53,11 @@ class Element extends Target {
     this._html = value;
     this.htmlWrites.push(value);
     this.children = [];
+    if (value.includes('<img')) {
+      const image = new Element('image');
+      image.tagName = 'IMG'; image.complete = false; image.parentElement = this;
+      this.children.push(image);
+    }
     if (value.includes('qmr-pdf-sheet')) {
       const sheet = new Element('qmr-pdf-sheet');
       sheet.parentElement = this;
@@ -62,7 +67,7 @@ class Element extends Target {
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   querySelectorAll(selector) {
     return this.children.flatMap((child) => [child, ...child.querySelectorAll(selector)])
-      .filter((child) => selector.startsWith('.') && child.className.split(' ').includes(selector.slice(1)));
+      .filter((child) => selector === 'img' ? child.tagName === 'IMG' : selector.startsWith('.') && child.className.split(' ').includes(selector.slice(1)));
   }
   contains(node) { return node === this || this.children.some((child) => child.contains(node)); }
   getBoundingClientRect() {
@@ -75,14 +80,14 @@ class Element extends Target {
   get textContent() { return this._html; }
 }
 
-function harness({ format = 'epub', fontSize = 18, pdfZoom = 1, flow = 'scroll', panel = null, render, sharedState, initialScroll = 0, contentWidth = 800 } = {}) {
+function harness({ format = 'epub', fontSize = 18, pdfZoom = 1, flow = 'scroll', panel = null, render, sharedState, initialScroll = 0, contentWidth = 800, fontsReady } = {}) {
   let cursor = 0, dirty = true, tree, now = 0, nextTimer = 1;
   const slots = [], timers = new Map(), frames = new Map(), elements = new Map();
   const window = new Target();
   window.matchMedia = () => Object.assign(new Target(), { matches: false });
   const computed = (node) => ({ paddingLeft: '0', paddingRight: '0', overflowY: node.style.overflowY || 'visible' });
   window.getComputedStyle = computed;
-  const document = { createTreeWalker: () => ({ nextNode: () => null }) };
+  const document = { fonts: fontsReady ? { ready: fontsReady } : undefined, createTreeWalker: () => ({ nextNode: () => null }) };
   const state = sharedState || { bookId: 'book', chapterIndex: 0, chapterCount: 3, panel, states: {}, visible: true, view: 'reader', searchResults: [], chapterBusy: false };
   let settings = { fontSize, pdfZoom, flow, margin: 48, lineHeight: 1.6, theme: 'paper', fontFamily: 'serif', spread: false };
   const requests = [], updates = [], turns = [], errors = [], storeWrites = [], positions = [];
@@ -100,8 +105,8 @@ function harness({ format = 'epub', fontSize = 18, pdfZoom = 1, flow = 'scroll',
     store: { get: () => state, set: (patch) => { storeWrites.push(patch); Object.assign(state, patch); dirty = true; } },
     updateSettings: (id, patch) => { updates.push([id, { ...patch }]); settings = { ...settings, ...patch }; dirty = true; },
     loadState: () => state.states.book, resourceResolver: () => undefined, reportError: (error) => { errors.push(error); return error.message; }, reportPosition(id, position) { positions.push(position); state.states[id] = { ...state.states[id], locator: position }; }, flushPendingSaves() { flushes++; },
-    registerPager(pager) { ui.pager = pager; }, turnPage: (direction) => turns.push(direction),
-    goChapter: (index) => { state.chapterIndex = index; dirty = true; }, goPercent() {}, toast() {},
+    registerPager(pager) { ui.pager = pager; }, turnPage: (direction) => { turns.push(direction); if (direction < 0) ui.pager.prev(); else ui.pager.next(); },
+    goChapter: (index, options = {}) => { ui.pager?.goChapter?.(index, options); Object.assign(state, { chapterIndex: index, page: 0, restoreScroll: options.landLast ? 1 : 0 }); dirty = true; }, goPercent() {}, toast() {},
   };
   const sameDeps = (a, b) => a && b && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
   const memo = (fn, deps) => {
@@ -183,6 +188,99 @@ function harness({ format = 'epub', fontSize = 18, pdfZoom = 1, flow = 'scroll',
     setSettings: (patch) => { settings = { ...settings, ...patch }; dirty = true; commit(); },
   };
 }
+
+for (const width of [800, 1600, 3200, 4800]) {
+  test(`forward chapter entry clears old page and backward entry lands last at width ${width}`, async () => {
+    const next = deferred();
+    const app = harness({ flow: 'paginated', initialScroll: 1, contentWidth: 3200, render: (index) => index === 0 ? Promise.resolve('<p>first</p>') : next.promise });
+    try {
+      await app.advance(0); app.frame();
+      assert.equal(app.state.page, 3);
+      app.ui.pager.next(); app.commit();
+      const viewport = app.element('qmr-page-viewport'), content = app.element('qmr-page-flow qmr-paper-body');
+      assert.equal(app.state.page, 0);
+      assert.equal(content.innerHTML, '');
+      for (let i = 0; i < 3; i++) app.ui.turnPage(1);
+      assert.equal(app.state.chapterIndex, 1, 'requests during loading do not accumulate');
+      content.scrollWidth = width;
+      await app.advance(0);
+      next.resolve('<p>next</p>'); await app.advance(0);
+      viewport.dispatch('keydown', { type: 'keydown', key: 'Shift', preventDefault() {} });
+      app.frame();
+      assert.equal(app.state.page, 0, 'a key during layout does not cancel the first-page landing');
+      app.ui.pager.prev(); app.commit(); await app.advance(0); app.frame();
+      assert.equal(app.state.chapterIndex, 0);
+      assert.equal(app.state.page, app.state.pageCount - 1);
+    } finally { app.dispose(); }
+  });
+}
+
+test('held key repeats resume immediately after new chapter layout without key release', async () => {
+  const next = deferred();
+  const app = harness({ flow: 'paginated', initialScroll: 1, contentWidth: 3200, render: (index) => index === 0 ? Promise.resolve('<p>first</p>') : next.promise });
+  try {
+    await app.advance(0); app.frame();
+    const viewport = app.element('qmr-page-viewport');
+    const key = () => viewport.dispatch('keydown', { type: 'keydown', key: 'ArrowRight', repeat: true, preventDefault() {} });
+    key(); app.commit(); await app.advance(0);
+    key(); key(); app.commit();
+    assert.equal(app.state.chapterIndex, 1);
+    next.resolve('<p>next</p>'); await app.advance(0);
+    key(); app.frame();
+    assert.equal(app.state.page, 0);
+    key(); app.commit();
+    assert.equal(app.state.page, 1, 'no keyup or boundary lock is required');
+    await app.advance(350);
+    assert.equal(app.positions.at(-1).chapterIndex, 1);
+    assert.equal(app.positions.at(-1).scroll, 1 / 3);
+  } finally { app.dispose(); }
+});
+
+test('font layout waiting ignores repeated page requests and resumes when ready', async () => {
+  const fonts = deferred();
+  const app = harness({ flow: 'paginated', initialScroll: 1, contentWidth: 3200, fontsReady: fonts.promise });
+  try {
+    await app.advance(0);
+    app.ui.turnPage(1); app.commit(); app.frame();
+    assert.equal(app.state.chapterIndex, 0);
+    assert.equal(app.positions.length, 0);
+    fonts.resolve(); await app.advance(0); app.frame();
+    assert.equal(app.state.page, 3);
+    app.ui.turnPage(1); app.commit(); await app.advance(0); app.frame();
+    assert.equal(app.state.chapterIndex, 1);
+    assert.equal(app.state.page, 0);
+  } finally { app.dispose(); }
+});
+
+test('directory navigation within the current chapter returns to its first page', async () => {
+  const app = harness({ flow: 'paginated', initialScroll: 1, contentWidth: 3200 });
+  try {
+    await app.advance(0); app.frame();
+    assert.equal(app.state.page, 3);
+    app.ui.goChapter(0); app.commit(); await app.advance(0); app.frame();
+    assert.equal(app.state.page, 0);
+  } finally { app.dispose(); }
+});
+
+test('image loading preserves chapter landing despite wheel and key repeats', async () => {
+  const app = harness({ flow: 'paginated', initialScroll: 1, contentWidth: 3200, render: (index) => Promise.resolve(index ? '<p>next</p><img src="picture">' : '<p>first</p>') });
+  try {
+    await app.advance(0); app.frame();
+    app.ui.pager.next(); app.commit(); await app.advance(0);
+    const viewport = app.element('qmr-page-viewport'), content = app.element('qmr-page-flow qmr-paper-body');
+    const image = content.querySelector('img');
+    assert.ok(image);
+    wheel(viewport, { type: 'wheel' });
+    app.ui.turnPage(1); app.commit(); app.frame();
+    assert.equal(app.state.chapterIndex, 1);
+    assert.equal(app.state.page, 0);
+    image.complete = true; image.dispatch('load', { type: 'load' });
+    await app.advance(0); app.frame();
+    assert.equal(app.state.page, 0);
+    app.ui.turnPage(1); app.commit();
+    assert.equal(app.state.page, 1);
+  } finally { app.dispose(); }
+});
 
 const zoomButtons = (app) => app.nodes().filter((node) => node.type === 'button' && hasClass(node, 'qmr-zoom-btn'));
 function wheel(target, patch = {}) {
@@ -275,9 +373,10 @@ test('identical text in a new chapter is a new committed generation and resets s
   viewport.scrollTop = 700;
   const writes = flow.htmlWrites.length;
   app.ui.goChapter(1); app.commit();
-  assert.equal(flow.htmlWrites.length, writes);
+  assert.equal(flow.innerHTML, '', 'previous chapter is removed during navigation');
+  assert.equal(flow.htmlWrites.length, writes + 1);
   await app.advance(0); app.frame();
-  assert.equal(flow.htmlWrites.length, writes + 1); assert.equal(viewport.scrollTop, 0);
+  assert.equal(flow.htmlWrites.length, writes + 2); assert.equal(viewport.scrollTop, 0);
 });
 
 test('zooming an already committed PDF page preserves its center anchor instead of resetting', async (t) => {
@@ -300,7 +399,8 @@ test('pending PDF chapter does not mark old HTML as the new page before zoomed r
   viewport.scrollTop = 400;
   const writes = flow.htmlWrites.length;
   app.ui.goChapter(1); app.commit(); await app.advance(120);
-  assert.equal(flow.htmlWrites.length, writes, 'pending chapter must not recommit the previous page');
+  assert.equal(flow.htmlWrites.length, writes + 1, 'pending chapter clears the previous page without recommitting it');
+  assert.equal(flow.innerHTML, '');
   assert.equal(app.requests[0].options.signal.aborted, true);
   zoomButtons(app)[1].props.onClick(); app.commit(); await app.advance(120);
   assert.equal(app.requests.at(-1).options.width, viewport.clientWidth * 1.1);

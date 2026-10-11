@@ -23,4 +23,16 @@ test('throttled saves read latest position and departure cancels stale timers', 
   assert.equal(timers.size, 0);
   await ui.flushPendingSaves();
   assert.equal(saved.length, 2);
+  store.set({ bookId: 'book', chapterIndex: 0, chapterCount: 3 });
+  const entries = [];
+  ui.registerPager({ goChapter: (index, options) => entries.push([index, options.landLast]) });
+  ui.goChapter(1);
+  assert.equal(state.restoreScroll, 0);
+  assert.equal(state.states.book.locator.chapterIndex, 1);
+  assert.equal(state.states.book.locator.scroll, 0);
+  ui.goChapter(0, { landLast: true });
+  assert.equal(state.restoreScroll, 1);
+  assert.equal(state.states.book.locator.scroll, 1);
+  assert.deepEqual(entries, [[1, undefined], [0, true]]);
+  await ui.flushPendingSaves();
 });

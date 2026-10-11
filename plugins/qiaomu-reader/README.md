@@ -67,7 +67,7 @@ dsh plugin --profile desktop add "$PWD/qiaomu-reader-dsh-1.0.2.tgz"
 
 放大 PDF 后可横向和纵向滚动，文字选择层与页面同步缩放。PDF 清晰渲染受设备像素比例和画布像素预算限制；扫描件不新增 OCR。EPUB/TXT 改字号会重新排版，不是整体拉伸图片。
 
-普通滚轮在分页文本中翻屏；在 PDF 或连续滚动文本中先滚动当前页/章，到边界后新的滚轮手势进入前后页/章。横向滚动不翻页，Ctrl＋滚轮只缩放正文，不缩放 Harness。目录、设置、AI 会话中的滚轮不触发正文翻页，方向键和原有翻页操作保持可用。
+普通滚轮在分页文本中翻屏；在 PDF 或连续滚动文本中先滚动当前页/章，到边界后新的滚轮手势进入前后页/章。横向滚动不翻页，Ctrl＋滚轮只缩放正文，不缩放 Harness。目录、设置、AI 会话中的滚轮不触发正文翻页，方向键和原有翻页操作保持可用。章末向前翻页进入下一章首页，章首向后翻页进入上一章末页；章节加载和布局期间忽略额外翻页请求，就绪后继续响应长按，无需松开按键，不积压或补发请求。
 
 macOS 收起 Harness 左侧边栏时，阅读标题栏会避开系统窗口按钮和宿主控件；系统全屏仍为打开侧栏及新建会话按钮保留空间。阅读器自身的元素全屏只显示阅读器，标题栏恢复普通间距，退出后恢复宿主避让。正文宽度不受该避让影响。
 
@@ -125,6 +125,8 @@ The library screenshot shows the actual component using starter books and test f
 **Batch imports:** select multiple EPUB/PDF/TXT files and process them sequentially. Append files while importing, stop after the current file, continue manually, cancel waiting items, or retry individual/all failures at the tail. Stopped queues remain stopped when files are added or retried. Identical content updates one book; identical names with different content create separate books. Outcomes distinguish host library saves, browser-only saves and failures. Browser-only saves require both bytes and a recoverable index; retry them to save to the host. A host save remains successful if its auxiliary browser cache fails. Page switches keep the queue running, but reloads, restarts and plugin unloads do not restore it. Clearing processed records keeps books but releases files needed for retries. Host index mutations are serialized per plugin instance, not across independent host processes.
 
 **Tags:** use the top tag filter to search existing tags and match any or all selected tags across the library, combined with title/author, reading status and format filters. Tags appear below each author. Edit one book or select filtered books to add/remove specific tags without replacing their other tags. Pending edits and new names are committed on Save; cancelling does not write. A single input searches existing tags or stages a new tag on Enter, with no writes until confirmation. Removal offers only tags assigned to selected books. Stable automatic colours identify tag chips throughout the UI. There is no standalone tag manager, rename or delete entry; unused tags remain available. Tags do not move or duplicate files, and imports are unchanged. Host-confirmed tags are cached for offline viewing/filtering; editing requires a host connection and a refreshed library.
+
+**Chapter navigation:** forward entry starts at the next chapter’s first page; backward entry lands on the previous chapter’s last page. Page requests during chapter loading and layout are ignored, not queued. Held keys continue after layout completes without requiring release at chapter boundaries.
 
 **Reading restoration:** returning from another session or app reuses EPUB image resources and restores the latest chapter-relative scroll position or paginated page. Restoration waits for image and font layout and does not overwrite progress with initial zero values. Layout changes restore a proportion, not an exact character. Normal departure submits a final position; per-book writes are ordered and acknowledged when at least one of browser or host storage succeeds. Failed saves retain memory state for a later submission. Forced termination can interrupt unfinished asynchronous writes.
 

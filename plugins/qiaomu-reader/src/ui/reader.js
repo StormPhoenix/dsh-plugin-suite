@@ -256,6 +256,8 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const lastHtmlRef = React.useRef(null);
   const decoratedRef = React.useRef(null);
   const pendingLandLastRef = React.useRef(false);
+  const [navigationVersion, setNavigationVersion] = React.useState(0);
+  const chapterIntentRef = React.useRef(null);
   const lastFocusRef = React.useRef('');
   const lastSearchFocusRef = React.useRef(null);
   const scrollTimerRef = React.useRef(null);
@@ -516,6 +518,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     ++restoreEpochRef.current;
     restoreAbortRef.current?.abort();
     pendingRestoreRef.current = null;
+    chapterIntentRef.current = null;
     positionReadyRef.current = true;
     if (settings.flow === 'scroll') {
       node.scrollIntoView?.({ block: 'center', inline: 'nearest' });
@@ -529,6 +532,34 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     const column = Math.floor((x + 1) / (meta.columnWidth + meta.gap));
     setPage(Math.floor(column / meta.perPage));
   }, [settings.flow, setPage]);
+
+  const resetChapterPosition = React.useCallback((index, options = {}) => {
+    chapterIntentRef.current = { key: `${liveRef.current.bookId}:${index}`, landLast: !!options.landLast };
+    positionReadyRef.current = false;
+    restoreAbortRef.current?.abort();
+    ++restoreEpochRef.current;
+    pendingRestoreRef.current = null;
+    setPageState(0);
+    liveRef.current.page = 0;
+    setNavigationVersion((value) => value + 1);
+  }, []);
+
+  React.useLayoutEffect(() => {
+    const identity = `${bookId}:${chapterIndex}`;
+    if (positionIdentityRef.current === identity) return;
+    positionReadyRef.current = false;
+    restoreAbortRef.current?.abort();
+    ++restoreEpochRef.current;
+    pendingRestoreRef.current = null;
+    positionIdentityRef.current = identity;
+    setPageState(0);
+    liveRef.current.page = 0;
+    pdfAnchorRef.current = null;
+    textAnchorRef.current = null;
+    const viewport = viewportRef.current;
+    if (viewport) { viewport.scrollTop = 0; viewport.scrollLeft = 0; }
+    if (flowRef.current) { flowRef.current.style.transform = 'none'; flowRef.current.innerHTML = ''; }
+  }, [bookId, chapterIndex]);
 
   // ------------------------------------------------------------- 应用 DOM（划线/搜索）
 
@@ -578,18 +609,21 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       pdfAnchorRef.current = null;
     }
     const identityChanged = restoredIdentityRef.current !== `${bookId}:${chapterIndex}`;
-    if ((isNewHtml && !samePdfPage && identityChanged) || (rebuild && !positionReadyRef.current)) {
+    const chapterIntent = chapterIntentRef.current?.key === `${bookId}:${chapterIndex}` ? chapterIntentRef.current : null;
+    if ((isNewHtml && !samePdfPage && identityChanged) || (rebuild && !positionReadyRef.current) || chapterIntent) {
       positionReadyRef.current = false;
       positionIdentityRef.current = `${bookId}:${chapterIndex}`;
       pdfAnchorRef.current = null;
       if (viewportRef.current) viewportRef.current.scrollLeft = 0;
-      const previousRestore = !identityChanged && pendingRestoreRef.current;
-      const landLast = previousRestore ? previousRestore.landLast : pendingLandLastRef.current;
+      const previousRestore = !chapterIntent && !identityChanged && pendingRestoreRef.current;
+      const landLast = chapterIntent ? chapterIntent.landLast : previousRestore ? previousRestore.landLast : pendingLandLastRef.current;
       pendingLandLastRef.current = false;
-      const initial = previousRestore ? previousRestore.initial : restoredBookRef.current !== bookId;
+      chapterIntentRef.current = null;
+      const initial = chapterIntent ? false : previousRestore ? previousRestore.initial : restoredBookRef.current !== bookId;
+      const navigationFraction = chapterIntent ? (landLast ? 1 : 0) : previousRestore?.navigationFraction;
       restoredBookRef.current = bookId;
       restoredIdentityRef.current = `${bookId}:${chapterIndex}`;
-      pendingRestoreRef.current = { initial, landLast };
+      pendingRestoreRef.current = { initial, landLast, navigationFraction };
       restoreAbortRef.current?.abort();
       const restoreAbort = new AbortController();
       restoreAbortRef.current = restoreAbort;
@@ -599,7 +633,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
         const saved = await ui.loadState(bookId);
         const locator = saved?.locator || ui.store.get().states?.[bookId]?.locator;
         const initialFraction = locator?.chapterIndex === chapterIndex ? locator.scroll : restoreScroll;
-        const fraction = Math.min(1, Math.max(0, Number(initial ? initialFraction : restoreScroll) || 0));
+        const fraction = Math.min(1, Math.max(0, Number(navigationFraction ?? (initial ? initialFraction : restoreScroll)) || 0));
         const images = Array.from(flow.querySelectorAll('img'));
         await Promise.all(images.map((image) => image.complete ? Promise.resolve() : new Promise((resolve) => {
           const done = () => { image.removeEventListener('load', done); image.removeEventListener('error', done); restoreAbort.signal.removeEventListener('abort', done); resolve(); };
@@ -618,6 +652,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
             if (viewport) viewport.scrollTop = (landLast ? 1 : fraction) * Math.max(0, viewport.scrollHeight - viewport.clientHeight);
           }
           setPage(landLast ? Math.max(0, measured.pages - 1) : Math.round(fraction * Math.max(0, measured.pages - 1)));
+          pendingRestoreRef.current = null;
           positionReadyRef.current = true;
         });
       })().catch((error) => { if (restoreEpochRef.current === epoch) ui.reportError(error, true); });
@@ -626,6 +661,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   }, [
     html,
     rendered,
+    navigationVersion,
     highlightSignature,
     searchQuery,
     chapterIndex,
@@ -845,7 +881,9 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       frame = requestAnimationFrame(reportPosition);
     };
     const interrupt = (event) => {
+      if (event.type === 'keydown') return;
       if (event.type === 'wheel' && event.ctrlKey) return;
+      if (chapterIntentRef.current || (pendingRestoreRef.current && !pendingRestoreRef.current.initial)) return;
       if (!positionReadyRef.current && positionIdentityRef.current === `${liveRef.current.bookId}:${liveRef.current.chapterIndex}`) {
         ++restoreEpochRef.current;
         restoreAbortRef.current?.abort();
@@ -882,7 +920,9 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       const live = liveRef.current;
       return !!(live.settings && live.settings.flow === 'scroll');
     };
+    const ready = () => positionReadyRef.current && positionIdentityRef.current === `${liveRef.current.bookId}:${liveRef.current.chapterIndex}`;
     const next = () => {
+      if (!ready()) return;
       const live = liveRef.current;
       if (isScroll()) {
         const viewport = viewportRef.current;
@@ -903,6 +943,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       else ui.toast('已经是最后一页');
     };
     const prev = () => {
+      if (!ready()) return;
       const live = liveRef.current;
       if (isScroll()) {
         const viewport = viewportRef.current;
@@ -912,7 +953,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
         }
         if (live.chapterIndex > 0) {
           pendingLandLastRef.current = true;
-          ui.goChapter(live.chapterIndex - 1);
+          ui.goChapter(live.chapterIndex - 1, { landLast: true });
         } else {
           ui.toast('已经是第一页');
         }
@@ -921,14 +962,14 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       if (live.page > 0) setPage(live.page - 1);
       else if (live.chapterIndex > 0) {
         pendingLandLastRef.current = true;
-        ui.goChapter(live.chapterIndex - 1);
+        ui.goChapter(live.chapterIndex - 1, { landLast: true });
       } else {
         ui.toast('已经是第一页');
       }
     };
-    ui.registerPager({ next, prev, jump: (fraction) => ui.goPercent(fraction) });
+    ui.registerPager({ next, prev, goChapter: resetChapterPosition, jump: (fraction) => ui.goPercent(fraction) });
     return () => {
-      ui.registerPager({ next: () => ui.goChapter((ui.store.get().chapterIndex || 0) + 1), prev: () => ui.goChapter((ui.store.get().chapterIndex || 0) - 1) });
+      ui.registerPager({ next: () => ui.goChapter((ui.store.get().chapterIndex || 0) + 1), prev: () => ui.goChapter((ui.store.get().chapterIndex || 0) - 1), goChapter: () => {} });
     };
   }, [ui, setPage]);
 

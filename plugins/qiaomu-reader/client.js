@@ -104130,20 +104130,17 @@ function createController(getProps, store) {
       reportError(error, true);
     }
   }
-  function goChapter(index) {
+  function goChapter(index, options = {}) {
     const state = uiStore.get();
     const count = Number(state.chapterCount) || chapterCountOf(state.bookId) || 1;
     const target = clampInt(index, 0, Math.max(0, count - 1));
-    if (target === state.chapterIndex && !state.restoreScroll) {
-      uiStore.set({ page: 0 });
-      return;
-    }
+    const scroll = options.landLast ? 1 : 0;
     try {
-      pager.goChapter(target);
+      pager.goChapter(target, options);
     } catch (_error) {
     }
-    uiStore.set({ chapterIndex: target, page: 0, restoreScroll: null });
-    updateLocator(state.bookId, { chapterIndex: target, scroll: 0 });
+    uiStore.set({ chapterIndex: target, page: 0, restoreScroll: scroll });
+    updateLocator(state.bookId, { chapterIndex: target, scroll });
   }
   function goPercent(fraction) {
     const state = uiStore.get();
@@ -106536,6 +106533,8 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const lastHtmlRef = React14.useRef(null);
   const decoratedRef = React14.useRef(null);
   const pendingLandLastRef = React14.useRef(false);
+  const [navigationVersion, setNavigationVersion] = React14.useState(0);
+  const chapterIntentRef = React14.useRef(null);
   const lastFocusRef = React14.useRef("");
   const lastSearchFocusRef = React14.useRef(null);
   const scrollTimerRef = React14.useRef(null);
@@ -106779,6 +106778,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     ++restoreEpochRef.current;
     restoreAbortRef.current?.abort();
     pendingRestoreRef.current = null;
+    chapterIntentRef.current = null;
     positionReadyRef.current = true;
     if (settings.flow === "scroll") {
       node.scrollIntoView?.({ block: "center", inline: "nearest" });
@@ -106792,6 +106792,38 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     const column = Math.floor((x + 1) / (meta.columnWidth + meta.gap));
     setPage(Math.floor(column / meta.perPage));
   }, [settings.flow, setPage]);
+  const resetChapterPosition = React14.useCallback((index, options = {}) => {
+    chapterIntentRef.current = { key: `${liveRef.current.bookId}:${index}`, landLast: !!options.landLast };
+    positionReadyRef.current = false;
+    restoreAbortRef.current?.abort();
+    ++restoreEpochRef.current;
+    pendingRestoreRef.current = null;
+    setPageState(0);
+    liveRef.current.page = 0;
+    setNavigationVersion((value) => value + 1);
+  }, []);
+  React14.useLayoutEffect(() => {
+    const identity = `${bookId}:${chapterIndex}`;
+    if (positionIdentityRef.current === identity) return;
+    positionReadyRef.current = false;
+    restoreAbortRef.current?.abort();
+    ++restoreEpochRef.current;
+    pendingRestoreRef.current = null;
+    positionIdentityRef.current = identity;
+    setPageState(0);
+    liveRef.current.page = 0;
+    pdfAnchorRef.current = null;
+    textAnchorRef.current = null;
+    const viewport = viewportRef.current;
+    if (viewport) {
+      viewport.scrollTop = 0;
+      viewport.scrollLeft = 0;
+    }
+    if (flowRef.current) {
+      flowRef.current.style.transform = "none";
+      flowRef.current.innerHTML = "";
+    }
+  }, [bookId, chapterIndex]);
   React14.useLayoutEffect(() => {
     const flow = flowRef.current;
     if (!flow || !html || rendered.key !== `${bookId}:${chapterIndex}`) return;
@@ -106833,18 +106865,21 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       pdfAnchorRef.current = null;
     }
     const identityChanged = restoredIdentityRef.current !== `${bookId}:${chapterIndex}`;
-    if (isNewHtml && !samePdfPage && identityChanged || rebuild && !positionReadyRef.current) {
+    const chapterIntent = chapterIntentRef.current?.key === `${bookId}:${chapterIndex}` ? chapterIntentRef.current : null;
+    if (isNewHtml && !samePdfPage && identityChanged || rebuild && !positionReadyRef.current || chapterIntent) {
       positionReadyRef.current = false;
       positionIdentityRef.current = `${bookId}:${chapterIndex}`;
       pdfAnchorRef.current = null;
       if (viewportRef.current) viewportRef.current.scrollLeft = 0;
-      const previousRestore = !identityChanged && pendingRestoreRef.current;
-      const landLast = previousRestore ? previousRestore.landLast : pendingLandLastRef.current;
+      const previousRestore = !chapterIntent && !identityChanged && pendingRestoreRef.current;
+      const landLast = chapterIntent ? chapterIntent.landLast : previousRestore ? previousRestore.landLast : pendingLandLastRef.current;
       pendingLandLastRef.current = false;
-      const initial = previousRestore ? previousRestore.initial : restoredBookRef.current !== bookId;
+      chapterIntentRef.current = null;
+      const initial = chapterIntent ? false : previousRestore ? previousRestore.initial : restoredBookRef.current !== bookId;
+      const navigationFraction = chapterIntent ? landLast ? 1 : 0 : previousRestore?.navigationFraction;
       restoredBookRef.current = bookId;
       restoredIdentityRef.current = `${bookId}:${chapterIndex}`;
-      pendingRestoreRef.current = { initial, landLast };
+      pendingRestoreRef.current = { initial, landLast, navigationFraction };
       restoreAbortRef.current?.abort();
       const restoreAbort = new AbortController();
       restoreAbortRef.current = restoreAbort;
@@ -106854,7 +106889,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
         const saved = await ui.loadState(bookId);
         const locator = saved?.locator || ui.store.get().states?.[bookId]?.locator;
         const initialFraction = locator?.chapterIndex === chapterIndex ? locator.scroll : restoreScroll;
-        const fraction = Math.min(1, Math.max(0, Number(initial ? initialFraction : restoreScroll) || 0));
+        const fraction = Math.min(1, Math.max(0, Number(navigationFraction ?? (initial ? initialFraction : restoreScroll)) || 0));
         const images = Array.from(flow.querySelectorAll("img"));
         await Promise.all(images.map((image) => image.complete ? Promise.resolve() : new Promise((resolve) => {
           const done = () => {
@@ -106879,6 +106914,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
             if (viewport) viewport.scrollTop = (landLast ? 1 : fraction) * Math.max(0, viewport.scrollHeight - viewport.clientHeight);
           }
           setPage(landLast ? Math.max(0, measured.pages - 1) : Math.round(fraction * Math.max(0, measured.pages - 1)));
+          pendingRestoreRef.current = null;
           positionReadyRef.current = true;
         });
       })().catch((error) => {
@@ -106888,6 +106924,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   }, [
     html,
     rendered,
+    navigationVersion,
     highlightSignature,
     searchQuery,
     chapterIndex,
@@ -107085,7 +107122,9 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       frame = requestAnimationFrame(reportPosition);
     };
     const interrupt = (event) => {
+      if (event.type === "keydown") return;
       if (event.type === "wheel" && event.ctrlKey) return;
+      if (chapterIntentRef.current || pendingRestoreRef.current && !pendingRestoreRef.current.initial) return;
       if (!positionReadyRef.current && positionIdentityRef.current === `${liveRef.current.bookId}:${liveRef.current.chapterIndex}`) {
         ++restoreEpochRef.current;
         restoreAbortRef.current?.abort();
@@ -107122,7 +107161,9 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       const live = liveRef.current;
       return !!(live.settings && live.settings.flow === "scroll");
     };
+    const ready = () => positionReadyRef.current && positionIdentityRef.current === `${liveRef.current.bookId}:${liveRef.current.chapterIndex}`;
     const next = () => {
+      if (!ready()) return;
       const live = liveRef.current;
       if (isScroll()) {
         const viewport = viewportRef.current;
@@ -107143,6 +107184,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       else ui.toast("\u5DF2\u7ECF\u662F\u6700\u540E\u4E00\u9875");
     };
     const prev = () => {
+      if (!ready()) return;
       const live = liveRef.current;
       if (isScroll()) {
         const viewport = viewportRef.current;
@@ -107152,7 +107194,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
         }
         if (live.chapterIndex > 0) {
           pendingLandLastRef.current = true;
-          ui.goChapter(live.chapterIndex - 1);
+          ui.goChapter(live.chapterIndex - 1, { landLast: true });
         } else {
           ui.toast("\u5DF2\u7ECF\u662F\u7B2C\u4E00\u9875");
         }
@@ -107161,14 +107203,15 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       if (live.page > 0) setPage(live.page - 1);
       else if (live.chapterIndex > 0) {
         pendingLandLastRef.current = true;
-        ui.goChapter(live.chapterIndex - 1);
+        ui.goChapter(live.chapterIndex - 1, { landLast: true });
       } else {
         ui.toast("\u5DF2\u7ECF\u662F\u7B2C\u4E00\u9875");
       }
     };
-    ui.registerPager({ next, prev, jump: (fraction) => ui.goPercent(fraction) });
+    ui.registerPager({ next, prev, goChapter: resetChapterPosition, jump: (fraction) => ui.goPercent(fraction) });
     return () => {
-      ui.registerPager({ next: () => ui.goChapter((ui.store.get().chapterIndex || 0) + 1), prev: () => ui.goChapter((ui.store.get().chapterIndex || 0) - 1) });
+      ui.registerPager({ next: () => ui.goChapter((ui.store.get().chapterIndex || 0) + 1), prev: () => ui.goChapter((ui.store.get().chapterIndex || 0) - 1), goChapter: () => {
+      } });
     };
   }, [ui, setPage]);
   React14.useEffect(() => {
