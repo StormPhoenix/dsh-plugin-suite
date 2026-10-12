@@ -43,7 +43,7 @@ for (const plugin of REBUILDABLE) {
   process.stdout.write(`${plugin.name}\n`);
   const committed = plugin.artifacts.map(file => [file, readFileSync(resolve(dir, file))]);
 
-  // The committed artifact is the recorded upstream file, which fixes the target for the rebuild.
+  // SNAPSHOT.json records the current artifact, including documented local modifications.
   process.stdout.write('  committed artifacts against SNAPSHOT.json\n');
   for (const [file, bytes] of committed) {
     const key = `plugins/${plugin.folder}/${file}`;

@@ -24,7 +24,19 @@
       "releaseArtifactSha256": "2932a2567b8c0fc2cccc3bd17e0635cc8d6a862e9e45c4ae1040ee008c683cf0"
     }
   },
-  "note": "Hashecks cover files copied unchanged from the upstream source (installed packages for pet and memory, git commit 1a640ee6a7d914200fa69733a68df829f41bd4b5 for qiaomu-reader-dsh); hand-edited manifests, locales, build scripts, icons, and README files are excluded, as is the symlink plugins/qiaomu-reader/src/client/ui, which has no content hash.",
+  "localModifications": {
+    "qiaomu-reader-dsh": {
+      "description": "Remove the empty-selection hint and its Chinese/English messages; hide sorting during selection while retaining the order and narrow-screen format filtering. Add bilingual selection-state tests and use fileURLToPath in the affected test renderer. README documents selection mode. Only client.js changes among built artifacts in this UI update; index.js already includes the batch-import and tag changes from commits 37c1cc9 and 893c40d.",
+      "upstreamSha256": {
+        "plugins/qiaomu-reader/client.js": "2058c5ff893d58ac988c42a35e135f63f32e62900518e09cf8c7fbe05a595dcf",
+        "plugins/qiaomu-reader/src/ui/library-locale.js": "f0d3fd4a12b2d90f3a935c716b398dd1fbd685c3129a57711c42c912ecdfd2d5",
+        "plugins/qiaomu-reader/src/ui/library.js": "d746ab547c6ce1cc9321ff6471ed632e374dba89820c43993010a0dcb450765f",
+        "plugins/qiaomu-reader/src/ui/theme.js": "ada2a54b184040345e066cc1019eb157c3b6c8249af718a990a629112b0543ab",
+        "plugins/qiaomu-reader/index.js": "39f6fcb9181d5fe48da4ea8e917093b01c8b991c675dc6cdb5eec1faeef4c978"
+      }
+    }
+  },
+  "note": "Hashes cover copied upstream files and the current locally modified files identified in localModifications. Original hashes for those local modifications are retained separately. Hand-edited manifests, metadata locales, build scripts, icons, README files and unlisted tests are excluded, as is the symlink plugins/qiaomu-reader/src/client/ui, which has no content hash.",
   "sha256": {
     "LICENSE": "22757dc9c895b2729a2fc684d227cadfb54d5af3dd300029926839e8c4e269ce",
     "plugins/memory/UPSTREAM-README.md": "bce01db1b36220162b2c4258f18beef3c25c70191c4937d2087079820f69b8d8",
@@ -438,7 +450,7 @@
     "plugins/qiaomu-reader/README.md": "ccfd16134e570875802da3cdc1ccf834d4528d368959e78444fc91dd7a54b819",
     "plugins/qiaomu-reader/SECURITY.md": "c740d238cad819cab408d7b933edc314a7b5a49a29ec110481a821dd86a8a4a8",
     "plugins/qiaomu-reader/THIRD_PARTY_NOTICES.md": "c5922cae1877a24cce0b72594bc8418fb00249a8495d404d131bf99519adfb8a",
-    "plugins/qiaomu-reader/client.js": "2058c5ff893d58ac988c42a35e135f63f32e62900518e09cf8c7fbe05a595dcf",
+    "plugins/qiaomu-reader/client.js": "745903c3e9c1ad4457f05d1ee09c7305a24ab5caf8bbf44cbda8c750e47e8ce9",
     "plugins/qiaomu-reader/cordis.patch.yml": "9f6f49ed77c2f46abeaa69d2edb7d66421201591f04e24a4eda58027dfbb1cc5",
     "plugins/qiaomu-reader/docs/DISTRIBUTION.md": "f15fff2459cee5da227785ffa2e29e19e94c4460cc808559113b92e9a5311d26",
     "plugins/qiaomu-reader/docs/RELEASE-VALIDATION.md": "2e4fe6bd7352d78afd46f361190cb7b7cf09d029a9dfce8ab09b76d25a0bad0c",
@@ -454,7 +466,7 @@
     "plugins/qiaomu-reader/docs/screenshots/library.png": "594ee6c70ef10e48233155131c97fc7f3a07f5dddad91e48e2bf5698ca47db39",
     "plugins/qiaomu-reader/docs/screenshots/reading.png": "7b20d64163651ed3441f1536fb35b92c3d806ea8449d48e11802e310d341cfe6",
     "plugins/qiaomu-reader/icon.svg": "ba519dec7215b70a91bf4a8f090ab3dc37f3b31b6ce38d8325b1570a509e4729",
-    "plugins/qiaomu-reader/index.js": "39f6fcb9181d5fe48da4ea8e917093b01c8b991c675dc6cdb5eec1faeef4c978",
+    "plugins/qiaomu-reader/index.js": "cbc0112cceacc8a99f8f98dbaed4d10e01ff45f4ed940bdf31189d8251c4bbea",
     "plugins/qiaomu-reader/media/starter-books.js": "7f6b512c2ea4d8012e4af106464efca27e55f8ad19a26562f963fc8622975694",
     "plugins/qiaomu-reader/screenshots.json": "6f69b19ee49d7dfe653484d5dbec5c4aa1d042f2a01476251e078f9779dcacdd",
     "plugins/qiaomu-reader/scripts/check-client.mjs": "704540e15e90f45d47707b72d377431cef6a63b5330f435b2f69af3e44ec9587",
@@ -481,8 +493,8 @@
     "plugins/qiaomu-reader/src/ui/format.js": "f337fe23becf2a3d413352c1cd82096a6b31c450e85322b28eea297b4c179291",
     "plugins/qiaomu-reader/src/ui/hooks.js": "990cb619b8c945a4ce06d93709694fdd96e2e25fb796ab3288d85719a7ce17e7",
     "plugins/qiaomu-reader/src/ui/icons.js": "b964d9c32ad6fe550e885f223a09cad10ce5d686715d422251329c73aac0d115",
-    "plugins/qiaomu-reader/src/ui/library-locale.js": "f0d3fd4a12b2d90f3a935c716b398dd1fbd685c3129a57711c42c912ecdfd2d5",
-    "plugins/qiaomu-reader/src/ui/library.js": "d746ab547c6ce1cc9321ff6471ed632e374dba89820c43993010a0dcb450765f",
+    "plugins/qiaomu-reader/src/ui/library-locale.js": "d294ac09d9a4f434e8e31ba14b43a699240acc484e7caac0db243154b38a6086",
+    "plugins/qiaomu-reader/src/ui/library.js": "977c7e12f4b452130c52da69076c80e61ccbf608dd855a4d1ba4b3197f130412",
     "plugins/qiaomu-reader/src/ui/panel-highlights.js": "eb13bb374d81e8bb8c9dc25481987c6b5df8e3e0e8dcc3171d32bf8afacf3a22",
     "plugins/qiaomu-reader/src/ui/panel-search.js": "7744d64f0b2c9f28fb0803fde1bf077a1c309be48ba639522d428affc202d9dc",
     "plugins/qiaomu-reader/src/ui/panel-settings.js": "8763771b8d0f3caec75e27f8898d8a047df1e1ba812fbdb51d09d5b8e9614b4b",
@@ -492,7 +504,7 @@
     "plugins/qiaomu-reader/src/ui/selection-menu.js": "2ff7821de1657734c96e8e8110b9263e16615e077b985df820a2379c3a12a167",
     "plugins/qiaomu-reader/src/ui/shell.js": "c977b73407e2841b505fbe5d67e8b700af56782041dd05d500715448177966d0",
     "plugins/qiaomu-reader/src/ui/store.js": "6f81e629d0846abb3c7ba1731533038d701ce2a0664087264cfa8230ae416fc2",
-    "plugins/qiaomu-reader/src/ui/theme.js": "ada2a54b184040345e066cc1019eb157c3b6c8249af718a990a629112b0543ab",
+    "plugins/qiaomu-reader/src/ui/theme.js": "674bf06380292502f2d54c9f07659324d4dfc2cbdb99c0f5206d1d52f61b3813",
     "plugins/qiaomu-reader/src/ui/toc.js": "e0bdbf01b662e717f90a0d29c132b071baf06b7920071618b721176d25be544e",
     "plugins/qiaomu-reader/test/client-activation.test.mjs": "abc8449677588c7a36f814ddbf4cb2742de039044d06176b271e62117d48423f",
     "plugins/qiaomu-reader/test/formats-backlinks.test.mjs": "37cb09a074de60e88786f42a497f0b320bbab9d8d87e9caa413449eeedd5c9bb",

@@ -18,7 +18,7 @@
 
 上游项目：[joeseesun/qiaomu-reader-dsh](https://github.com/joeseesun/qiaomu-reader-dsh)，GPL-3.0-only，许可见 [plugins/qiaomu-reader/LICENSE](plugins/qiaomu-reader/LICENSE)。该包为 `private: true`，不发布 npm；公开产物只有 v1.0.2 的 Release 包 `qiaomu-reader-dsh-1.0.2.tgz`（sha256 `2932a2567b8c0fc2cccc3bd17e0635cc8d6a862e9e45c4ae1040ee008c683cf0`）。
 
-复制来源是上游提交 `1a640ee6a7d914200fa69733a68df829f41bd4b5`（tag `v1.0.2`），也就是该 Release 指向的提交。复制时排除 `.git`、`node_modules`、`package-lock.json` 与 `.github`，其余文件字节未改，摘要见 [SNAPSHOT.json](SNAPSHOT.json)。`src/client/ui` 是上游入库的符号链接（git 模式 120000），按原样保留。`index.js`（`39f6fcb9…c978`）与 `client.js`（`2058c5ff…95dcf`）与上游提交和 Release 包内的同名文件逐字节相同。
+复制来源是上游提交 `1a640ee6a7d914200fa69733a68df829f41bd4b5`（tag `v1.0.2`），也就是该 Release 指向的提交。复制时排除 `.git`、`node_modules`、`package-lock.json` 与 `.github`，其余文件字节未改，摘要见 [SNAPSHOT.json](SNAPSHOT.json)。`src/client/ui` 是上游入库的符号链接（git 模式 120000），按原样保留。初次复制时，`index.js`（`39f6fcb9…c978`）与 `client.js`（`2058c5ff…95dcf`）与上游提交和 Release 包内的同名文件逐字节相同。当前 `index.js` 已包含提交 `37c1cc9` 的批量导入和 `893c40d` 的标签逻辑，本次 UI 更新未改宿主产物；`client.js` 包含下述本地 UI 修改，原始摘要保存在 [SNAPSHOT.json](SNAPSHOT.json) 的 `localModifications`。
 
 手改五处：
 
@@ -28,8 +28,10 @@
 - `locale/{en,zh}.json` 增加 `meta.title` / `meta.description`。DSH 从 `./locale/*.json` 读取插件显示名与描述，缺失时标题回退为包名；原有扁平键未动，界面文案在代码中注册（`src/ui/library-locale.js`），构建不读取这两个文件。
 - `scripts/build.mjs` 的客户端构建增加 `preserveSymlinks: true`。pnpm 把依赖装成符号链接，esbuild 默认解析到 `.pnpm` 下的真实路径，产物里的依赖路径注释就会带上 store 路径；保留链接路径后，本仓库的重建结果与上游发布包逐字节一致。不开该选项时两者只差 4 处依赖路径字符串，被内联的代码本身相同。
 
-重建：仓库根执行 `pnpm install --ignore-scripts`，再到 `plugins/qiaomu-reader` 运行 `node scripts/build.mjs`。在本仓库的 pnpm 隔离布局下，`index.js` 与 `client.js` 都逐字节重现发布包；上游 `npm test` 的 47 项测试在该副本上通过。该属性由仓库根的 `node scripts/verify-rebuild.mjs` 持续校验：它先比对 [SNAPSHOT.json](SNAPSHOT.json) 记录的摘要，再重建比对，不一致即失败并还原已提交的产物。
+本地 UI 修改：`src/ui/library.js` 移除零选择时的辅助提示，`src/ui/library-locale.js` 同步移除中英文 `chooseBooks` 文案；选择模式隐藏排序入口但保留原排序，退出后恢复；`src/ui/theme.js` 收起宽屏空工具栏并保留窄屏格式筛选。计数、选择按钮和批量操作禁用规则不变。`test/library-tags-ui.test.mjs` 增加中英文选择状态回归测试，并用 `fileURLToPath` 转换测试入口以支持 Windows；README 同步说明选择栏。`client.js` 由源码重建，不手改。
+
+重建：仓库根执行 `pnpm install --ignore-scripts`，再到 `plugins/qiaomu-reader` 运行 `node scripts/build.mjs`。在本仓库的 pnpm 隔离布局下，产物逐字节重现当前本地源码，而非声称修改后的客户端与发布包一致。仓库根的 `node scripts/verify-rebuild.mjs` 先比对 [SNAPSHOT.json](SNAPSHOT.json) 记录的当前摘要，再重建比对，不一致即失败并还原检查前的产物。初次复制时的上游 `npm test` 47 项测试通过记录不代表当前副本的全部测试状态。
 
 ## 集合
 
-仓库根包名 `dsh-plugin-suite-workspace`，是 workspace 管理目录而非 DSH Bundle，不代表也不承担任何上游的版权归属；`dsh-pet` 这一插件包名是保留 Pet 浏览器模块 id 的技术要求。各插件的依赖、兼容声明与许可相互独立，每个包的来源（已安装包或上游提交）记在 [SNAPSHOT.json](SNAPSHOT.json) 的 `sources`。复制原文件摘要见同一文件的 `sha256`，手改的清单、locale、图标与 README 不纳入该清单。
+仓库根包名 `dsh-plugin-suite-workspace`，是 workspace 管理目录而非 DSH Bundle，不代表也不承担任何上游的版权归属；`dsh-pet` 这一插件包名是保留 Pet 浏览器模块 id 的技术要求。各插件的依赖、兼容声明与许可相互独立，每个包的来源（已安装包或上游提交）记在 [SNAPSHOT.json](SNAPSHOT.json) 的 `sources`。复制原文件及已登记本地修改文件的当前摘要见同一文件的 `sha256`，本地修改的原始摘要见 `localModifications`；手改的清单、metadata locale、图标与 README 不纳入摘要清单。

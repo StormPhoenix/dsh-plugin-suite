@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { LIBRARY_MESSAGES, flattenMessages } from '../src/ui/library-locale.js';
 
@@ -15,7 +16,7 @@ async function renderer(entry) {
     useMemo(fn, deps) { const index = cursor++; if (!active[index] || deps.some((value, i) => !Object.is(value, active[index].deps[i]))) active[index] = { deps, value: fn() }; return active[index].value; },
     useEffect(fn, deps) { const index = cursor++; if (!active[index] || !deps || deps.some((value, i) => !Object.is(value, active[index].deps[i]))) { const owner = active; effects.push(() => { owner[index]?.cleanup?.(); owner[index] = { deps: deps || [], cleanup: fn() }; }); } },
   };
-  const result = await build({ entryPoints: [new URL(entry, import.meta.url).pathname], bundle: true, write: false, format: 'cjs', platform: 'browser', external: ['react', 'react-dom'] });
+  const result = await build({ entryPoints: [fileURLToPath(new URL(entry, import.meta.url))], bundle: true, write: false, format: 'cjs', platform: 'browser', external: ['react', 'react-dom'] });
   const module = { exports: {} };
   const listeners = new Map(); let focused = 0;
   const document = { body: {}, activeElement: { focus() { focused++; } }, addEventListener(key, fn) { listeners.set(key, fn); }, removeEventListener(key, fn) { if (listeners.get(key) === fn) listeners.delete(key); } };
@@ -128,24 +129,69 @@ test('removal candidates belong to selected books and cannot create new tags', a
   assert.deepEqual(app.calls, [['update', { bookIds: ['b'], tagIds: ['y'], operation: 'remove' }]]);
 });
 
-test('selection survives sorting, exits after successful bulk add and clears on filter changes', async () => {
+test('selection keeps the prior sort, exits after successful bulk add and clears on filter changes', async () => {
   const r = await renderer('../src/ui/library.js'); const app = harness({ libraryTagIds: ['y'] });
   const render = () => r.render(r.exports.LibraryView, { ui: app.ui }); let root = render();
   const toolbar = walk(root).find(node => node.props.className === 'qmr-library-toolbar');
   assert.equal(text(toolbar.children[0]), 'Select books');
   assert.ok(!walk(toolbar).some(node => node.props.className === 'qmr-library-section-title'));
+  walk(root).find(node => node.props.className === 'qmr-library-sort').props.onChange({ target: { value: 'title' } }); root = render();
+  const titles = () => walk(root).filter(node => node.props.className === 'qmr-book-title').map(text);
+  const order = titles();
   assert.ok(!text(root).includes('Manage tags')); button(root, 'Select books').props.onClick(); root = render();
   button(root, 'Select all 2 matching books').props.onClick(); root = render();
-  walk(root).find(node => node.props.className === 'qmr-library-sort').props.onChange({ target: { value: 'title' } }); root = render();
+  assert.ok(!walk(root).some(node => node.props.className === 'qmr-library-sort'));
+  assert.equal(app.snapshot.librarySort, 'title'); assert.deepEqual(titles(), order);
   assert.ok(text(root).includes('2 selected')); button(root, 'Add tags in bulk').props.onClick(); root = render();
   typeTag(root, 'History'); root = render(); enterTag(root); root = render(); await button(root, 'Confirm add').props.onClick(); root = render();
   assert.ok(button(root, 'Select books')); assert.ok(!text(root).includes('2 selected'));
+  assert.equal(walk(root).find(node => node.props.className === 'qmr-library-sort').props.value, 'title');
   assert.ok(!walk(root).some(node => node.type === 'input' && node.props.type === 'checkbox'));
   button(root, 'Select books').props.onClick(); root = render();
   button(root, 'Select all 2 matching books').props.onClick(); root = render();
   input(root, 'search').props.onChange({ target: { value: 'Alpha' } }); render(); root = render();
   assert.ok(text(root).includes('0 selected')); assert.ok(button(root, 'Clear selection'));
 });
+
+for (const language of ['zh', 'en']) {
+  test(`selection controls retain their empty and selected states without an extra hint (${language})`, async () => {
+    const r = await renderer('../src/ui/library.js'); const app = harness({}, language);
+    const messages = LIBRARY_MESSAGES[language].catalog.tags;
+    const label = (key, count) => messages[key].replace('{count}', String(count));
+    const render = () => r.render(r.exports.LibraryView, { ui: app.ui }); let root = render();
+    const assertSelection = count => {
+      const bar = walk(root).find(node => node.props.className === 'qmr-tag-selection');
+      assert.ok(bar);
+      assert.ok(!walk(root).some(node => node.props.className === 'qmr-library-sort'));
+      assert.ok(walk(root).some(node => node.props.className === 'qmr-library-toolbar is-selecting'));
+      assert.ok(walk(root).some(node => node.props.className === 'qmr-library-mobile-format'));
+      assert.equal(text(walk(bar).find(node => node.props.role === 'status')), label('selected', count));
+      assert.equal(bar.children.filter(node => node && node.type === 'span').length, 1);
+      assert.ok(!text(bar).includes('请选择需要整理的书籍'));
+      assert.ok(!text(bar).includes('Select books to organize'));
+      for (const key of ['clearSelection', 'bulkAdd', 'bulkRemove']) assert.equal(button(bar, messages[key]).props.disabled, count === 0);
+      assert.ok(button(bar, messages.exitSelection));
+    };
+    const sortControl = () => walk(root).find(node => node.props.className === 'qmr-library-sort');
+    sortControl().props.onChange({ target: { value: 'added' } }); root = render();
+    button(root, messages.select).props.onClick(); root = render(); assertSelection(0);
+    assert.equal(app.snapshot.librarySort, 'added');
+    input(root, 'checkbox').props.onChange(); root = render(); assertSelection(1);
+    button(root, messages.clearSelection).props.onClick(); root = render(); assertSelection(0);
+    button(root, label('selectResults', 3)).props.onClick(); root = render(); assertSelection(3);
+    input(root, 'search').props.onChange({ target: { value: 'Alpha' } }); render(); root = render(); assertSelection(0);
+    app.ui.canEditTags = () => false;
+    button(root, label('selectResults', 1)).props.onClick(); root = render();
+    assert.equal(button(root, messages.bulkAdd).props.disabled, true);
+    assert.equal(button(root, messages.bulkRemove).props.disabled, true);
+    button(root, messages.exitSelection).props.onClick(); root = render();
+    assert.ok(!walk(root).some(node => node.props.className === 'qmr-tag-selection'));
+    assert.ok(!input(root, 'checkbox'));
+    assert.equal(sortControl().props.value, 'added');
+    assert.ok(!walk(root).some(node => node.props.className === 'qmr-library-toolbar is-selecting'));
+    r.unmount();
+  });
+}
 
 test('Chinese fallback and stable theme palette work without a locale provider', async () => {
   const r = await renderer('../src/ui/library-tags.js'); const app = harness(); app.ui.t = (_, fallback) => fallback;

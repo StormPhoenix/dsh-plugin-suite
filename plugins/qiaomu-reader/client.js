@@ -100997,7 +100997,6 @@ var LIBRARY_MESSAGES = {
         "confirmRemove": "\u786E\u8BA4\u79FB\u9664",
         "clearSelection": "\u6E05\u7A7A\u9009\u62E9",
         "exitSelection": "\u9000\u51FA\u9009\u62E9",
-        "chooseBooks": "\u8BF7\u9009\u62E9\u9700\u8981\u6574\u7406\u7684\u4E66\u7C4D",
         "removeSelected": "\u53D6\u6D88\u9009\u62E9\u6807\u7B7E {name}"
       },
       "queue": {
@@ -101127,7 +101126,6 @@ var LIBRARY_MESSAGES = {
         "confirmRemove": "Confirm remove",
         "clearSelection": "Clear selection",
         "exitSelection": "Exit selection",
-        "chooseBooks": "Select books to organize",
         "removeSelected": "Deselect tag {name}"
       },
       "queue": {
@@ -103333,6 +103331,7 @@ button.qmr-tag-badge:hover:not(:disabled){border-color:var(--qmr-tag-tone,var(--
 .qmr-library-continue{display:flex;align-items:center;gap:8px;min-height:40px;flex:none;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);font-size:13px;font-weight:500;cursor:pointer}
 .qmr-library-toolbar{display:flex;align-items:center;gap:12px;min-height:44px;margin-bottom:6px;color:var(--qmr-lib-muted);font-size:12px}
 .qmr-library-sort,.qmr-library-mobile-format{height:40px;max-width:160px;border:0;border-radius:4px;background:transparent;color:var(--qmr-lib-muted);font-size:12px;cursor:pointer;padding:0 8px}
+.qmr-library-toolbar.is-selecting{display:none}
 .qmr-library-sort{margin-left:auto}
 .qmr-library-mobile-format{display:none}
 .qmr-library-columns,.qmr-book-row{display:grid;grid-template-columns:minmax(0,1fr) 72px 116px 64px 40px;column-gap:20px;align-items:center}
@@ -103390,6 +103389,7 @@ button.qmr-tag-badge:hover:not(:disabled){border-color:var(--qmr-tag-tone,var(--
   .qmr-library-continue{padding:0 6px;font-size:12px}
   .qmr-library-resume-title{font-size:14px}
   .qmr-library-toolbar>span{display:none}
+  .qmr-library-toolbar.is-selecting{display:flex}
   .qmr-library-mobile-format{display:block}
   .qmr-library-columns,.qmr-book-row{grid-template-columns:minmax(0,1fr) 58px 44px;column-gap:8px;padding-left:0;padding-right:0}
   .qmr-library-columns>:nth-child(2),.qmr-library-columns>:nth-child(4),.qmr-book-format,.qmr-book-highlights{display:none}
@@ -105189,20 +105189,20 @@ function LibraryView({ ui }) {
         ) : null,
         h5(
           "div",
-          { className: "qmr-library-toolbar" },
+          { className: `qmr-library-toolbar${selecting ? " is-selecting" : ""}` },
           !selecting ? h5("button", { type: "button", className: "qmr-btn qmr-selection-toggle", disabled: !editableTags(ui), title: !editableTags(ui) ? tagText(ui, "offline") : void 0, onClick: () => setSelecting(true) }, tagText(ui, "select")) : null,
           h5(
             "select",
             { className: "qmr-library-mobile-format", value: format, "aria-label": tr(ui, "formats", "\u6587\u4EF6\u683C\u5F0F"), onChange: (event) => ui.store.set({ libraryFormat: event.target.value }) },
             ["all", "epub", "pdf", "txt"].map((key) => h5("option", { key, value: key }, key === "all" ? tr(ui, "allFormats", "\u5168\u90E8\u683C\u5F0F") : key.toUpperCase()))
           ),
-          h5(
+          !selecting ? h5(
             "select",
             { className: "qmr-library-sort", value: sort, "aria-label": tr(ui, "sort", "\u6392\u5E8F\u65B9\u5F0F"), onChange: (event) => ui.store.set({ librarySort: event.target.value }) },
             h5("option", { value: "recent" }, tr(ui, "recent", "\u6700\u8FD1\u9605\u8BFB")),
             h5("option", { value: "added" }, tr(ui, "added", "\u52A0\u5165\u65F6\u95F4")),
             h5("option", { value: "title" }, tr(ui, "title", "\u4E66\u540D"))
-          )
+          ) : null
         ),
         !editableTags(ui) ? h5("p", { className: "qmr-muted qmr-small" }, tagText(ui, "offline")) : null,
         selecting ? h5(
@@ -105211,7 +105211,6 @@ function LibraryView({ ui }) {
           h5("span", { role: "status" }, tagText(ui, "selected", { count: selected.length })),
           h5("button", { type: "button", className: "qmr-btn", onClick: () => setSelected(visibleBooks.map((book) => book.id)) }, tagText(ui, "selectResults", { count: visibleBooks.length })),
           h5("button", { type: "button", className: "qmr-btn", disabled: !selected.length, onClick: () => setSelected([]) }, tagText(ui, "clearSelection")),
-          !selected.length ? h5("span", { className: "qmr-muted" }, tagText(ui, "chooseBooks")) : null,
           h5("button", { type: "button", className: "qmr-btn qmr-selection-add", disabled: !selected.length || !editableTags(ui), onClick: () => setDialog({ kind: "edit", mode: "add", bookIds: [...selected] }) }, tagText(ui, "bulkAdd")),
           h5("button", { type: "button", className: "qmr-btn", disabled: !selected.length || !editableTags(ui), onClick: () => setDialog({ kind: "edit", mode: "remove", bookIds: [...selected] }) }, tagText(ui, "bulkRemove")),
           h5("button", { type: "button", className: "qmr-btn", onClick: finishSelection }, tagText(ui, "exitSelection"))
