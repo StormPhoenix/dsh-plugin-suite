@@ -34,6 +34,14 @@ EPUB 分页图片修改：`src/ui/reader.js` 按视口高度和列宽设置图�
 
 重建：仓库根执行 `pnpm install --ignore-scripts`，再到 `plugins/qiaomu-reader` 运行 `node scripts/build.mjs`。在本仓库的 pnpm 隔离布局下，产物逐字节重现当前本地源码，而非声称修改后的客户端与发布包一致。仓库根的 `node scripts/verify-rebuild.mjs` 先比对 [SNAPSHOT.json](SNAPSHOT.json) 记录的当前摘要，再重建比对，不一致即失败并还原检查前的产物。初次复制时的上游 `npm test` 47 项测试通过记录不代表当前副本的全部测试状态。
 
+## Better Sidebar
+
+上游项目：[omdsh-dev/DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar)，MIT，许可见 [plugins/better-sidebar/LICENSE](plugins/better-sidebar/LICENSE)。复制来源是 main 的精确提交 `d0a47bed1175e8214fc45bacf8535cc0b4d386a0`，包版本 `0.25.0`；这不是把 tag v0.25.0 与 main 当作同一提交。保留源码、测试、文档、配置及素材，排除 `.git`、`.github`、`node_modules` 与独立锁文件，并移除嵌套 workspace 配置。原始文件摘要独立保存在 [SNAPSHOT.json](SNAPSHOT.json) 的 `localModifications.dsh-better-sidebar.upstreamSha256`。
+
+本地版本 `0.25.0-local.1` 保留包名和条目 ID，设 private 并去除安装期构建 hook。Host 从 `webRuntime.trustedHosts` 改为 `connection.requestRejection()`，所有 HTTP 和 WebSocket 入口使用 Host 的实时信任与认证判定，HTTP 保留 401/403；不加虚假服务、不绕过认证。终端标签补齐当前 Host 所需的 commandLine，沿用 zh/en/ja 字典；链接开发依赖的测试共享 React 实例。源码与上游测试随副本保留，测试通过状态以实际执行记录为准。
+
+按源码仓库范围移除本次导入及新增的所有 scripts 目录脚本、相关专用测试和构建产物；原有插件与仓库原有脚本不在删除范围。保留源码、测试、配置、文档、素材及 MIT 许可。构建命令直接调用 tsc 与 tsdown，`lib/` 被忽略；需要运行时自行构建，不能把此源码副本当作预构建安装目录。开发依赖当前链接相邻的已构建 DSH 源码仓库，其他位置需手动调整。原始摘要仅表示导入时的上游记录，可能包含已移除文件；当前摘要仅记录仍保留的源码文件。
+
 ## 集合
 
 仓库根包名 `dsh-plugin-suite-workspace`，是 workspace 管理目录而非 DSH Bundle，不代表也不承担任何上游的版权归属；`dsh-pet` 这一插件包名是保留 Pet 浏览器模块 id 的技术要求。各插件的依赖、兼容声明与许可相互独立，每个包的来源（已安装包或上游提交）记在 [SNAPSHOT.json](SNAPSHOT.json) 的 `sources`。复制原文件及已登记本地修改文件的当前摘要见同一文件的 `sha256`，本地修改的原始摘要见 `localModifications`；手改的清单、metadata locale、图标与 README 不纳入摘要清单。
