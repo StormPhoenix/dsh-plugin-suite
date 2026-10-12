@@ -27,6 +27,10 @@
   "localModifications": {
     "qiaomu-reader-dsh": {
       "description": "Remove the empty-selection hint and its Chinese/English messages; hide sorting during selection while retaining the order and narrow-screen format filtering. Add bilingual selection-state tests and use fileURLToPath in the affected test renderer. README documents selection mode. Only client.js changes among built artifacts in this UI update; index.js already includes the batch-import and tag changes from commits 37c1cc9 and 893c40d.",
+      "imagePagination": "EPUB images fit the measured page and column before page counting; temporary inline size overrides restore in scroll mode. Multi-image containers remain fragmentable. Reader effects, image size restoration and real Chromium multi-image checks cover the change; client.js is rebuilt, Host remains unchanged.",
+      "beforeImagePaginationSha256": {
+        "plugins/qiaomu-reader/src/ui/reader.js": "53b6297da5b1b7fd9b991c3dd6e001d7bd12af95e4549e528e36c1c27c507a98"
+      },
       "upstreamSha256": {
         "plugins/qiaomu-reader/client.js": "2058c5ff893d58ac988c42a35e135f63f32e62900518e09cf8c7fbe05a595dcf",
         "plugins/qiaomu-reader/src/ui/library-locale.js": "f0d3fd4a12b2d90f3a935c716b398dd1fbd685c3129a57711c42c912ecdfd2d5",
@@ -450,7 +454,7 @@
     "plugins/qiaomu-reader/README.md": "ccfd16134e570875802da3cdc1ccf834d4528d368959e78444fc91dd7a54b819",
     "plugins/qiaomu-reader/SECURITY.md": "c740d238cad819cab408d7b933edc314a7b5a49a29ec110481a821dd86a8a4a8",
     "plugins/qiaomu-reader/THIRD_PARTY_NOTICES.md": "c5922cae1877a24cce0b72594bc8418fb00249a8495d404d131bf99519adfb8a",
-    "plugins/qiaomu-reader/client.js": "745903c3e9c1ad4457f05d1ee09c7305a24ab5caf8bbf44cbda8c750e47e8ce9",
+    "plugins/qiaomu-reader/client.js": "fad340ca1cc87cdb2cbfd2186b92373c6281dda3ce84bac93c0fe06a1c331a81",
     "plugins/qiaomu-reader/cordis.patch.yml": "9f6f49ed77c2f46abeaa69d2edb7d66421201591f04e24a4eda58027dfbb1cc5",
     "plugins/qiaomu-reader/docs/DISTRIBUTION.md": "f15fff2459cee5da227785ffa2e29e19e94c4460cc808559113b92e9a5311d26",
     "plugins/qiaomu-reader/docs/RELEASE-VALIDATION.md": "2e4fe6bd7352d78afd46f361190cb7b7cf09d029a9dfce8ab09b76d25a0bad0c",
@@ -500,11 +504,12 @@
     "plugins/qiaomu-reader/src/ui/panel-settings.js": "8763771b8d0f3caec75e27f8898d8a047df1e1ba812fbdb51d09d5b8e9614b4b",
     "plugins/qiaomu-reader/src/ui/prompt-manager.js": "b774d4671934e93f2cc2dede43fd3e6d3a45ba6e9c119b4d03f654333144d2d9",
     "plugins/qiaomu-reader/src/ui/quick-prompts.js": "807ca163fed0af4af9930028b1f1e8c9f2a21be5067594c1f005d90abe341d4c",
-    "plugins/qiaomu-reader/src/ui/reader.js": "53b6297da5b1b7fd9b991c3dd6e001d7bd12af95e4549e528e36c1c27c507a98",
+    "plugins/qiaomu-reader/src/ui/image-pagination.js": "89cafcbb5a24a1d2e5c573002537d1dbd418bd628c7a9f14bf2a04f21b35362e",
+    "plugins/qiaomu-reader/src/ui/reader.js": "97897ce5d0f68d57d0a0c61df1cdcfd1280bd7e0d6fb3064b2f43db1e6769b26",
     "plugins/qiaomu-reader/src/ui/selection-menu.js": "2ff7821de1657734c96e8e8110b9263e16615e077b985df820a2379c3a12a167",
     "plugins/qiaomu-reader/src/ui/shell.js": "c977b73407e2841b505fbe5d67e8b700af56782041dd05d500715448177966d0",
     "plugins/qiaomu-reader/src/ui/store.js": "6f81e629d0846abb3c7ba1731533038d701ce2a0664087264cfa8230ae416fc2",
-    "plugins/qiaomu-reader/src/ui/theme.js": "674bf06380292502f2d54c9f07659324d4dfc2cbdb99c0f5206d1d52f61b3813",
+    "plugins/qiaomu-reader/src/ui/theme.js": "0736bf851b40a9627a274193d532605da390768b7b4472bc6ad0e81400c026fd",
     "plugins/qiaomu-reader/src/ui/toc.js": "e0bdbf01b662e717f90a0d29c132b071baf06b7920071618b721176d25be544e",
     "plugins/qiaomu-reader/test/client-activation.test.mjs": "abc8449677588c7a36f814ddbf4cb2742de039044d06176b271e62117d48423f",
     "plugins/qiaomu-reader/test/formats-backlinks.test.mjs": "37cb09a074de60e88786f42a497f0b320bbab9d8d87e9caa413449eeedd5c9bb",

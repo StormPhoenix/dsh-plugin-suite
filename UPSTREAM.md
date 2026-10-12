@@ -30,6 +30,8 @@
 
 本地 UI 修改：`src/ui/library.js` 移除零选择时的辅助提示，`src/ui/library-locale.js` 同步移除中英文 `chooseBooks` 文案；选择模式隐藏排序入口但保留原排序，退出后恢复；`src/ui/theme.js` 收起宽屏空工具栏并保留窄屏格式筛选。计数、选择按钮和批量操作禁用规则不变。`test/library-tags-ui.test.mjs` 增加中英文选择状态回归测试，并用 `fileURLToPath` 转换测试入口以支持 Windows；README 同步说明选择栏。`client.js` 由源码重建，不手改。
 
+EPUB 分页图片修改：`src/ui/reader.js` 按视口高度和列宽设置图片预算，并在页数计算前调用 `src/ui/image-pagination.js`；该模块临时覆盖图片尺寸声明，滚动模式恢复原值与优先级，不修改正文节点或书籍文件。`src/ui/theme.js` 保持单图比例及完整性，允许多图容器和图注正常分页。阅读器与图片尺寸测试、`scripts/test-image-pagination.mjs` 的真实 Chromium 用例覆盖加载、布局变化、多图和内联固定尺寸；README 同步说明留白及格式限制。
+
 重建：仓库根执行 `pnpm install --ignore-scripts`，再到 `plugins/qiaomu-reader` 运行 `node scripts/build.mjs`。在本仓库的 pnpm 隔离布局下，产物逐字节重现当前本地源码，而非声称修改后的客户端与发布包一致。仓库根的 `node scripts/verify-rebuild.mjs` 先比对 [SNAPSHOT.json](SNAPSHOT.json) 记录的当前摘要，再重建比对，不一致即失败并还原检查前的产物。初次复制时的上游 `npm test` 47 项测试通过记录不代表当前副本的全部测试状态。
 
 ## 集合

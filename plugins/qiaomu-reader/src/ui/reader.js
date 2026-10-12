@@ -6,6 +6,7 @@
  */
 import * as React from 'react';
 import { prepareImageResources } from './image-resources.js';
+import { fitPageImages } from './image-pagination.js';
 import {
   fontStackOf,
   readerThemeVars,
@@ -252,6 +253,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
 
   const viewportRef = React.useRef(null);
   const flowRef = React.useRef(null);
+  const imageSizeOverridesRef = React.useRef(new WeakMap());
   const measureRef = React.useRef({ pages: 1, perPage: 1, columnWidth: 320, gap: COLUMN_GAP });
   const lastHtmlRef = React.useRef(null);
   const decoratedRef = React.useRef(null);
@@ -482,6 +484,13 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       const sheet = isPdf && flow.querySelector('.qmr-pdf-sheet');
       if (sheet) sheet.style.width = `${width * settings.pdfZoom}px`;
       flow.style.height = paginated ? `${Math.max(1, viewport.clientHeight)}px` : 'auto';
+      if (paginated && book?.format === 'epub') {
+        flow.style.setProperty('--qmr-image-page-height', `${Math.max(1, viewport.clientHeight)}px`);
+        flow.style.setProperty('--qmr-image-column-width', `${columnWidth}px`);
+      } else {
+        flow.style.removeProperty('--qmr-image-page-height');
+        flow.style.removeProperty('--qmr-image-column-width');
+      }
       if (paginated) {
         flow.style.columnWidth = `${columnWidth}px`;
         flow.style.columnCount = String(perPage);
@@ -492,6 +501,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
         flow.style.columnWidth = 'auto';
         flow.style.transform = 'none';
       }
+      fitPageImages(flow, paginated && book?.format === 'epub', imageSizeOverridesRef.current);
       let pages = 1;
       if (paginated) {
         const total = flow.scrollWidth || width;
@@ -510,7 +520,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     } catch (_error) {
       return measureRef.current;
     }
-  }, [settings.flow, settings.spread, settings.pdfZoom, isPdf, setPage]);
+  }, [settings.flow, settings.spread, settings.pdfZoom, isPdf, book?.format, setPage]);
 
   /** 分页定位必须翻页，不能让浏览器横向滚动裁切容器。 */
   const revealNode = React.useCallback((node) => {
@@ -1430,6 +1440,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
           { className: 'qmr-page-frame', style: contentStyle },
           h('div', { className: viewportClass, ref: viewportRef }, h('div', {
             className: 'qmr-page-flow qmr-paper-body',
+            'data-qmr-image-pages': book?.format === 'epub' && settings.flow !== 'scroll' ? '' : undefined,
             ref: flowRef,
             style: flowStyle,
             onClick: onContentClick,

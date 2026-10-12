@@ -71,6 +71,8 @@ dsh plugin --profile desktop add "$PWD/qiaomu-reader-dsh-1.0.2.tgz"
 
 macOS 收起 Harness 左侧边栏时，阅读标题栏会避开系统窗口按钮和宿主控件；系统全屏仍为打开侧栏及新建会话按钮保留空间。阅读器自身的元素全屏只显示阅读器，标题栏恢复普通间距，退出后恢复宿主避让。正文宽度不受该避让影响。
 
+EPUB 分页中的图片按当前页高与单列宽度等比例适页，小图不主动放大；当前页放不下时整张图片移到下一列，多张图片可分到不同页，因此可能留白。同段多图不强制整组同页，图注可正常分页。分页期间覆盖图片的内联固定尺寸，切换到连续滚动时恢复；PDF 不使用该规则。窗口、字号及单双页变化后重新计算，复杂固定版式和内联 SVG 绘图不在适页保证范围内。
+
 ## 标签搜索与整理
 
 书库顶部的「标签」按钮可搜索并多选已有标签，按「任一」或「全部」匹配整个书库；「无标签」仅显示未分类书籍。标签条件可叠加书名／作者关键词、阅读状态和文件格式，清空筛选不改变排序。书籍作者下显示标签，更多标签可在编辑面板查看。
@@ -105,6 +107,8 @@ npm pack
 
 Node.js 22+。`src/core/` 是书籍解析与阅读状态，`src/client/` 是界面和宿主桥接，`src/host/` 是文件书库与工具。`client.js`、`index.js` 是构建产物，随源码一起提交。打包前会自动构建并检查所有导出入口与 bundle 文件。
 
+真实 Chromium 图片分页回归：设置 `PLAYWRIGHT_MODULE` 为已安装 `playwright-core` 的文件 URL，运行 `node scripts/test-image-pagination.mjs`；需要本机 Chrome，不增加插件运行依赖。覆盖单图、多图、固定尺寸、图注、宽窄屏、单双页及大字号，并验证旧规则的超高图负例。
+
 构建直接使用已提交的 `media/starter-books.js`。只有重新制作示例书时，才需要原始 EPUB 目录：`npm run books -- --source /absolute/path/to/starter-books`，也可设置 `QIAOMU_STARTER_BOOKS`；目录需含 `catalog.json` 和相应 EPUB。
 
 本轮通过 **47 项自动化测试**，覆盖 EPUB/TXT/PDF 样例、状态与笔记等；独立 Harness Web profile 已验证 tgz 安装、宿主启动、书库、打开 EPUB 和目录。AI 推理、全部格式的真实文件导入及其他操作系统未在本轮端到端覆盖。[详细验证](docs/RELEASE-VALIDATION.md)
@@ -125,6 +129,8 @@ The library screenshot shows the actual component using starter books and test f
 **Batch imports:** select multiple EPUB/PDF/TXT files and process them sequentially. Append files while importing, stop after the current file, continue manually, cancel waiting items, or retry individual/all failures at the tail. Stopped queues remain stopped when files are added or retried. Identical content updates one book; identical names with different content create separate books. Outcomes distinguish host library saves, browser-only saves and failures. Browser-only saves require both bytes and a recoverable index; retry them to save to the host. A host save remains successful if its auxiliary browser cache fails. Page switches keep the queue running, but reloads, restarts and plugin unloads do not restore it. Clearing processed records keeps books but releases files needed for retries. Host index mutations are serialized per plugin instance, not across independent host processes.
 
 **Tags:** use the top tag filter to search existing tags and match any or all selected tags across the library, combined with title/author, reading status and format filters. Tags appear below each author. Edit one book or select filtered books to add/remove specific tags without replacing their other tags. The selection bar shows the selected count without a separate selection hint; clearing and bulk actions are disabled when no books are selected. Selection mode hides sorting while retaining the current order and restores the control on exit; format filtering remains available on narrow screens. Pending edits and new names are committed on Save; cancelling does not write. A single input searches existing tags or stages a new tag on Enter, with no writes until confirmation. Removal offers only tags assigned to selected books. Stable automatic colours identify tag chips throughout the UI. There is no standalone tag manager, rename or delete entry; unused tags remain available. Tags do not move or duplicate files, and imports are unchanged. Host-confirmed tags are cached for offline viewing/filtering; editing requires a host connection and a refreshed library.
+
+**EPUB images:** paginated images fit the current page height and column width proportionally without enlarging small images. An image that does not fit the remaining space advances to the next column; multiple images may occupy different pages and leave blank space. Multi-image containers remain fragmentable, and captions may paginate separately. Pagination temporarily overrides fixed inline image dimensions and restores them in continuous scroll mode; PDF is unchanged. Window, font and spread changes recalculate the limits. Complex fixed layouts and inline SVG drawings are outside this guarantee.
 
 **Chapter navigation:** forward entry starts at the next chapter’s first page; backward entry lands on the previous chapter’s last page. Page requests during chapter loading and layout are ignored, not queued. Held keys continue after layout completes without requiring release at chapter boundaries.
 

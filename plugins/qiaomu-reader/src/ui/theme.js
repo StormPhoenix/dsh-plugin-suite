@@ -445,6 +445,10 @@ button.qmr-tag-badge:hover:not(:disabled){border-color:var(--qmr-tag-tone,var(--
 .qmr-paper-body h1,.qmr-paper-body h2,.qmr-paper-body h3,.qmr-paper-body h4{margin:1.1em 0 .6em;line-height:1.35;font-weight:600}
 .qmr-paper-body h1{font-size:1.5em}.qmr-paper-body h2{font-size:1.3em}.qmr-paper-body h3{font-size:1.15em}
 .qmr-paper-body img{max-width:100%;height:auto;border-radius:6px;margin:.6em 0}
+/* Reserve the image margins and an inline line box; keep multi-image containers fragmentable. */
+.qmr-paper-body[data-qmr-image-pages] img{width:auto!important;height:auto!important;min-width:0!important;min-height:0!important;
+  max-width:min(100%,var(--qmr-image-column-width))!important;max-height:max(1px,calc(var(--qmr-image-page-height) - 1.2em - 1lh))!important;
+  margin-block:.6em!important;vertical-align:top;object-fit:contain;break-inside:avoid}
 .qmr-pdf-sheet{position:relative;container-type:inline-size;max-width:100%;height:auto;margin:0 auto 20px;
   background:#fff;box-shadow:0 2px 16px rgba(0,0,0,.12)}
 .qmr-pdf-sheet img{display:block;width:100%;height:100%;max-width:none;object-fit:fill;margin:0;border-radius:0}

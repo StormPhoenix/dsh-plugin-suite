@@ -37,7 +37,12 @@ class Target {
 
 // Only geometry used by the reader effects is modeled; this is not a browser layout engine.
 class Element extends Target {
-  style = {};
+  style = {
+    getPropertyValue(name) { return this[name] || ''; },
+    getPropertyPriority() { return ''; },
+    setProperty(name, value) { this[name] = value; },
+    removeProperty(name) { delete this[name]; },
+  };
   children = [];
   clientWidth = 800;
   clientHeight = 600;
@@ -187,6 +192,48 @@ function harness({ format = 'epub', fontSize = 18, pdfZoom = 1, flow = 'scroll',
     nodes: () => walk(tree), element: (name) => elements.get(name),
     setSettings: (patch) => { settings = { ...settings, ...patch }; dirty = true; commit(); },
   };
+}
+
+test('EPUB image page budgets follow viewport, spread, load and mode changes', async () => {
+  const app = harness({ flow: 'paginated', render: () => Promise.resolve('<p><img src="cover"></p>') });
+  try {
+    await app.advance(0);
+    const content = app.element('qmr-page-flow qmr-paper-body');
+    const viewport = app.element('qmr-page-viewport');
+    const image = content.querySelector('img');
+    assert.equal(content.style['--qmr-image-page-height'], '600px');
+    assert.equal(content.style['--qmr-image-column-width'], '800px');
+    assert.equal(app.nodes().find((node) => hasClass(node, 'qmr-page-flow')).props['data-qmr-image-pages'], '');
+    viewport.clientWidth = 1200; viewport.clientHeight = 420;
+    app.setSettings({ spread: true });
+    assert.equal(content.style['--qmr-image-column-width'], '572px');
+    assert.equal(content.style['--qmr-image-page-height'], '420px');
+    image.complete = true; image.dispatch('load', { target: image });
+    await app.advance(0); app.frame();
+    assert.equal(content.style['--qmr-image-page-height'], '420px');
+    viewport.clientWidth = 640; viewport.clientHeight = 300;
+    app.window.dispatch('resize', {}); app.frame();
+    assert.equal(content.style['--qmr-image-column-width'], '640px');
+    assert.equal(content.style['--qmr-image-page-height'], '300px');
+    app.setSettings({ flow: 'scroll' });
+    assert.equal(content.style['--qmr-image-page-height'], undefined);
+    assert.equal(content.style['--qmr-image-column-width'], undefined);
+    assert.equal(app.nodes().find((node) => hasClass(node, 'qmr-page-flow')).props['data-qmr-image-pages'], undefined);
+    app.setSettings({ flow: 'paginated' });
+    assert.equal(content.style['--qmr-image-page-height'], '300px');
+  } finally { app.dispose(); }
+});
+
+for (const format of ['txt', 'pdf']) {
+  test(`${format} does not receive EPUB image sizing constraints`, async () => {
+    const app = harness({ format, flow: 'paginated' });
+    try {
+      await app.advance(0); app.frame();
+      const content = app.element('qmr-page-flow qmr-paper-body');
+      assert.equal(content.style['--qmr-image-page-height'], undefined);
+      assert.equal(app.nodes().find((node) => hasClass(node, 'qmr-page-flow')).props['data-qmr-image-pages'], undefined);
+    } finally { app.dispose(); }
+  });
 }
 
 for (const width of [800, 1600, 3200, 4800]) {

@@ -103421,6 +103421,10 @@ button.qmr-tag-badge:hover:not(:disabled){border-color:var(--qmr-tag-tone,var(--
 .qmr-paper-body h1,.qmr-paper-body h2,.qmr-paper-body h3,.qmr-paper-body h4{margin:1.1em 0 .6em;line-height:1.35;font-weight:600}
 .qmr-paper-body h1{font-size:1.5em}.qmr-paper-body h2{font-size:1.3em}.qmr-paper-body h3{font-size:1.15em}
 .qmr-paper-body img{max-width:100%;height:auto;border-radius:6px;margin:.6em 0}
+/* Reserve the image margins and an inline line box; keep multi-image containers fragmentable. */
+.qmr-paper-body[data-qmr-image-pages] img{width:auto!important;height:auto!important;min-width:0!important;min-height:0!important;
+  max-width:min(100%,var(--qmr-image-column-width))!important;max-height:max(1px,calc(var(--qmr-image-page-height) - 1.2em - 1lh))!important;
+  margin-block:.6em!important;vertical-align:top;object-fit:contain;break-inside:avoid}
 .qmr-pdf-sheet{position:relative;container-type:inline-size;max-width:100%;height:auto;margin:0 auto 20px;
   background:#fff;box-shadow:0 2px 16px rgba(0,0,0,.12)}
 .qmr-pdf-sheet img{display:block;width:100%;height:100%;max-width:none;object-fit:fill;margin:0;border-radius:0}
@@ -105238,6 +105242,32 @@ function LibraryView({ ui }) {
 // src/ui/reader.js
 var React14 = __toESM(require("react"), 1);
 
+// src/ui/image-pagination.js
+var SIZE_PROPERTIES = ["width", "height", "min-width", "min-height", "max-width", "max-height"];
+function fitPageImages(flow, enabled, originals) {
+  for (const image of flow.querySelectorAll("img")) {
+    if (!enabled) {
+      const saved = originals.get(image);
+      if (!saved) continue;
+      for (const [name, value, priority] of saved) {
+        if (value) image.style.setProperty(name, value, priority);
+        else image.style.removeProperty(name);
+      }
+      originals.delete(image);
+      continue;
+    }
+    if (!originals.has(image)) originals.set(image, SIZE_PROPERTIES.map((name) => [name, image.style.getPropertyValue(name), image.style.getPropertyPriority(name)]));
+    image.style.setProperty("width", "auto", "important");
+    image.style.setProperty("height", "auto", "important");
+    image.style.setProperty("min-width", "0", "important");
+    image.style.setProperty("min-height", "0", "important");
+    const width = image.naturalWidth ? `${image.naturalWidth}px,` : "";
+    const height = image.naturalHeight ? `${image.naturalHeight}px,` : "";
+    image.style.setProperty("max-width", `min(${width}100%,var(--qmr-image-column-width))`, "important");
+    image.style.setProperty("max-height", `min(${height}max(1px,calc(var(--qmr-image-page-height) - 1.2em - 1lh)))`, "important");
+  }
+}
+
 // src/ui/companion.js
 var React7 = __toESM(require("react"), 1);
 var import_react_dom = require("react-dom");
@@ -106528,6 +106558,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const [pageCount, setPageCount] = React14.useState(1);
   const viewportRef = React14.useRef(null);
   const flowRef = React14.useRef(null);
+  const imageSizeOverridesRef = React14.useRef(/* @__PURE__ */ new WeakMap());
   const measureRef = React14.useRef({ pages: 1, perPage: 1, columnWidth: 320, gap: COLUMN_GAP });
   const lastHtmlRef = React14.useRef(null);
   const decoratedRef = React14.useRef(null);
@@ -106744,6 +106775,13 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       const sheet = isPdf && flow.querySelector(".qmr-pdf-sheet");
       if (sheet) sheet.style.width = `${width * settings.pdfZoom}px`;
       flow.style.height = paginated ? `${Math.max(1, viewport.clientHeight)}px` : "auto";
+      if (paginated && book?.format === "epub") {
+        flow.style.setProperty("--qmr-image-page-height", `${Math.max(1, viewport.clientHeight)}px`);
+        flow.style.setProperty("--qmr-image-column-width", `${columnWidth}px`);
+      } else {
+        flow.style.removeProperty("--qmr-image-page-height");
+        flow.style.removeProperty("--qmr-image-column-width");
+      }
       if (paginated) {
         flow.style.columnWidth = `${columnWidth}px`;
         flow.style.columnCount = String(perPage);
@@ -106754,6 +106792,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
         flow.style.columnWidth = "auto";
         flow.style.transform = "none";
       }
+      fitPageImages(flow, paginated && book?.format === "epub", imageSizeOverridesRef.current);
       let pages = 1;
       if (paginated) {
         const total = flow.scrollWidth || width;
@@ -106771,7 +106810,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     } catch (_error) {
       return measureRef.current;
     }
-  }, [settings.flow, settings.spread, settings.pdfZoom, isPdf, setPage]);
+  }, [settings.flow, settings.spread, settings.pdfZoom, isPdf, book?.format, setPage]);
   const revealNode = React14.useCallback((node) => {
     if (!node) return;
     ++restoreEpochRef.current;
@@ -107641,6 +107680,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
           { className: "qmr-page-frame", style: contentStyle },
           h13("div", { className: viewportClass, ref: viewportRef }, h13("div", {
             className: "qmr-page-flow qmr-paper-body",
+            "data-qmr-image-pages": book?.format === "epub" && settings.flow !== "scroll" ? "" : void 0,
             ref: flowRef,
             style: flowStyle,
             onClick: onContentClick,
