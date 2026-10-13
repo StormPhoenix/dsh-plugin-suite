@@ -99,7 +99,7 @@ import {
 import { agentErrorFrame, reduceNotifyFrame, shouldNotifySession, type HostNotifyFrame } from './notify-events';
 import { profileNameFrom, storageEntries } from './storage-paths';
 import { PollStateStore } from './state';
-import { windowActivation } from './window-activation';
+import { desktopActivationPid, WindowActivationError, windowActivation } from './window-activation';
 import {
   HelperProcess,
   defaultElectronExe,
@@ -238,7 +238,8 @@ function readBody(req: IncomingMessage): Promise<string> {
 /** 宿主插件主体：注册 `/dsh-pet-7340` 前缀路由 + 斜杠命令（/balance /pet /chat）。 */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- DSH 注入的 ctx（webServer/locale 等 service 无静态类型）
 export function apply(ctx: any): void {
-  const activation = process.platform === 'win32' && process.env.DSH_DESKTOP_WINDOW_ACTIVATION === '1' && process.send
+  const desktopPid = desktopActivationPid(process.env.DSH_DESKTOP_WINDOW_ACTIVATION_PID);
+  const activation = process.platform === 'win32' && process.env.DSH_DESKTOP_WINDOW_ACTIVATION === '1' && desktopPid && process.send
     ? windowActivation({
         get connected() { return process.connected; },
         send(message, callback) { return process.send!(message, callback); },
@@ -653,6 +654,7 @@ export function apply(ctx: any): void {
           DSH_PET_CONFIG_URL: configUrl,
           DSH_PET_SCALE: '1',
           DSH_PET_HOST_EXECUTABLE: process.execPath,
+          DSH_PET_DESKTOP_PID: activation ? desktopPid : undefined,
           // 打开 bridge 协议：main.js 注册 dsh-pet-bridge scheme，把渲染端请求经管道转给宿主
           DSH_PET_BRIDGE: '1',
           // 每只桌面宠物一个局部小窗口：透传宠物列表（[{id,size}]）
@@ -662,12 +664,22 @@ export function apply(ctx: any): void {
         // 素材过文件路径（main.js 自行读盘），json/text 过 body
         bridgeHandler: async (req) => {
           if (req.method === 'POST' && req.url === '/dsh-pet-7340/activate-desktop') {
-            let result: { ok: boolean; reason?: string };
+            let result: { ok: boolean; code?: string; reason?: string };
             try {
-              if (!activation) throw new Error('当前 Desktop 不支持直接唤起，请更新并重启 DSH Desktop');
+              if (!activation) throw new WindowActivationError('unavailable', '请更新并重启 DSH Desktop');
               await activation.activate();
               result = { ok: true };
-            } catch (error) { result = { ok: false, reason: error instanceof Error ? error.message : String(error) }; }
+            } catch (error) {
+              const code = error instanceof WindowActivationError ? error.code : 'unavailable';
+              console.error('[dsh-pet] Desktop activation failed:', error);
+              const reasons: Record<string, string> = {
+                'unavailable': 'DSH 连接不可用，请重启 DSH Desktop',
+                'focus-denied': 'DSH 已显示，但未能切到前台，请点击任务栏图标',
+                'activation-timeout': 'DSH 唤起超时，请点击任务栏图标',
+                'disconnect': 'DSH 连接已断开，请重启 DSH Desktop',
+              };
+              result = { ok: false, code, reason: activation ? (reasons[code] ?? reasons.unavailable) : '请更新并重启 DSH Desktop' };
+            }
             return { id: req.id, status: 200, contentType: 'application/json', body: JSON.stringify(result) };
           }
           const result = await handlePetRoute(req.url ?? '/', req.method ?? 'GET', req.body);

@@ -6,4 +6,4 @@
 
 默认配置在 [config.jsonc](assets/config.jsonc)，用户配置与聊天记忆保存在 `$DSH_HOME/dsh-pet/`。聊天与碎碎念可能调用模型；禁用相应功能可停止对应请求。迁移安装不删除用户数据。
 
-附带源码不保证与现有构建产物同步。Windows 双击激活功能依赖修复版 Host/Desktop IPC；没有该能力的 DSH 不支持这一功能。替换运行中的 Helper 文件可能报 EPERM，需退出 Desktop 后重试。来源与许可见 [来源说明](../../UPSTREAM.md)。
+附带源码不保证与现有构建产物同步。Windows 双击激活依赖协同升级后的插件与 Desktop：Desktop 必须提供自身的 `DSH_DESKTOP_WINDOW_ACTIVATION_PID`，旧版仅提供能力标记时激活不可用。`koffi` 声明为 `optionalDependencies`；缺失或无法加载其原生模块时，仅停用窗口激活，桌宠其他功能仍可使用。升级本目录的构建产物与 Desktop 后，完全退出并重启 Desktop；源码修改需重新构建，刷新页面不足以生效。替换运行中的 Helper 文件可能报 EPERM，需退出 Desktop 后重试。受支持 Windows 矩阵的真实原生激活尚待验证。来源与许可见 [来源说明](../../UPSTREAM.md)。

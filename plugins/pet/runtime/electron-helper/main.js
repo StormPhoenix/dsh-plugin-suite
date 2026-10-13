@@ -732,6 +732,9 @@ app.whenReady().then(() => {
     inputBusy.set(win.id, !!busy);
   });
 
+  const foregroundActivation = process.platform === 'win32'
+    ? require('./windows-activation.js').windowsActivation(process.env.DSH_PET_DESKTOP_PID)
+    : null;
   // Only pet windows may request activation; the target comes from the owning Host.
   ipcMain.handle('pet:activate-desktop', async (event) => {
     if (![...windows.values()].some((win) => !win.isDestroyed() && win.webContents === event.sender)) {
@@ -740,7 +743,7 @@ app.whenReady().then(() => {
     try {
       if (process.platform === 'win32') {
         if (!BRIDGE) throw new Error('当前宠物未连接 DSH Desktop 宿主');
-        const response = await bridgeRequest('POST', '/dsh-pet-7340/activate-desktop');
+        const response = await foregroundActivation.activate(() => bridgeRequest('POST', '/dsh-pet-7340/activate-desktop'));
         if (response.status !== 200 || !response.body) throw new Error('Desktop 唤起请求失败');
         return JSON.parse(response.body);
       }
@@ -748,7 +751,7 @@ app.whenReady().then(() => {
       await activateDesktop(process.env.DSH_PET_HOST_EXECUTABLE);
       return { ok: true };
     } catch (error) {
-      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      return { ok: false, code: error?.code || 'unavailable', reason: error instanceof Error ? error.message : String(error) };
     }
   });
 

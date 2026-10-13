@@ -1,3 +1,5 @@
 packages:
   - plugins/*
 autoInstallPeers: false
+allowBuilds:
+  koffi: false

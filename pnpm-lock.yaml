@@ -347,6 +347,10 @@ importers:
       '@electron/get':
         specifier: ^5.1.0
         version: 5.1.0
+    optionalDependencies:
+      koffi:
+        specifier: ^2.15.2
+        version: 2.16.3
 
   plugins/qiaomu-reader:
     dependencies:
@@ -2292,6 +2296,9 @@ packages:
 
   khroma@2.1.0:
     resolution: {integrity: sha512-Ls993zuzfayK269Svk9hzpeGUKob/sIgZzyHYdjQoAdQetRKpOLj+k/QQQ/6Qi0Yz65mlROrfd+Ev+1+7dz9Kw==}
+
+  koffi@2.16.3:
+    resolution: {integrity: sha512-E9y1AsgYGlaxMhcZzHr8y96QF2U5XzA12GGVAfbWqIubTwPNMXQarfBzePNXHe0xtIEtNd6ifAv3GAKYGUeBAQ==}
 
   layout-base@1.0.2:
     resolution: {integrity: sha512-8h2oVEZNktL4BH2JCOI90iD1yXwL6iNW7KcCKT2QZgQJR2vbqDsldCTPRU9NifTCqHZci57XvQQ15YTu+sTYPg==}
@@ -5037,6 +5044,9 @@ snapshots:
       '@keyv/serialize': 1.1.1
 
   khroma@2.1.0: {}
+
+  koffi@2.16.3:
+    optional: true
 
   layout-base@1.0.2: {}
 

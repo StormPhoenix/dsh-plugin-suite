@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { createReadStream, existsSync, fstatSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -7,10 +8,9 @@ import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
 import { BlockAssembler, ReasoningEffortId, createAssistantMessage, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
 import { downloadArtifact } from "@electron/get";
 import extract from "@electron-internal/extract-zip";
-//#region .local/dsh-pet-windows/src/host/balance/internal.ts
+//#region src/host/balance/internal.ts
 /**
 * 余额查询的**内部工具**（host 侧）：网络策略 + 响应校验 + 金额处理。
 *
@@ -117,7 +117,7 @@ function sumMoney(a, b) {
 	return ((Math.round(Number(a) * 100) + Math.round(Number(b) * 100)) / 100).toFixed(2);
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/balance/providers/commandcode.ts
+//#region src/host/balance/providers/commandcode.ts
 /**
 * Command Code（provider id `commandcode`）—— 三窗口用量，走**控制面** `/alpha/*`。
 *
@@ -213,7 +213,7 @@ const commandCode = {
 	}
 };
 //#endregion
-//#region .local/dsh-pet-windows/src/host/balance/deepseek-common.ts
+//#region src/host/balance/deepseek-common.ts
 /**
 * DeepSeek 峰谷计价档位（北京时间）：
 * - 高峰：工作日 9:00–12:00、14:00–18:00；其余为空闲（低谷）
@@ -236,7 +236,7 @@ function deepseekPricingTier(now = /* @__PURE__ */ new Date()) {
 	return hour >= 9 && hour < 12 || hour >= 14 && hour < 18 ? "peak" : "idle";
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/balance/providers/deepseek-account.ts
+//#region src/host/balance/providers/deepseek-account.ts
 /**
 * DSH 账号路由（provider id `deepseek-account`）—— 免费额度 / 平台登录，账户金额。
 *
@@ -289,7 +289,7 @@ const deepseekAccount = {
 	}
 };
 //#endregion
-//#region .local/dsh-pet-windows/src/host/balance/providers/deepseek-official.ts
+//#region src/host/balance/providers/deepseek-official.ts
 /**
 * DeepSeek 官方 API Key 路由（provider id `deepseek-official`）—— 账户金额。
 *
@@ -327,7 +327,7 @@ const deepseekOfficial = {
 	}
 };
 //#endregion
-//#region .local/dsh-pet-windows/src/host/balance/providers/opencode-go.ts
+//#region src/host/balance/providers/opencode-go.ts
 /**
 * OpenCode Go（provider id `opencode-go`）—— 三窗口用量。
 *
@@ -347,7 +347,7 @@ const QUOTA_USD = {
 /** 滚动窗时长（展示名）：本服务商是 5 小时 */
 const ROLLING_LABEL = "5h";
 //#endregion
-//#region .local/dsh-pet-windows/src/host/balance/index.ts
+//#region src/host/balance/index.ts
 /**
 * 余额查询（host 半侧）：把「当前服务商」映射到对应的余额/用量接口并抓取。
 *
@@ -450,7 +450,7 @@ async function queryBalance(provider, resolveKey, resolveAccount) {
 	}
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/llm-reasoning.ts
+//#region src/host/llm-reasoning.ts
 /**
 * 当前 provider/model 是否声明支持 reasoning effort（含 "off"）。
 * 能力缺失或查询失败一律保守返回 false（= 不传，等价于模型默认行为，避免请求失败）。
@@ -465,7 +465,7 @@ async function supportsReasoningOff(ctx, provider, model) {
 	}
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/model-selection.ts
+//#region src/host/model-selection.ts
 /** 读条目配置里的 whisperModel / chatModel：
 *  两个字段都非空 → 该选择；都为空（内置默认）→ undefined（= 跟随当前对话）；
 *  结构不对 / 只填一半（合并器已挡下，这里再防御一次）→ undefined。 */
@@ -511,7 +511,7 @@ function modelLabel(m) {
 	return m.provider + "/" + m.model;
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/whisper.ts
+//#region src/host/whisper.ts
 /**
 * 碎碎念生成（host 半侧）：用 DSH 的 LLM 统一抽象层（ctx.llm）按条目配置的 whisperModel
 * （留空 = 当前对话用的 provider/model）生成一句话。与余额不同：不自己拼各服务商端点、不碰凭证——
@@ -623,7 +623,7 @@ async function generateWith$1(ctx, llm, sel, system, meme) {
 	};
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/memes.ts
+//#region src/host/memes.ts
 /**
 * 表情包池（host 半侧）：把配置的 memes 映射（名称 → 描述）解析成可用的候选池。
 *
@@ -712,7 +712,7 @@ function limitPool(pool, limit) {
 	return pool.slice(0, n);
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/chat.ts
+//#region src/host/chat.ts
 /**
 * 对话生成（host 半侧）：用 DSH 的 LLM 统一抽象层（ctx.llm）按条目配置的 chatModel
 * （留空 = 当前对话用的 provider/model）生成一句回复。与碎碎念（generateWhisper）同构，区别是：
@@ -847,7 +847,7 @@ async function generateWith(ctx, llm, sel, system, history, userText, pool) {
 	};
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/config.ts
+//#region src/host/config.ts
 /**
 * host 侧配置模块 —— 全项目唯一的配置读取入口与写盘出口。
 *
@@ -1425,7 +1425,7 @@ function sliceMemoryRounds(messages, rounds) {
 	return rounds > 0 ? messages.slice(-Math.floor(rounds) * 2) : [];
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/broadcast.ts
+//#region src/host/broadcast.ts
 /**
 * 第三方投喂（`POST /dsh-pet-7340/broadcast`）的**纯决策层**。
 *
@@ -1498,7 +1498,7 @@ function decideBroadcast(args) {
 	};
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/anim.ts
+//#region src/host/anim.ts
 /**
 * 播放动画（`POST /dsh-pet-7340/anim`）的**纯决策层**。
 *
@@ -1585,7 +1585,7 @@ function decideAnim(args) {
 	};
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/work-status.ts
+//#region src/host/work-status.ts
 /**
 * turn/end reason.kind → 状态：
 *   completed → success、错误系（error/max-tokens/timeout）→ error、blocked → waiting（回合被阻塞，等用户确认）；
@@ -1747,7 +1747,7 @@ var WorkStatusStore = class {
 	}
 };
 //#endregion
-//#region .local/dsh-pet-windows/src/host/notify-events.ts
+//#region src/host/notify-events.ts
 /**
 * 这条会话的事件该不该变成通知。
 *
@@ -1838,7 +1838,7 @@ function agentErrorFrame(error) {
 	};
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/storage-paths.ts
+//#region src/host/storage-paths.ts
 /**
 * 插件存储位置清单（设置页「卸载与存储」区块的数据源）。
 *
@@ -1939,7 +1939,7 @@ function profileNameFrom(packageRoot) {
 	return /[\\/]profiles[\\/]([^\\/]+)[\\/]node_modules[\\/][^\\/]+[\\/]?$/.exec(packageRoot)?.[1];
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/state.ts
+//#region src/host/state.ts
 /** 空叶子：counter=0 表示"从未写过"——前端首拉把它当基线，之后 counter 变化才渲染 */
 const emptyLeaf = () => ({
 	counter: 0,
@@ -1999,20 +1999,35 @@ var PollStateStore = class {
 	}
 };
 //#endregion
-//#region .local/dsh-pet-windows/src/host/window-activation.ts
+//#region src/host/window-activation.ts
+/** Correlated window activation on the Desktop parent's private process IPC. */
+/** Expected activation failure, with a stable code independent of display text. */
+var WindowActivationError = class extends Error {
+	code;
+	constructor(code, message) {
+		super(message);
+		this.code = code;
+	}
+};
+/** Validate the Desktop PID supplied across the process environment. */
+function desktopActivationPid(value) {
+	if (!value || !/^[1-9]\d*$/.test(value)) return void 0;
+	const pid = Number(value);
+	return Number.isSafeInteger(pid) && pid < 4294967295 ? value : void 0;
+}
 /** Create one activation caller; dispose rejects outstanding requests and detaches listeners. */
 function windowActivation(transport, deadlineMs = 2e3) {
 	let nextId = 1;
 	let disposed = false;
 	const pending = /* @__PURE__ */ new Map();
-	const unavailable = () => /* @__PURE__ */ new Error("Desktop window activation is unavailable");
+	const unavailable = () => new WindowActivationError("unavailable", "Desktop window activation is unavailable");
 	const disconnect = () => {
-		for (const request of pending.values()) request.reject(unavailable());
+		for (const request of pending.values()) request.reject(new WindowActivationError("disconnect", "Desktop window activation is unavailable: disconnected"));
 	};
 	const message = (input) => {
-		if (typeof input !== "object" || input === null || !("type" in input) || input.type !== "window-activated" || !("requestId" in input) || typeof input.requestId !== "number" || !Number.isSafeInteger(input.requestId) || "error" in input && typeof input.error !== "string") return;
+		if (typeof input !== "object" || input === null || !("type" in input) || input.type !== "window-activated" || !("requestId" in input) || typeof input.requestId !== "number" || !Number.isSafeInteger(input.requestId) || "error" in input && typeof input.error !== "string" || "errorCode" in input && typeof input.errorCode !== "string") return;
 		const request = pending.get(input.requestId);
-		if ("error" in input) request?.reject(new Error(input.error));
+		if ("error" in input) request?.reject(new WindowActivationError("errorCode" in input ? input.errorCode : "unavailable", input.error));
 		else request?.resolve();
 	};
 	transport.on("message", message);
@@ -2028,7 +2043,7 @@ function windowActivation(transport, deadlineMs = 2e3) {
 						resolve,
 						reject
 					});
-					timer = setTimeout(() => reject(/* @__PURE__ */ new Error("Desktop window activation timed out")), deadlineMs);
+					timer = setTimeout(() => reject(new WindowActivationError("activation-timeout", "Desktop window activation timed out")), deadlineMs);
 					try {
 						transport.send({
 							type: "activate-window",
@@ -2055,7 +2070,7 @@ function windowActivation(transport, deadlineMs = 2e3) {
 	};
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/helper-process.ts
+//#region src/host/helper-process.ts
 /**
 * 桌面 Helper 进程管理器 —— 拉起/守护 Electron 透明窗口进程。
 *
@@ -2452,7 +2467,7 @@ function envPositiveInt(value, fallback) {
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 //#endregion
-//#region .local/dsh-pet-windows/src/host/index.ts
+//#region src/host/index.ts
 /**
 * dsh-pet 宿主半侧（host half）—— 宠物插件的"后端"部分
 *
@@ -2620,7 +2635,8 @@ function readBody(req) {
 }
 /** 宿主插件主体：注册 `/dsh-pet-7340` 前缀路由 + 斜杠命令（/balance /pet /chat）。 */
 function apply(ctx) {
-	const activation = process.platform === "win32" && process.env.DSH_DESKTOP_WINDOW_ACTIVATION === "1" && process.send ? windowActivation({
+	const desktopPid = desktopActivationPid(process.env.DSH_DESKTOP_WINDOW_ACTIVATION_PID);
+	const activation = process.platform === "win32" && process.env.DSH_DESKTOP_WINDOW_ACTIVATION === "1" && desktopPid && process.send ? windowActivation({
 		get connected() {
 			return process.connected;
 		},
@@ -2948,6 +2964,7 @@ function apply(ctx) {
 				DSH_PET_CONFIG_URL: configUrl,
 				DSH_PET_SCALE: "1",
 				DSH_PET_HOST_EXECUTABLE: process.execPath,
+				DSH_PET_DESKTOP_PID: activation ? desktopPid : void 0,
 				DSH_PET_BRIDGE: "1",
 				DSH_PET_PETS: JSON.stringify(desktopPetList())
 			},
@@ -2955,13 +2972,22 @@ function apply(ctx) {
 				if (req.method === "POST" && req.url === "/dsh-pet-7340/activate-desktop") {
 					let result;
 					try {
-						if (!activation) throw new Error("当前 Desktop 不支持直接唤起，请更新并重启 DSH Desktop");
+						if (!activation) throw new WindowActivationError("unavailable", "请更新并重启 DSH Desktop");
 						await activation.activate();
 						result = { ok: true };
 					} catch (error) {
+						const code = error instanceof WindowActivationError ? error.code : "unavailable";
+						console.error("[dsh-pet] Desktop activation failed:", error);
+						const reasons = {
+							"unavailable": "DSH 连接不可用，请重启 DSH Desktop",
+							"focus-denied": "DSH 已显示，但未能切到前台，请点击任务栏图标",
+							"activation-timeout": "DSH 唤起超时，请点击任务栏图标",
+							"disconnect": "DSH 连接已断开，请重启 DSH Desktop"
+						};
 						result = {
 							ok: false,
-							reason: error instanceof Error ? error.message : String(error)
+							code,
+							reason: activation ? reasons[code] ?? reasons.unavailable : "请更新并重启 DSH Desktop"
 						};
 					}
 					return {
