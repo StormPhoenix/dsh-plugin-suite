@@ -12,6 +12,7 @@ export function remoteHostApi(ctx) {
     library: () => call('library'),
     createTag: (request) => call('createTag', request),
     renameTag: (request) => call('renameTag', request),
+    renameBook: (request) => call('renameBook', request),
     deleteTag: (request) => call('deleteTag', request),
     updateBookTags: (request) => call('updateBookTags', request),
     migrateBookTags: (request) => call('migrateBookTags', request),

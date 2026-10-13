@@ -53,6 +53,52 @@ function harness(state = {}, language = 'en') {
   return { ui, calls, snapshot, books: value => { books = value; snapshot.dataRevision++; }, catalog: value => { catalog = value; snapshot.dataRevision++; } };
 }
 
+for (const language of ['zh', 'en']) test(`rename dialog validates names and confirms once before closing (${language})`, async (t) => {
+  const r = await renderer('../src/ui/library.js'); t.after(() => r.unmount());
+  const app = harness({}, language); let closed = 0, resolve;
+  app.ui.toast = (...args) => app.calls.push(['toast', ...args]);
+  app.ui.renameBook = request => { app.calls.push(['renameBook', request]); return new Promise(done => { resolve = done; }); };
+  const words = LIBRARY_MESSAGES[language].catalogRename;
+  const render = () => r.render(r.exports.RenameBookDialog, { ui: app.ui, book: { id: 'a', title: 'Alpha' }, onClose: () => closed++ });
+  let root = render();
+  assert.equal(button(root, words.save).props.disabled, true);
+  for (const value of [' ', '\nName', '📚'.repeat(201)]) {
+    input(root, undefined).props.onChange({ target: { value } }); root = render();
+    assert.equal(button(root, words.save).props.disabled, true);
+    assert.ok(walk(root).some(node => node.props.role === 'alert'));
+  }
+  input(root, undefined).props.onChange({ target: { value: '  New 📚  ' } }); root = render();
+  let prevented = false;
+  input(root, undefined).props.onKeyDown({ key: 'Enter', nativeEvent: { isComposing: true }, preventDefault() { prevented = true; } });
+  assert.equal(prevented, false); assert.equal(app.calls.length, 0);
+  const pending = button(root, words.save).props.onClick();
+  await button(root, words.save).props.onClick();
+  assert.equal(app.calls.length, 1);
+  assert.equal(app.calls[0][1].title, 'New 📚');
+  root = render(); assert.equal(button(root, words.saving).props.disabled, true);
+  assert.equal(button(root, words.cancel).props.disabled, true);
+  r.listeners.get('keydown')({ key: 'Escape', preventDefault() {}, stopPropagation() {} }); assert.equal(closed, 0);
+  resolve({ ok: false }); await pending; root = render();
+  assert.equal(closed, 0); assert.equal(input(root, undefined).props.value, '  New 📚  ');
+  assert.ok(walk(root).some(node => node.props.role === 'alert' && text(node) === words.failed));
+  const retry = button(root, words.save).props.onClick(); resolve({ ok: true, warning: 'BOOK_CACHE_FAILED' }); await retry;
+  assert.equal(closed, 1); assert.equal(app.calls.at(-1)[1], words.cacheWarning);
+});
+
+test('rename menu excludes starters and disables browser-only books', async (t) => {
+  const r = await renderer('../src/ui/library.js'); t.after(() => r.unmount());
+  const app = harness(); app.ui.canRenameBook = id => id === 'a'; app.ui.isStarterBook = id => id === 'c';
+  const render = () => r.render(r.exports.LibraryView, { ui: app.ui });
+  for (const [id, expected] of [['a', false], ['b', true], ['c', null]]) {
+    let root = render();
+    const row = walk(root).find(node => node.props.className?.startsWith('qmr-book-row') && text(node).includes({ a: 'Alpha', b: 'Beta', c: 'Gamma' }[id]));
+    walk(row).find(node => node.props.className === 'qmr-lib-icon').props.onClick(); root = render();
+    const rename = walk(root).find(node => node.type === 'button' && text(node) === 'Rename');
+    if (expected === null) assert.equal(rename, undefined); else { assert.ok(rename); assert.equal(rename.props.disabled, expected); }
+    r.listeners.get('keydown')({ key: 'Escape', preventDefault() {}, stopPropagation() {} });
+  }
+});
+
 test('tag filter searches existing choices, supports any/all and exclusive no-tags', async () => {
   const r = await renderer('../src/ui/library-tags.js'); const app = harness();
   const props = () => ({ ui: app.ui, ids: app.snapshot.libraryTagIds || [], mode: app.snapshot.libraryTagMode || 'any', untagged: !!app.snapshot.libraryUntagged, onClose() {} });

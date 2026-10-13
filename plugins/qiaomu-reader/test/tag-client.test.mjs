@@ -43,6 +43,60 @@ test('tag edits publish only confirmed snapshots and distinguish cache failure',
   } finally { globalThis.localStorage = previous; }
 });
 
+test('book renaming requires host ownership and publishes only its confirmed record', async (t) => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, writable: true, value: memory() });
+  t.after(() => { if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor); else delete globalThis.localStorage; });
+  const book = { id: 'host-book', title: 'Original', format: 'txt', file: 'books/host-book.txt' };
+  let fail = true, calls = 0;
+  const data = createDataLayer({ host: {
+    library: async () => ({ ...catalog(), books: [book] }),
+    renameBook: async ({ title }) => { calls++; if (fail) throw new Error('rejected'); return { book: { ...book, title, originalTitle: book.title } }; },
+  } });
+  t.after(() => data.dispose());
+  await data.refreshLibrary();
+  assert.equal(data.canRenameBook(book.id), true);
+  assert.equal(data.canRenameBook('browser-only'), false);
+  const ids = data.getLibrary().books.map(entry => entry.id);
+  for (const id of ids.filter(id => id !== book.id)) assert.equal(data.canRenameBook(id), false);
+  assert.equal((await data.renameBook({ bookId: 'browser-only', title: 'Blocked' })).ok, false);
+  assert.equal(calls, 0);
+  let published = 0; const unsubscribe = data.subscribe(() => published++); t.after(unsubscribe);
+  assert.equal((await data.renameBook({ bookId: book.id, title: 'New' })).ok, false);
+  assert.equal(published, 0);
+  assert.equal(data.getLibrary().books.find(entry => entry.id === book.id).title, 'Original');
+  fail = false;
+  assert.equal((await data.renameBook({ bookId: book.id, title: 'New' })).ok, true);
+  assert.deepEqual(data.getLibrary().books.map(entry => entry.id), ids);
+  assert.equal((await loadLocalLibrary()).books.find(entry => entry.id === book.id).title, 'New');
+  assert.deepEqual(data.getLibrary().bookTags, catalog().bookTags);
+  globalThis.localStorage = { getItem() { return null; }, setItem() { throw new Error('quota'); } };
+  assert.equal((await data.renameBook({ bookId: book.id, title: 'Latest' })).warning, 'BOOK_CACHE_FAILED');
+  assert.equal(data.getLibrary().books.find(entry => entry.id === book.id).title, 'Latest');
+  const offline = createDataLayer(); t.after(() => offline.dispose()); await offline.refreshLibrary();
+  assert.equal(offline.canRenameBook(book.id), false);
+});
+
+test('disposed data layer does not publish a pending rename confirmation', async (t) => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, writable: true, value: memory() });
+  t.after(() => { if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor); else delete globalThis.localStorage; });
+  const book = { id: 'host-book', title: 'Original', format: 'txt' };
+  let resolve, entered;
+  const started = new Promise(done => { entered = done; });
+  const data = createDataLayer({ host: {
+    library: async () => ({ ...catalog(), books: [book] }),
+    renameBook: () => { entered(); return new Promise(done => { resolve = done; }); },
+  } });
+  t.after(() => data.dispose()); await data.refreshLibrary();
+  let published = 0; data.subscribe(() => published++);
+  const pending = data.renameBook({ bookId: book.id, title: 'New' });
+  await started; data.dispose(); resolve({ book: { ...book, title: 'New' } });
+  assert.equal((await pending).ok, false);
+  assert.equal(published, 0);
+  assert.equal(data.getLibrary().books.find(entry => entry.id === book.id).title, 'Original');
+});
+
 test('disposed data layer does not publish a pending tag mutation', async () => {
   const previous = globalThis.localStorage;
   try {

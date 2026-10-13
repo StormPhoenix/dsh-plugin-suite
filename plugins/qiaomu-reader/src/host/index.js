@@ -204,6 +204,7 @@ function normalizeBook(raw) {
   return {
     id: String(raw.id),
     title: typeof raw.title === 'string' && raw.title !== '' ? raw.title : '未命名书籍',
+    ...(typeof raw.originalTitle === 'string' ? { originalTitle: raw.originalTitle } : {}),
     author: typeof raw.author === 'string' ? raw.author : '',
     format: typeof raw.format === 'string' ? raw.format : 'epub',
     file: typeof raw.file === 'string' ? raw.file : null,
@@ -242,7 +243,7 @@ async function importBook(paths, input) {
   const book = normalizeBook({
     ...previous,
     id,
-    title: input.title ?? previous.title ?? path.basename(filename, path.extname(filename)),
+    title: typeof previous.originalTitle === 'string' ? previous.title : input.title ?? previous.title ?? path.basename(filename, path.extname(filename)),
     author: input.author ?? previous.author ?? '',
     format,
     file: path.posix.join('books', storedName),
@@ -441,6 +442,24 @@ export function apply(ctx, config = {}) {
         const bytes = await readFile(absolute);
         const { book } = await importBook(paths, { filename: path.basename(absolute), bytes, source: 'workspace' });
         return { book, from: absolute };
+      });
+    },
+
+    // Rename a host-library title without touching content or reading state.
+    renameBook(request) {
+      return mutate(async () => {
+        const title = typeof request?.title === 'string' ? request.title.trim() : '';
+        if (!title || /\p{Cc}/u.test(request.title) || [...title].length > 200) throw new Error('BOOK_NAME_INVALID');
+        const paths = await ensureFolders();
+        const library = await readLibrary(paths);
+        const index = library.books.findIndex((book) => book.id === request?.bookId);
+        if (index < 0) throw new Error('BOOK_NOT_FOUND');
+        const previous = library.books[index];
+        if (previous.title === title) return { book: normalizeBook(previous) };
+        const book = { ...previous, title, originalTitle: previous.originalTitle ?? previous.title };
+        library.books[index] = book;
+        await writeLibrary(paths, library);
+        return { book };
       });
     },
 
@@ -794,6 +813,7 @@ export default class ReaderService extends TypertRemoteService {
   info() { return this.api.info(); }
   library() { return this.api.library(); }
   importBook(request) { return this.api.import(request); }
+  renameBook(request) { return this.api.renameBook(request); }
   removeBook(request) { return this.api.remove(request.bookId); }
   loadState(request) { return this.api.loadState(request.bookId); }
   saveState(request) { return this.api.saveState(request.bookId, request.state); }
@@ -827,7 +847,7 @@ export default class ReaderService extends TypertRemoteService {
   }
 }
 
-for (const name of ['info', 'library', 'importBook', 'removeBook', 'loadState', 'saveState', 'readBookBytes', 'highlights', 'exportNotes', 'setReadingContext', 'createTag', 'renameTag', 'deleteTag', 'updateBookTags', 'migrateBookTags']) {
+for (const name of ['info', 'library', 'importBook', 'renameBook', 'removeBook', 'loadState', 'saveState', 'readBookBytes', 'highlights', 'exportNotes', 'setReadingContext', 'createTag', 'renameTag', 'deleteTag', 'updateBookTags', 'migrateBookTags']) {
   Remote(name)(ReaderService.prototype[name], {
     name, private: false, static: false,
     addInitializer(fn) { fn.call(Object.create(ReaderService.prototype)); },

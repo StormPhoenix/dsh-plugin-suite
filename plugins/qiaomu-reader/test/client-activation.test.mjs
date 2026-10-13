@@ -126,7 +126,7 @@ test('client mounts Reader Remote descriptors when Harness remote is available',
   await Promise.resolve();
   assert.equal(descriptor.package, 'qiaomu-reader-dsh');
   assert.deepEqual(Array.from(descriptor.descriptors, (item) => item.method), [
-    'info', 'library', 'importBook', 'removeBook', 'loadState', 'saveState', 'readBookBytes', 'highlights', 'exportNotes', 'setReadingContext', 'createTag', 'renameTag', 'deleteTag', 'updateBookTags', 'migrateBookTags',
+    'info', 'library', 'importBook', 'renameBook', 'removeBook', 'loadState', 'saveState', 'readBookBytes', 'highlights', 'exportNotes', 'setReadingContext', 'createTag', 'renameTag', 'deleteTag', 'updateBookTags', 'migrateBookTags',
   ]);
   app.dispose();
 });

@@ -100950,6 +100950,7 @@ function flattenMessages(messages, prefix = "") {
 }
 var LIBRARY_MESSAGES = {
   "zh": {
+    "catalogRename": { "action": "\u91CD\u547D\u540D", "name": "\u6587\u6863\u540D\u79F0", "cancel": "\u53D6\u6D88", "save": "\u4FDD\u5B58", "saving": "\u4FDD\u5B58\u4E2D\u2026", "required": "\u8BF7\u8F93\u5165\u6587\u6863\u540D\u79F0", "controls": "\u540D\u79F0\u4E0D\u80FD\u5305\u542B\u63A7\u5236\u5B57\u7B26", "long": "\u540D\u79F0\u6700\u591A 200 \u4E2A\u5B57\u7B26", "failed": "\u91CD\u547D\u540D\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5", "success": "\u6587\u6863\u540D\u79F0\u5DF2\u4FDD\u5B58", "cacheWarning": "\u540D\u79F0\u5DF2\u4FDD\u5B58\uFF0C\u4F46\u79BB\u7EBF\u7F13\u5B58\u66F4\u65B0\u5931\u8D25", "unavailable": "\u8FDE\u63A5\u5BBF\u4E3B\u4E66\u5E93\u540E\u624D\u80FD\u91CD\u547D\u540D\u5DF2\u5165\u5E93\u6587\u6863" },
     "reader": { "zoom": "\u7F29\u653E", "zoomIn": "\u653E\u5927\uFF08Ctrl\uFF0B\u6EDA\u8F6E\u5411\u4E0A\uFF09", "zoomOut": "\u7F29\u5C0F\uFF08Ctrl\uFF0B\u6EDA\u8F6E\u5411\u4E0B\uFF09" },
     "catalog": {
       "tags": {
@@ -101079,6 +101080,7 @@ var LIBRARY_MESSAGES = {
     }
   },
   "en": {
+    "catalogRename": { "action": "Rename", "name": "Document name", "cancel": "Cancel", "save": "Save", "saving": "Saving\u2026", "required": "Enter a document name", "controls": "Names cannot contain control characters", "long": "Names can contain up to 200 characters", "failed": "Rename failed. Please retry.", "success": "Document name saved", "cacheWarning": "Name saved, but the offline cache could not be updated", "unavailable": "Connect to the host library to rename stored documents" },
     "reader": { "zoom": "Zoom", "zoomIn": "Zoom in (Ctrl + wheel up)", "zoomOut": "Zoom out (Ctrl + wheel down)" },
     "catalog": {
       "tags": {
@@ -102204,6 +102206,8 @@ function createDataLayer(options = {}) {
   let status = "idle";
   let lastError = "";
   let tagsOnline = false;
+  let renameOnline = false;
+  let hostBookIds = /* @__PURE__ */ new Set();
   let disposed = false;
   let libraryOperations = Promise.resolve();
   const serializeLibrary = (operation) => {
@@ -102297,6 +102301,8 @@ function createDataLayer(options = {}) {
     tagsOnline = Boolean(fetched && Array.isArray(fetched.tags) && fetched.bookTags && typeof host?.updateBookTags === "function");
     const remoteBooks = Array.isArray(fetched?.books) ? fetched.books : [];
     const remoteIds = new Set(remoteBooks.map((book) => book.id));
+    hostBookIds = remoteIds;
+    renameOnline = Boolean(fetched && typeof host?.renameBook === "function");
     const localOnly = Array.isArray(cached?.books) ? cached.books.filter((book) => book && (book.source === "local" || book.source === "local-offline") && !STARTER_BY_ID.has(book.id) && !remoteIds.has(book.id) && !migratedLocalIds.has(book.id)) : [];
     const source = fetched ? { ...fetched, books: [...remoteBooks, ...localOnly] } : cached ?? null;
     library = mergeStarter(normalizeLibrary(source));
@@ -102473,6 +102479,10 @@ function createDataLayer(options = {}) {
         hostError = error instanceof Error ? error.message : String(error);
       }
     } else hostError = "\u5BBF\u4E3B\u4E66\u5E93\u672A\u8FDE\u63A5\uFF0C\u6587\u4EF6\u4EC5\u4FDD\u5B58\u5728\u672C\u673A\u7F13\u5B58";
+    if (book !== null) {
+      hostBookIds.add(book.id);
+      renameOnline = typeof host?.renameBook === "function";
+    }
     if (book === null) {
       book = {
         id: fallbackId,
@@ -102559,6 +102569,22 @@ function createDataLayer(options = {}) {
     emit();
     return { ok: true, hostError };
   }
+  const canRenameBook = (id) => !disposed && renameOnline && !STARTER_BY_ID.has(id) && hostBookIds.has(id) && library.books.some((book) => book.id === id && ["epub", "pdf", "txt"].includes(book.format));
+  async function renameBook(request) {
+    if (!canRenameBook(request?.bookId)) return { ok: false, error: "BOOK_RENAME_UNAVAILABLE" };
+    try {
+      const result = await host.renameBook(request);
+      if (disposed) return { ok: false, error: "BOOK_RENAME_UNAVAILABLE" };
+      if (result?.book?.id !== request.bookId || typeof result.book.title !== "string") throw new Error("BOOK_RENAME_FAILED");
+      library = normalizeLibrary({ ...library, books: library.books.map((book) => book.id === request.bookId ? result.book : book) });
+      const cached = await saveLocalLibrary(library).catch(() => false);
+      if (disposed) return { ok: false, error: "BOOK_RENAME_UNAVAILABLE" };
+      emit();
+      return { ok: true, book: result.book, warning: cached ? "" : "BOOK_CACHE_FAILED" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
   async function editTags(method, request) {
     if (disposed) return { ok: false, error: "TAG_DISPOSED" };
     if (!tagsOnline || host === null) return { ok: false, error: "TAG_OFFLINE" };
@@ -102603,6 +102629,8 @@ function createDataLayer(options = {}) {
     /* --- 读取 --- */
     getLibrary: () => library,
     canEditTags: () => !disposed && tagsOnline,
+    canRenameBook,
+    isStarterBook: (id) => STARTER_BY_ID.has(id),
     dispose: () => {
       disposed = true;
       listeners.clear();
@@ -102619,6 +102647,7 @@ function createDataLayer(options = {}) {
     refreshLibrary: () => serializeLibrary(refreshLibrary),
     createTag: (request) => serializeLibrary(() => editTags("createTag", request)),
     renameTag: (request) => serializeLibrary(() => editTags("renameTag", request)),
+    renameBook: (request) => serializeLibrary(() => renameBook(request)),
     deleteTag: (request) => serializeLibrary(() => editTags("deleteTag", request)),
     updateBookTags: (request) => serializeLibrary(() => editTags("updateBookTags", request)),
     ensureState,
@@ -102827,6 +102856,7 @@ function remoteHostApi(ctx) {
     library: () => call("library"),
     createTag: (request) => call("createTag", request),
     renameTag: (request) => call("renameTag", request),
+    renameBook: (request) => call("renameBook", request),
     deleteTag: (request) => call("deleteTag", request),
     updateBookTags: (request) => call("updateBookTags", request),
     migrateBookTags: (request) => call("migrateBookTags", request),
@@ -104438,6 +104468,9 @@ function createController(getProps, store) {
       return { tags: library?.tags || [], bookTags: library?.bookTags || {} };
     },
     canEditTags: () => Boolean(props().data?.canEditTags?.()),
+    canRenameBook: (id) => props().data?.canRenameBook?.(id) === true,
+    isStarterBook: (id) => props().data?.isStarterBook?.(id) === true,
+    renameBook: (request) => callAction("renameBook", request),
     updateBookTags: (request) => callAction("updateBookTags", request),
     status,
     libraryLoading,
@@ -104893,6 +104926,62 @@ var h5 = React6.createElement;
 var MAX_STATE_LOADS = 80;
 var FILTERS = [["all", "\u5168\u90E8\u4E66\u7C4D"], ["reading", "\u6B63\u5728\u9605\u8BFB"], ["finished", "\u5DF2\u8BFB\u5B8C"], ["highlighted", "\u6709\u5212\u7EBF"]];
 var tr = (ui, key, fallback, values = {}) => ui.t(`catalog.${key}`, fallback).replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ""));
+var renameText = (ui, key) => ui.t(`catalogRename.${key}`, key);
+function RenameBookDialog({ ui, book, onClose }) {
+  const [name, setName] = React6.useState(book.title || "");
+  const [busy, setBusy] = React6.useState(false);
+  const [error, setError] = React6.useState("");
+  const pending = React6.useRef(false);
+  const title = name.trim();
+  const invalid = !title ? "required" : new RegExp("\\p{Cc}", "u").test(name) ? "controls" : [...title].length > 200 ? "long" : "";
+  const save = async () => {
+    if (pending.current || invalid || title === book.title) return;
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await ui.renameBook({ bookId: book.id, title });
+      if (!result?.ok) {
+        setError(renameText(ui, "failed"));
+        return;
+      }
+      ui.toast(renameText(ui, result.warning ? "cacheWarning" : "success"), result.warning ? "warn" : "ok");
+      onClose();
+    } catch (_error) {
+      setError(renameText(ui, "failed"));
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  };
+  return h5(
+    TagOverlay,
+    { ui, title: renameText(ui, "action"), onClose, busy },
+    h5("label", { className: "qmr-field" }, renameText(ui, "name"), h5("input", {
+      className: "qmr-input",
+      value: name,
+      disabled: busy,
+      "aria-label": renameText(ui, "name"),
+      onChange: (event) => {
+        setName(event.target.value);
+        setError("");
+      },
+      onKeyDown: (event) => {
+        if (event.key === "Enter" && !event.nativeEvent?.isComposing && !event.isComposing && event.keyCode !== 229) {
+          event.preventDefault();
+          save();
+        }
+      }
+    })),
+    invalid || error ? h5("p", { className: "qmr-tag-error", role: "alert" }, invalid ? renameText(ui, invalid) : error) : null,
+    h5(
+      "footer",
+      { className: "qmr-actions" },
+      h5("button", { type: "button", className: "qmr-btn", disabled: busy, onClick: onClose }, renameText(ui, "cancel")),
+      h5("button", { type: "button", className: "qmr-btn qmr-tag-primary", disabled: busy || !!invalid || title === book.title, onClick: save }, renameText(ui, busy ? "saving" : "save"))
+    )
+  );
+}
 function Cover({ book }) {
   const cover = typeof book.cover === "string" && /^data:image\//i.test(book.cover) ? book.cover : null;
   return h5(
@@ -104904,7 +104993,7 @@ function Cover({ book }) {
     } }) : null
   );
 }
-function BookRow({ ui, book, busy, selecting, selected, onSelect, onEdit }) {
+function BookRow({ ui, book, busy, selecting, selected, onSelect, onEdit, onRename }) {
   const id = book.id;
   const progress = ui.progressOfBook(id);
   const state = ui.readingStateOf(id);
@@ -104997,6 +105086,12 @@ function BookRow({ ui, book, busy, selecting, selected, onSelect, onEdit }) {
             onEdit(id);
           } }, tagText(ui, "edit")),
           !editableTags(ui) ? h5("p", { className: "qmr-muted" }, tagText(ui, "offline")) : null,
+          !ui.isStarterBook?.(id) ? h5("button", { type: "button", disabled: !ui.canRenameBook?.(id), onClick: () => {
+            triggerRef.current?.focus();
+            setMenu(false);
+            onRename(book);
+          } }, renameText(ui, "action")) : null,
+          !ui.isStarterBook?.(id) && !ui.canRenameBook?.(id) ? h5("p", { className: "qmr-muted" }, renameText(ui, "unavailable")) : null,
           action(IconNote, "notes", "\u9605\u8BFB\u7B14\u8BB0", () => openPanel("notes")),
           action(IconHighlight, "highlights", "\u67E5\u770B\u5212\u7EBF", () => openPanel("highlights")),
           h5("div", { className: "qmr-book-menu-meta" }, `${String(book.format || "epub").toUpperCase()}${formatBytes(book.bytes) ? ` \xB7 ${formatBytes(book.bytes)}` : ""}`),
@@ -105025,9 +105120,11 @@ function LibraryView({ ui }) {
   const untagged = !!ui.useSel((state) => state.libraryUntagged);
   const catalog = catalogOf(ui);
   const [dialog, setDialog] = React6.useState(null);
+  const [renameTarget, setRenameTarget] = React6.useState(null);
   const [selecting, setSelecting] = React6.useState(false);
   const [selected, setSelected] = React6.useState([]);
   const closeDialog = React6.useMemo(() => () => setDialog(null), []);
+  const closeRename = React6.useMemo(() => () => setRenameTarget(null), []);
   const finishSelection = React6.useMemo(() => () => {
     setSelected([]);
     setSelecting(false);
@@ -105230,9 +105327,10 @@ function LibraryView({ ui }) {
           React6.Fragment,
           null,
           h5("div", { className: "qmr-library-columns", "aria-hidden": "true" }, h5("span", null, tr(ui, "titleAuthor", "\u4E66\u540D / \u4F5C\u8005")), h5("span", null, tr(ui, "format", "\u683C\u5F0F")), h5("span", null, tr(ui, "progress", "\u9605\u8BFB\u8FDB\u5EA6")), h5("span", null, tr(ui, "annotations", "\u5212\u7EBF")), h5("span")),
-          h5("div", { className: "qmr-book-list", role: "list", "aria-label": tr(ui, "collection", "\u6211\u7684\u4E66\u76EE") }, visibleBooks.map((book) => h5(BookRow, { key: book.id, ui, book, busy: busyBookId === String(book.id), selecting, selected: selected.includes(book.id), onSelect: () => setSelected((ids) => ids.includes(book.id) ? ids.filter((id) => id !== book.id) : [...ids, book.id]), onEdit: (id) => setDialog({ kind: "edit", mode: "replace", bookIds: [id] }) })))
+          h5("div", { className: "qmr-book-list", role: "list", "aria-label": tr(ui, "collection", "\u6211\u7684\u4E66\u76EE") }, visibleBooks.map((book) => h5(BookRow, { key: book.id, ui, book, busy: busyBookId === String(book.id), selecting, selected: selected.includes(book.id), onSelect: () => setSelected((ids) => ids.includes(book.id) ? ids.filter((id) => id !== book.id) : [...ids, book.id]), onRename: setRenameTarget, onEdit: (id) => setDialog({ kind: "edit", mode: "replace", bookIds: [id] }) })))
         )
       ),
+      renameTarget ? h5(RenameBookDialog, { key: renameTarget.id, ui, book: renameTarget, onClose: closeRename }) : null,
       dialog?.kind === "filter" ? h5(TagFilter, { ui, ids: tagIds, mode: tagMode, untagged, onClose: closeDialog }) : null,
       dialog?.kind === "edit" ? h5(BookTagEditor, { key: `${dialog.mode}:${dialog.bookIds.join(",")}`, ui, bookIds: dialog.bookIds, mode: dialog.mode, onClose: closeDialog, onSuccess: dialog.mode === "add" ? finishSelection : void 0 }) : null
     )
@@ -108080,7 +108178,7 @@ var remoteCodec = () => ({
 });
 var REMOTE = {
   package: "qiaomu-reader-dsh",
-  descriptors: ["info", "library", "importBook", "removeBook", "loadState", "saveState", "readBookBytes", "highlights", "exportNotes", "setReadingContext", "createTag", "renameTag", "deleteTag", "updateBookTags", "migrateBookTags"].map((method) => ({
+  descriptors: ["info", "library", "importBook", "renameBook", "removeBook", "loadState", "saveState", "readBookBytes", "highlights", "exportNotes", "setReadingContext", "createTag", "renameTag", "deleteTag", "updateBookTags", "migrateBookTags"].map((method) => ({
     id: `qiaomu-reader-dsh#qiaomuReader/${method}`,
     service: "qiaomuReader",
     namespace: "qiaomuReader",
@@ -108214,6 +108312,7 @@ function apply(ctx) {
       cancelImport: (id) => importQueue.cancel(id),
       clearImports: () => importQueue.clear(),
       updateBookTags: (request) => data.updateBookTags(request),
+      renameBook: (request) => data.renameBook(request),
       /** 删除一本书。 */
       async removeBook(bookId) {
         try {

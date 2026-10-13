@@ -10,13 +10,46 @@ const MAX_STATE_LOADS = 80;
 const FILTERS = [['all', '全部书籍'], ['reading', '正在阅读'], ['finished', '已读完'], ['highlighted', '有划线']];
 const tr = (ui, key, fallback, values = {}) => ui.t(`catalog.${key}`, fallback).replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ''));
 
+const renameText = (ui, key) => ui.t(`catalogRename.${key}`, key);
+
+/** Confirmed title editing uses the existing library dialog. */
+export function RenameBookDialog({ ui, book, onClose }) {
+  const [name, setName] = React.useState(book.title || '');
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const pending = React.useRef(false);
+  const title = name.trim();
+  const invalid = !title ? 'required' : /\p{Cc}/u.test(name) ? 'controls' : [...title].length > 200 ? 'long' : '';
+  const save = async () => {
+    if (pending.current || invalid || title === book.title) return;
+    pending.current = true; setBusy(true); setError('');
+    try {
+      const result = await ui.renameBook({ bookId: book.id, title });
+      if (!result?.ok) { setError(renameText(ui, 'failed')); return; }
+      ui.toast(renameText(ui, result.warning ? 'cacheWarning' : 'success'), result.warning ? 'warn' : 'ok');
+      onClose();
+    } catch (_error) { setError(renameText(ui, 'failed')); }
+    finally { pending.current = false; setBusy(false); }
+  };
+  return h(TagOverlay, { ui, title: renameText(ui, 'action'), onClose, busy },
+    h('label', { className: 'qmr-field' }, renameText(ui, 'name'), h('input', {
+      className: 'qmr-input', value: name, disabled: busy, 'aria-label': renameText(ui, 'name'),
+      onChange: event => { setName(event.target.value); setError(''); },
+      onKeyDown: event => { if (event.key === 'Enter' && !event.nativeEvent?.isComposing && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); save(); } },
+    })),
+    invalid || error ? h('p', { className: 'qmr-tag-error', role: 'alert' }, invalid ? renameText(ui, invalid) : error) : null,
+    h('footer', { className: 'qmr-actions' },
+      h('button', { type: 'button', className: 'qmr-btn', disabled: busy, onClick: onClose }, renameText(ui, 'cancel')),
+      h('button', { type: 'button', className: 'qmr-btn qmr-tag-primary', disabled: busy || !!invalid || title === book.title, onClick: save }, renameText(ui, busy ? 'saving' : 'save'))));
+}
+
 function Cover({ book }) {
   const cover = typeof book.cover === 'string' && /^data:image\//i.test(book.cover) ? book.cover : null;
   return h('span', { className: 'qmr-book-cover', 'aria-hidden': 'true' }, h(IconBook, { width: 20, height: 20 }),
     cover ? h('img', { src: cover, alt: '', loading: 'lazy', onError: event => { event.currentTarget.hidden = true; } }) : null);
 }
 
-function BookRow({ ui, book, busy, selecting, selected, onSelect, onEdit }) {
+function BookRow({ ui, book, busy, selecting, selected, onSelect, onEdit, onRename }) {
   const id = book.id;
   const progress = ui.progressOfBook(id);
   const state = ui.readingStateOf(id);
@@ -72,6 +105,8 @@ function BookRow({ ui, book, busy, selecting, selected, onSelect, onEdit }) {
         h('div', { className: 'qmr-book-menu' },
         h('button', { type: 'button', disabled: !editableTags(ui), title: !editableTags(ui) ? tagText(ui, 'offline') : undefined, onClick: () => { triggerRef.current?.focus(); setMenu(false); onEdit(id); } }, tagText(ui, 'edit')),
         !editableTags(ui) ? h('p', { className: 'qmr-muted' }, tagText(ui, 'offline')) : null,
+        !ui.isStarterBook?.(id) ? h('button', { type: 'button', disabled: !ui.canRenameBook?.(id), onClick: () => { triggerRef.current?.focus(); setMenu(false); onRename(book); } }, renameText(ui, 'action')) : null,
+        !ui.isStarterBook?.(id) && !ui.canRenameBook?.(id) ? h('p', { className: 'qmr-muted' }, renameText(ui, 'unavailable')) : null,
         action(IconNote, 'notes', '阅读笔记', () => openPanel('notes')),
         action(IconHighlight, 'highlights', '查看划线', () => openPanel('highlights')),
         h('div', { className: 'qmr-book-menu-meta' }, `${String(book.format || 'epub').toUpperCase()}${formatBytes(book.bytes) ? ` · ${formatBytes(book.bytes)}` : ''}`),
@@ -97,9 +132,11 @@ export function LibraryView({ ui }) {
   const untagged = !!ui.useSel(state => state.libraryUntagged);
   const catalog = catalogOf(ui);
   const [dialog, setDialog] = React.useState(null);
+  const [renameTarget, setRenameTarget] = React.useState(null);
   const [selecting, setSelecting] = React.useState(false);
   const [selected, setSelected] = React.useState([]);
   const closeDialog = React.useMemo(() => () => setDialog(null), []);
+  const closeRename = React.useMemo(() => () => setRenameTarget(null), []);
   const finishSelection = React.useMemo(() => () => { setSelected([]); setSelecting(false); }, []);
   const filterKey = JSON.stringify([query, filter, format, tagIds, tagMode, untagged]);
   React.useEffect(() => { setSelected([]); }, [filterKey]);
@@ -221,7 +258,8 @@ export function LibraryView({ ui }) {
             h('div', { className: 'qmr-empty-actions' }, books.length ? h('button', { type: 'button', className: 'qmr-btn', onClick: clearFilters }, tr(ui, 'clear', '清空筛选')) : importButton))
             : h(React.Fragment, null,
               h('div', { className: 'qmr-library-columns', 'aria-hidden': 'true' }, h('span', null, tr(ui, 'titleAuthor', '书名 / 作者')), h('span', null, tr(ui, 'format', '格式')), h('span', null, tr(ui, 'progress', '阅读进度')), h('span', null, tr(ui, 'annotations', '划线')), h('span')),
-              h('div', { className: 'qmr-book-list', role: 'list', 'aria-label': tr(ui, 'collection', '我的书目') }, visibleBooks.map(book => h(BookRow, { key: book.id, ui, book, busy: busyBookId === String(book.id), selecting, selected: selected.includes(book.id), onSelect: () => setSelected(ids => ids.includes(book.id) ? ids.filter(id => id !== book.id) : [...ids, book.id]), onEdit: id => setDialog({ kind: 'edit', mode: 'replace', bookIds: [id] }) }))))),
+              h('div', { className: 'qmr-book-list', role: 'list', 'aria-label': tr(ui, 'collection', '我的书目') }, visibleBooks.map(book => h(BookRow, { key: book.id, ui, book, busy: busyBookId === String(book.id), selecting, selected: selected.includes(book.id), onSelect: () => setSelected(ids => ids.includes(book.id) ? ids.filter(id => id !== book.id) : [...ids, book.id]), onRename: setRenameTarget, onEdit: id => setDialog({ kind: 'edit', mode: 'replace', bookIds: [id] }) }))))),
+      renameTarget ? h(RenameBookDialog, { key: renameTarget.id, ui, book: renameTarget, onClose: closeRename }) : null,
       dialog?.kind === 'filter' ? h(TagFilter, { ui, ids: tagIds, mode: tagMode, untagged, onClose: closeDialog }) : null,
       dialog?.kind === 'edit' ? h(BookTagEditor, { key: `${dialog.mode}:${dialog.bookIds.join(',')}`, ui, bookIds: dialog.bookIds, mode: dialog.mode, onClose: closeDialog, onSuccess: dialog.mode === 'add' ? finishSelection : undefined }) : null));
 }

@@ -29,7 +29,7 @@ const remoteCodec = () => ({
 });
 const REMOTE = {
   package: 'qiaomu-reader-dsh',
-  descriptors: ['info', 'library', 'importBook', 'removeBook', 'loadState', 'saveState', 'readBookBytes', 'highlights', 'exportNotes', 'setReadingContext', 'createTag', 'renameTag', 'deleteTag', 'updateBookTags', 'migrateBookTags'].map((method) => ({
+  descriptors: ['info', 'library', 'importBook', 'renameBook', 'removeBook', 'loadState', 'saveState', 'readBookBytes', 'highlights', 'exportNotes', 'setReadingContext', 'createTag', 'renameTag', 'deleteTag', 'updateBookTags', 'migrateBookTags'].map((method) => ({
     id: `qiaomu-reader-dsh#qiaomuReader/${method}`,
     service: 'qiaomuReader', namespace: 'qiaomuReader', method,
     invocation: { kind: 'direct' },
@@ -197,6 +197,7 @@ export function apply(ctx) {
       cancelImport: (id) => importQueue.cancel(id),
       clearImports: () => importQueue.clear(),
       updateBookTags: (request) => data.updateBookTags(request),
+      renameBook: (request) => data.renameBook(request),
 
       /** 删除一本书。 */
       async removeBook(bookId) {
