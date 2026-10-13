@@ -42,6 +42,12 @@ EPUB 分页图片修改：`src/ui/reader.js` 按视口高度和列宽设置图�
 
 按源码仓库范围移除本次导入及新增的所有 scripts 目录脚本、相关专用测试和构建产物；原有插件与仓库原有脚本不在删除范围。保留源码、测试、配置、文档、素材及 MIT 许可。构建命令直接调用 tsc 与 tsdown，`lib/` 被忽略；需要运行时自行构建，不能把此源码副本当作预构建安装目录。开发依赖当前链接相邻的已构建 DSH 源码仓库，其他位置需手动调整。原始摘要仅表示导入时的上游记录，可能包含已移除文件；当前摘要仅记录仍保留的源码文件。
 
+## MCP Connector
+
+来源：[duhu2000/dsh-mcp-connector](https://github.com/duhu2000/dsh-mcp-connector)，v0.2.70，固定提交 `fd1bc55b883dca30aa1e03cf06c24586603b4765`。MIT 许可保留在 [plugins/mcp-connector/LICENSE](plugins/mcp-connector/LICENSE)；第三方 Logo 沿用上游，公开再分发前需核实素材条件。本副本保持 private。
+
+上游 `lib/` 是手写 ESM 源码，不排除、不构建；`scripts/cli-bridge.mjs` 移至 `runtime/cli-bridge.mjs` 保留运行功能。排除发布、营销及截图辅助脚本与其六个专用测试；保留 UI 产品测试。改为 Host `connection.requestRejection()` 认证和 effect 托管路由，保留 401/403；本地版本禁止普通市场更新，接口认证/不可达错误不再伪装为 npm 查询失败。增加本地版本、认证和卸载测试、双语提示与 metadata，清理无效命令。开发依赖链接相邻已构建 DSH 仓库。来源与原始/当前摘要登记在 [SNAPSHOT.json](SNAPSHOT.json)；本次迁移不读取或修改生产连接与凭据。
+
 ## 集合
 
 仓库根包名 `dsh-plugin-suite-workspace`，是 workspace 管理目录而非 DSH Bundle，不代表也不承担任何上游的版权归属；`dsh-pet` 这一插件包名是保留 Pet 浏览器模块 id 的技术要求。各插件的依赖、兼容声明与许可相互独立，每个包的来源（已安装包或上游提交）记在 [SNAPSHOT.json](SNAPSHOT.json) 的 `sources`。复制原文件及已登记本地修改文件的当前摘要见同一文件的 `sha256`，本地修改的原始摘要见 `localModifications`；手改的清单、metadata locale、图标与 README 不纳入摘要清单。

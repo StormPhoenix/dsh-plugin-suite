@@ -330,6 +330,31 @@ importers:
         specifier: ~4.4.7
         version: 4.4.7(@types/react@18.3.31)(immer@10.2.0)(react@18.3.1)
 
+  plugins/mcp-connector:
+    dependencies:
+      cross-spawn:
+        specifier: ^7.0.6
+        version: 7.0.6
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: link:../../../deepseek-harness/vendor/cordis
+        version: link:../../../deepseek-harness/vendor/cordis
+      '@deepseek-ai/dsh-client-connection':
+        specifier: link:../../../deepseek-harness/packages/client/connection
+        version: link:../../../deepseek-harness/packages/client/connection
+      '@deepseek-ai/dsh-storage':
+        specifier: link:../../../deepseek-harness/packages/storage/storage
+        version: link:../../../deepseek-harness/packages/storage/storage
+      '@deepseek-ai/dsh-storage-domain':
+        specifier: link:../../../deepseek-harness/packages/storage/storage-domain
+        version: link:../../../deepseek-harness/packages/storage/storage-domain
+      '@deepseek-ai/schemastery':
+        specifier: ^3.18.1
+        version: 3.18.4
+      zod:
+        specifier: ^4.4.0
+        version: 4.6.5
+
   plugins/memory:
     dependencies:
       '@deepseek-ai/schemastery':

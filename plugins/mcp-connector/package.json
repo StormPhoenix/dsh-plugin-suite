@@ -1,0 +1,150 @@
+{
+  "name": "dsh-mcp-connector",
+  "version": "0.2.70-local.1",
+  "private": true,
+  "description": "DeepSeek Harness MCP Connector: connect servers, search tools across active connections, and troubleshoot discovery. Includes a continuously updated catalog; supports OAuth 2.0 PKCE, API keys, Streamable HTTP/stdio, and mcpServers JSON import.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "bin": {
+    "dsh-mcp-cli-bridge": "runtime/cli-bridge.mjs"
+  },
+  "files": [
+    "lib",
+    "ui",
+    "catalog",
+    "registry",
+    "docs/DESKTOP-E2E.md",
+    "docs/MARKET-REGISTRATION.md",
+    "docs/PLUGIN-UPDATE.md",
+    "docs/CONFIG-BACKUP.md",
+    "docs/CONNECTION-SCOPES.md",
+    "docs/TOOL-GOVERNANCE.md",
+    "docs/SESSION-TOOL-INJECTION.md",
+    "docs/FIRST-CONTRIBUTION.md",
+    "docs/STDIO-SUPPORT.md",
+    "docs/CLI-PROVIDERS.md",
+    "docs/USER-GUIDE.md",
+    "docs/tutorials",
+    "docs/screenshots",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "screenshots.json",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "locale",
+    "runtime/cli-bridge.mjs"
+  ],
+  "scripts": {
+    "test": "node --test --test-concurrency=1",
+    "lint": "node --check lib/discovery-policy.js && node --check lib/index.js && node --check lib/web.js && node --check lib/client.js && node --check lib/settings.js && node --check lib/version-status.js && node --check lib/schema.js && node --check lib/catalog.js && node --check lib/prompts.js && node --check lib/probe.js && node --check lib/diagnostics.js && node --check lib/connection-backup.js && node --check lib/connection-editor.js && node --check lib/connection-scopes.js && node --check lib/governance.js && node --check lib/session-injection.js && node --check lib/tool-catalog-cache.js && node --check lib/status-events.js && node --check lib/mcp-validation.js && node --check lib/mcp-http.js && node --check lib/migration.js && node --check lib/stores.js && node --check lib/grant-journal.js && node --check lib/oauth.js && node --check lib/grant-lifecycle.js && node --check lib/callback-server.js && node --check lib/mcp-provision.js && node --check lib/stdio-startup-guard.js && node --check lib/cli-providers.js && node --check lib/util.js && node --check lib/constants.js && node --check lib/tools.js && node --check lib/connectors/oauth-connector.js && node --check lib/connectors/manual-connector.js && node --check lib/connectors/json-connector.js && node --check runtime/cli-bridge.mjs",
+    "check": "npm run lint && npm test",
+    "check:source": "node --check lib/index.js && node --check lib/web.js && node --check lib/client.js && node --check runtime/cli-bridge.mjs"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "mcp",
+    "mcp-client",
+    "mcp-server",
+    "mcp-connector",
+    "mcp-marketplace",
+    "model-context-protocol",
+    "mcp-hub",
+    "mcp-manager",
+    "mcp-registry",
+    "mcp-tools",
+    "mcp-store",
+    "remote-mcp",
+    "streamable-http",
+    "stdio",
+    "connector",
+    "connection",
+    "connection-manager",
+    "marketplace",
+    "plugin",
+    "extension",
+    "integration",
+    "agent-skills",
+    "skill-extension",
+    "ai-tools",
+    "llm-tools",
+    "ai-agents",
+    "oauth",
+    "oauth2",
+    "pkce",
+    "api-key",
+    "json-import",
+    "enterprise-data",
+    "qichacha",
+    "qcc",
+    "tools",
+    "prompts",
+    "MCP连接器",
+    "连接器",
+    "连接管理",
+    "技能扩展",
+    "插件",
+    "扩展",
+    "企查查"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/duhu2000/dsh-mcp-connector.git"
+  },
+  "homepage": "https://github.com/duhu2000/dsh-mcp-connector#readme",
+  "bugs": {
+    "url": "https://github.com/duhu2000/dsh-mcp-connector/issues"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-client-connection": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-ui-conversation": "*",
+    "@deepseek-ai/dsh-client-ui-layout": "*",
+    "@deepseek-ai/dsh-mcp-client": "^0.1.1-rc.2 || >=0.2.0-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-storage-domain": "*",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/cordis": "^4.0.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "zod": ">=4.1.8 <5"
+  },
+  "dependencies": {
+    "cross-spawn": "^7.0.6"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "link:../../../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/dsh-client-connection": "link:../../../deepseek-harness/packages/client/connection",
+    "@deepseek-ai/dsh-storage": "link:../../../deepseek-harness/packages/storage/storage",
+    "@deepseek-ai/dsh-storage-domain": "link:../../../deepseek-harness/packages/storage/storage-domain",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "zod": "^4.4.0"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  }
+}

@@ -1,1 +1,5 @@
 * -text
+
+# Preserve the imported MCP CRLF bytes; Markdown uses two-space hard breaks.
+plugins/mcp-connector/** whitespace=cr-at-eol
+plugins/mcp-connector/docs/TOOL-TRIAL-DESIGN.md whitespace=cr-at-eol,-blank-at-eol
