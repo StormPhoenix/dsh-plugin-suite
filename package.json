@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Independent local-install DSH plugins maintained in one repository.",
   "scripts": {
+    "build": "pnpm -r --if-present run build",
     "verify": "node scripts/verify.mjs",
     "verify:rebuild": "node scripts/verify-rebuild.mjs"
   }

@@ -32,6 +32,16 @@ G:\Workspace\dsh-plugin-suite\plugins\qiaomu-reader
 
 目录安装会链接本地包，安装后不要移动或删除目录。上述三个原有插件包含预构建产物；Better Sidebar 不包含。源码更新不会自动替换已加载模块。乔木阅读保留原有重建方式，见 [UPSTREAM.md](UPSTREAM.md)。
 
+## 统一构建
+
+安装依赖后，在仓库根运行：
+
+```sh
+pnpm build
+```
+
+该命令递归执行各 workspace 包已有的 `build`：目前构建 Better Sidebar 与乔木阅读；Pet 和 Memory 没有 `build`，会被跳过，继续使用现有产物。Better Sidebar 的构建产物仅保留在本地，不提交；乔木阅读的构建会重写其已有分发产物。只构建 Better Sidebar 时使用 `pnpm --filter dsh-better-sidebar build`。
+
 ## Better Sidebar 本地兼容版本
 
 `0.25.0-local.1` 保留上游包名、路由和 `better-sidebar` 条目 ID，把已移除的 Host `webRuntime` 依赖替换为 `connection.requestRejection()`，由 Host 统一执行信任与认证，保留 401/403，不通过豁免绕过缺失服务。来源提交与修改摘要见 [UPSTREAM.md](UPSTREAM.md) 和 [SNAPSHOT.json](SNAPSHOT.json)。本地修复不是上游发布版本，插件市场在线更新会覆盖修复。
