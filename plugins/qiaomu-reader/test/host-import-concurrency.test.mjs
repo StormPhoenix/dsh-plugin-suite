@@ -273,6 +273,33 @@ test('tag mutations share import and reading-state serialization and survive reo
   assert.equal((await app.api.loadState(book.id)).highlights[0].text, 'retained');
 });
 
+test('title renaming preserves content, reading state, tags and the first original title on reimport', async (t) => {
+  const app = await harness(t);
+  const { book } = await app.api.import(upload('rename content', 'Original'));
+  await app.api.saveState(book.id, state('retained'));
+  const before = await app.index();
+  const bytes = await readFile(path.join(app.base, book.file));
+  const savedState = await app.api.loadState(book.id);
+  const renamed = await app.api.renameBook({ bookId: book.id, title: '  New 📚  ' });
+  assert.deepEqual(renamed.book, { ...before.books[0], title: 'New 📚', originalTitle: 'Original' });
+  assert.deepEqual(await readFile(path.join(app.base, book.file)), bytes);
+  assert.deepEqual(await app.api.loadState(book.id), savedState);
+  const unchanged = await readFile(path.join(app.base, 'library.json'), 'utf8');
+  await app.api.renameBook({ bookId: book.id, title: 'New 📚' });
+  assert.equal(await readFile(path.join(app.base, 'library.json'), 'utf8'), unchanged);
+  for (const title of ['', '  ', '\nNew', 'a\u0000b', '📚'.repeat(201)]) {
+    await assert.rejects(app.api.renameBook({ bookId: book.id, title }), /BOOK_NAME_INVALID/);
+  }
+  await assert.rejects(app.api.renameBook({ bookId: 'missing', title: 'Name' }), /BOOK_NOT_FOUND/);
+  assert.equal(await readFile(path.join(app.base, 'library.json'), 'utf8'), unchanged);
+  await app.api.renameBook({ bookId: book.id, title: '📚'.repeat(200) });
+  const reimported = await app.api.import(upload('rename content', 'Embedded title'));
+  assert.equal(reimported.book.title, '📚'.repeat(200));
+  assert.equal(reimported.book.originalTitle, 'Original');
+  assert.equal(reimported.book.id, book.id);
+  assert.deepEqual(await app.api.loadState(book.id), savedState);
+});
+
 test('independent apply instances do not share their mutation queue', async (t) => {
   const first = await harness(t);
   const second = await harness(t);

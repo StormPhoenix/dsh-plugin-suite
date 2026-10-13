@@ -32,6 +32,8 @@
 
 EPUB 分页图片修改：`src/ui/reader.js` 按视口高度和列宽设置图片预算，并在页数计算前调用 `src/ui/image-pagination.js`；该模块临时覆盖图片尺寸声明，滚动模式恢复原值与优先级，不修改正文节点或书籍文件。`src/ui/theme.js` 保持单图比例及完整性，允许多图容器和图注正常分页。阅读器与图片尺寸测试、`scripts/test-image-pagination.mjs` 的真实 Chromium 用例覆盖加载、布局变化、多图和内联固定尺寸；README 同步说明留白及格式限制。
 
+文档重命名修改：宿主串行保存书籍显示名称并保留首次修改前的名称，同内容导入不覆盖用户名称；客户端仅在宿主确认后替换目标记录。书目更多操作复用双语弹窗，示例书无入口，离线及浏览器独有文档不可编辑。不移动书籍文件或修改阅读状态；宿主、缓存及双语交互测试覆盖保存与失败路径，Host 和 Client 产物均由源码重建。
+
 重建：仓库根执行 `pnpm install --ignore-scripts`，再到 `plugins/qiaomu-reader` 运行 `node scripts/build.mjs`。在本仓库的 pnpm 隔离布局下，产物逐字节重现当前本地源码，而非声称修改后的客户端与发布包一致。仓库根的 `node scripts/verify-rebuild.mjs` 先比对 [SNAPSHOT.json](SNAPSHOT.json) 记录的当前摘要，再重建比对，不一致即失败并还原检查前的产物。初次复制时的上游 `npm test` 47 项测试通过记录不代表当前副本的全部测试状态。
 
 ## Better Sidebar

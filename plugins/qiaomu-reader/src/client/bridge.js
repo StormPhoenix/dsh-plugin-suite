@@ -120,6 +120,8 @@ export function createDataLayer(options = {}) {
   let status = 'idle';
   let lastError = '';
   let tagsOnline = false;
+  let renameOnline = false;
+  let hostBookIds = new Set();
   let disposed = false;
   let libraryOperations = Promise.resolve();
   const serializeLibrary = (operation) => {
@@ -222,6 +224,8 @@ export function createDataLayer(options = {}) {
     tagsOnline = Boolean(fetched && Array.isArray(fetched.tags) && fetched.bookTags && typeof host?.updateBookTags === 'function');
     const remoteBooks = Array.isArray(fetched?.books) ? fetched.books : [];
     const remoteIds = new Set(remoteBooks.map((book) => book.id));
+    hostBookIds = remoteIds;
+    renameOnline = Boolean(fetched && typeof host?.renameBook === 'function');
     const localOnly = Array.isArray(cached?.books) ? cached.books.filter((book) =>
       book && (book.source === 'local' || book.source === 'local-offline')
       && !STARTER_BY_ID.has(book.id) && !remoteIds.has(book.id) && !migratedLocalIds.has(book.id)) : [];
@@ -424,6 +428,10 @@ export function createDataLayer(options = {}) {
         hostError = error instanceof Error ? error.message : String(error);
       }
     } else hostError = '宿主书库未连接，文件仅保存在本机缓存';
+    if (book !== null) {
+      hostBookIds.add(book.id);
+      renameOnline = typeof host?.renameBook === 'function';
+    }
     if (book === null) {
       // 宿主不可用：登记到本地书库，正文进浏览器字节缓存，刷新后仍可打开。
       book = {
@@ -512,6 +520,26 @@ export function createDataLayer(options = {}) {
     return { ok: true, hostError };
   }
 
+  const canRenameBook = (id) => !disposed && renameOnline && !STARTER_BY_ID.has(id) && hostBookIds.has(id)
+    && library.books.some(book => book.id === id && ['epub', 'pdf', 'txt'].includes(book.format));
+
+  /** Publish a title only after the host confirms its durable record. */
+  async function renameBook(request) {
+    if (!canRenameBook(request?.bookId)) return { ok: false, error: 'BOOK_RENAME_UNAVAILABLE' };
+    try {
+      const result = await host.renameBook(request);
+      if (disposed) return { ok: false, error: 'BOOK_RENAME_UNAVAILABLE' };
+      if (result?.book?.id !== request.bookId || typeof result.book.title !== 'string') throw new Error('BOOK_RENAME_FAILED');
+      library = normalizeLibrary({ ...library, books: library.books.map(book => book.id === request.bookId ? result.book : book) });
+      const cached = await saveLocalLibrary(library).catch(() => false);
+      if (disposed) return { ok: false, error: 'BOOK_RENAME_UNAVAILABLE' };
+      emit();
+      return { ok: true, book: result.book, warning: cached ? '' : 'BOOK_CACHE_FAILED' };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   /** Apply one host-confirmed tag transaction without replacing book records. */
   async function editTags(method, request) {
     if (disposed) return { ok: false, error: 'TAG_DISPOSED' };
@@ -563,6 +591,8 @@ export function createDataLayer(options = {}) {
     /* --- 读取 --- */
     getLibrary: () => library,
     canEditTags: () => !disposed && tagsOnline,
+    canRenameBook,
+    isStarterBook: (id) => STARTER_BY_ID.has(id),
     dispose: () => { disposed = true; listeners.clear(); },
     getStatus: () => ({ status, error: lastError }),
     getState: (bookId) => states.get(bookId),
@@ -577,6 +607,7 @@ export function createDataLayer(options = {}) {
     refreshLibrary: () => serializeLibrary(refreshLibrary),
     createTag: (request) => serializeLibrary(() => editTags('createTag', request)),
     renameTag: (request) => serializeLibrary(() => editTags('renameTag', request)),
+    renameBook: (request) => serializeLibrary(() => renameBook(request)),
     deleteTag: (request) => serializeLibrary(() => editTags('deleteTag', request)),
     updateBookTags: (request) => serializeLibrary(() => editTags('updateBookTags', request)),
     ensureState,

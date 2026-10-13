@@ -9,6 +9,7 @@ export function flattenMessages(messages, prefix = '') {
 /** Shared client catalogue messages. */
 export const LIBRARY_MESSAGES = {
   "zh": {
+    "catalogRename": { "action": "重命名", "name": "文档名称", "cancel": "取消", "save": "保存", "saving": "保存中…", "required": "请输入文档名称", "controls": "名称不能包含控制字符", "long": "名称最多 200 个字符", "failed": "重命名失败，请重试", "success": "文档名称已保存", "cacheWarning": "名称已保存，但离线缓存更新失败", "unavailable": "连接宿主书库后才能重命名已入库文档" },
     "reader": { "zoom": "缩放", "zoomIn": "放大（Ctrl＋滚轮向上）", "zoomOut": "缩小（Ctrl＋滚轮向下）" },
     "catalog": {
       "tags": {
@@ -74,6 +75,7 @@ export const LIBRARY_MESSAGES = {
     }
   },
   "en": {
+    "catalogRename": { "action": "Rename", "name": "Document name", "cancel": "Cancel", "save": "Save", "saving": "Saving…", "required": "Enter a document name", "controls": "Names cannot contain control characters", "long": "Names can contain up to 200 characters", "failed": "Rename failed. Please retry.", "success": "Document name saved", "cacheWarning": "Name saved, but the offline cache could not be updated", "unavailable": "Connect to the host library to rename stored documents" },
     "reader": { "zoom": "Zoom", "zoomIn": "Zoom in (Ctrl + wheel up)", "zoomOut": "Zoom out (Ctrl + wheel down)" },
     "catalog": {
       "tags": {
