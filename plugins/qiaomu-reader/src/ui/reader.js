@@ -12,6 +12,7 @@ import {
   readerThemeVars,
 } from './theme.js';
 import { chapterIndexForHref, chapterLabelMap, formatPercent } from './format.js';
+import { detectSectionAnchor, flattenToc } from './toc-locate.js';
 import { useMediaQuery } from './hooks.js';
 import { zoomValue, FONT_MIN, FONT_MAX, PDF_ZOOM_MIN, PDF_ZOOM_MAX, wheelPixels, createWheelIntent, createZoomIntent } from '../core/reader-input.js';
 import {
@@ -243,6 +244,15 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const pdfWidthRef = React.useRef(0);
   const themeVars = readerThemeVars(settings.theme);
   const labels = React.useMemo(() => chapterLabelMap(engine), [engine, engineVersion]);
+  const tocFragments = React.useMemo(() => {
+    const byChapter = new Map();
+    for (const item of flattenToc(engine?.book?.toc, engine)) {
+      if (item.chapterIndex < 0 || !item.fragment) continue;
+      if (!byChapter.has(item.chapterIndex)) byChapter.set(item.chapterIndex, []);
+      byChapter.get(item.chapterIndex).push(item.fragment);
+    }
+    return byChapter;
+  }, [engine, engineVersion]);
 
   const [rendered, setRendered] = React.useState({ html: '', key: '' });
   const html = rendered.html;
@@ -304,7 +314,23 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     searchResults,
     focusHighlightId,
     restoreScroll,
+    tocFragments,
   };
+
+  const reportTocAnchor = React.useCallback(() => {
+    const live = liveRef.current;
+    if (live.bookId == null || !positionReadyRef.current ||
+        positionIdentityRef.current !== `${live.bookId}:${live.chapterIndex}`) return;
+    const fragment = detectSectionAnchor({
+      flow: flowRef.current,
+      viewport: viewportRef.current,
+      fragments: live.tocFragments?.get(live.chapterIndex),
+      mode: live.settings?.flow,
+    });
+    const previous = ui.store.get().tocAnchor;
+    if (previous?.bookId === live.bookId && previous.chapterIndex === live.chapterIndex && previous.fragment === fragment) return;
+    ui.store.set({ tocAnchor: { bookId: live.bookId, chapterIndex: live.chapterIndex, fragment } });
+  }, [ui]);
 
   React.useLayoutEffect(() => {
     if (!isPdf || !viewportRef.current) return undefined;
@@ -664,6 +690,9 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
           setPage(landLast ? Math.max(0, measured.pages - 1) : Math.round(fraction * Math.max(0, measured.pages - 1)));
           pendingRestoreRef.current = null;
           positionReadyRef.current = true;
+          requestAnimationFrame(() => {
+            if (restoreEpochRef.current === epoch && positionIdentityRef.current === identity) reportTocAnchor();
+          });
         });
       })().catch((error) => { if (restoreEpochRef.current === epoch) ui.reportError(error, true); });
     }
@@ -681,6 +710,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     engine,
     measure,
     setPage,
+    reportTocAnchor,
     ui,
   ]);
 
@@ -841,6 +871,13 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
 
   // ------------------------------------------------------------- 位置上报
 
+  React.useLayoutEffect(() => {
+    if (panel !== 'toc') return undefined;
+    reportTocAnchor();
+    const frame = requestAnimationFrame(reportTocAnchor);
+    return () => cancelAnimationFrame(frame);
+  }, [panel, bookId, chapterIndex, page, html, chapterBusy, reportTocAnchor]);
+
   const reportPosition = React.useCallback(() => {
     const live = liveRef.current;
     if (live.bookId == null || !positionReadyRef.current ||
@@ -868,7 +905,8 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       scroll: Math.min(1, Math.max(0, scroll)),
       textQuote: quote,
     });
-  }, [ui]);
+    reportTocAnchor();
+  }, [ui, reportTocAnchor]);
 
   React.useEffect(() => {
     ui.store.set({ page, pageCount });
@@ -1364,7 +1402,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       h('button', {
         type: 'button', className: `qmr-icon-btn${panel === 'toc' ? ' is-active' : ''}`,
         'aria-label': '目录', 'aria-pressed': panel === 'toc', title: '目录',
-        onClick: () => ui.setPanel('toc'),
+        onClick: () => { reportTocAnchor(); ui.setPanel('toc'); },
       }, h(IconToc, { width: 16, height: 16 })),
       h('button', {
         type: 'button',

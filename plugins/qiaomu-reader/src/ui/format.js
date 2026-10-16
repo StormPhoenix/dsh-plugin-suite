@@ -5,6 +5,9 @@
  */
 
 import { highlightLink } from '../core/backlink.js';
+import { chapterIndexForHref, splitHref } from './toc-locate.js';
+
+export { chapterIndexForHref };
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -153,13 +156,13 @@ export function chapterLabelMap(engine) {
     const toc = (engine && engine.book && engine.book.toc) || [];
     const byHref = new Map();
     chapters.forEach((chapter, index) => {
-      const href = String((chapter && chapter.href) || '');
+      const href = splitHref(chapter && chapter.href).path;
       if (href) byHref.set(href, index);
     });
     const walk = (entries) => {
       for (const entry of entries || []) {
         if (!entry) continue;
-        const href = String(entry.href || '');
+        const href = splitHref(entry.href).path;
         let index = byHref.get(href);
         if (index == null && href) {
           const base = href.split('/').pop();
@@ -184,31 +187,6 @@ export function chapterLabelMap(engine) {
     /* 映射失败不影响阅读，回退为空 Map */
   }
   return labels;
-}
-
-/**
- * 由 chapterHref 找章节 index。
- * @param {object|null|undefined} engine ReaderEngine
- * @param {string} href
- * @returns {number} 找不到返回 -1
- */
-export function chapterIndexForHref(engine, href) {
-  try {
-    const chapters = (engine && engine.book && engine.book.chapters) || [];
-    const target = String(href || '');
-    if (!target) return -1;
-    for (let i = 0; i < chapters.length; i += 1) {
-      if (chapters[i] && chapters[i].href === target) return i;
-    }
-    const base = target.split('/').pop();
-    for (let i = 0; i < chapters.length; i += 1) {
-      const chapterHref = String((chapters[i] && chapters[i].href) || '');
-      if (chapterHref.split('/').pop() === base) return i;
-    }
-  } catch (_error) {
-    /* 忽略 */
-  }
-  return -1;
 }
 
 /**

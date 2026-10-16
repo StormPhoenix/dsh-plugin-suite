@@ -101795,6 +101795,79 @@ function parseHighlightLink(href) {
   }
 }
 
+// src/ui/toc-locate.js
+function splitHref(href) {
+  const value = String(href || "");
+  const hash = value.indexOf("#");
+  const path = hash < 0 ? value : value.slice(0, hash);
+  let fragment = hash < 0 ? "" : value.slice(hash + 1);
+  try {
+    fragment = decodeURIComponent(fragment);
+  } catch (_error) {
+  }
+  return { path, fragment };
+}
+function chapterIndexForHref(engine, href) {
+  const chapters = engine?.book?.chapters || [];
+  const target = splitHref(href).path;
+  if (!target || !Array.isArray(chapters)) return -1;
+  const exact = chapters.findIndex((chapter) => splitHref(chapter?.href).path === target);
+  if (exact >= 0) return exact;
+  const base = target.split("/").pop();
+  if (!base) return -1;
+  return chapters.findIndex((chapter) => splitHref(chapter?.href).path.split("/").pop() === base);
+}
+function flattenToc(entries, engine) {
+  const flat = [];
+  const walk = (list, depth, ancestors, parentIndex) => {
+    if (!Array.isArray(list)) return;
+    list.forEach((entry, i) => {
+      if (!entry) return;
+      const href = String(entry.href || "");
+      const localKey = `${depth}-${i}-${href}`;
+      const key = ancestors.length ? `${ancestors[ancestors.length - 1]}/${localKey}` : localKey;
+      const { fragment } = splitHref(href);
+      let chapterIndex = chapterIndexForHref(engine, href);
+      if (chapterIndex < 0 && href && engine?.resolveLink) {
+        try {
+          const resolved = engine.resolveLink(parentIndex >= 0 ? parentIndex : 0, href);
+          const index = typeof resolved === "number" ? resolved : resolved?.chapterIndex;
+          if (Number.isInteger(index) && index >= 0) chapterIndex = index;
+        } catch (_error) {
+        }
+      }
+      flat.push({ key, depth, ancestors, chapterIndex, fragment, entry });
+      walk(entry.children, depth + 1, [...ancestors, key], chapterIndex);
+    });
+  };
+  walk(entries, 0, [], -1);
+  return flat;
+}
+function locateTocEntry({ flat, chapterIndex, anchor }) {
+  const candidates = (flat || []).filter((item) => item.chapterIndex >= 0 && item.chapterIndex === chapterIndex);
+  const match = anchor?.fragment && candidates.find((item) => item.fragment === anchor.fragment) || candidates.find((item) => !item.fragment) || candidates[0];
+  return match ? { key: match.key, ancestors: match.ancestors } : null;
+}
+function detectSectionAnchor({ flow, viewport, fragments, mode }) {
+  if (!flow || !viewport || !fragments?.length) return null;
+  const viewportRect = viewport.getBoundingClientRect();
+  const threshold = viewportRect.top + viewport.clientHeight * 0.3;
+  let current = null;
+  for (const fragment of new Set(fragments)) {
+    if (!fragment) continue;
+    try {
+      const escaped = String(fragment).replace(/[\\"\n\r\f]/g, (char) => `\\${char.charCodeAt(0).toString(16)} `);
+      const node = flow.querySelector(`[id="${escaped}"],[name="${escaped}"]`);
+      if (!node) continue;
+      const rect = node.getClientRects ? node.getClientRects()[0] : node.getBoundingClientRect();
+      if (!rect) continue;
+      if (mode === "scroll" ? rect.top <= threshold : rect.left < viewportRect.right) current = fragment;
+    } catch (_error) {
+    }
+  }
+  return current;
+}
+
 // src/ui/format.js
 var MINUTE = 60 * 1e3;
 var HOUR = 60 * MINUTE;
@@ -101839,13 +101912,13 @@ function chapterLabelMap(engine) {
     const toc = engine && engine.book && engine.book.toc || [];
     const byHref = /* @__PURE__ */ new Map();
     chapters.forEach((chapter, index) => {
-      const href = String(chapter && chapter.href || "");
+      const href = splitHref(chapter && chapter.href).path;
       if (href) byHref.set(href, index);
     });
     const walk = (entries) => {
       for (const entry of entries || []) {
         if (!entry) continue;
-        const href = String(entry.href || "");
+        const href = splitHref(entry.href).path;
         let index = byHref.get(href);
         if (index == null && href) {
           const base = href.split("/").pop();
@@ -101869,23 +101942,6 @@ function chapterLabelMap(engine) {
   } catch (_error) {
   }
   return labels;
-}
-function chapterIndexForHref(engine, href) {
-  try {
-    const chapters = engine && engine.book && engine.book.chapters || [];
-    const target = String(href || "");
-    if (!target) return -1;
-    for (let i = 0; i < chapters.length; i += 1) {
-      if (chapters[i] && chapters[i].href === target) return i;
-    }
-    const base = target.split("/").pop();
-    for (let i = 0; i < chapters.length; i += 1) {
-      const chapterHref = String(chapters[i] && chapters[i].href || "");
-      if (chapterHref.split("/").pop() === base) return i;
-    }
-  } catch (_error) {
-  }
-  return -1;
 }
 function toMarkdown(state, book, engine) {
   const title = stripTags(book && book.title || "") || "\u672A\u547D\u540D";
@@ -105686,26 +105742,32 @@ function TocPanel({ ui }) {
   const bookId = ui.useSel((state) => state.bookId);
   const chapterIndex = ui.useSel((state) => state.chapterIndex);
   const chapterCount = ui.useSel((state) => state.chapterCount);
-  ui.useSel((state) => state.engineVersion);
+  const engineVersion = ui.useSel((state) => state.engineVersion);
+  const tocAnchor = ui.useSel((state) => state.tocAnchor);
   const [collapsed, setCollapsed] = React9.useState({});
   const engine = ui.engineOf(bookId);
-  const labels = React9.useMemo(() => chapterLabelMap(engine), [engine]);
+  const labels = React9.useMemo(() => chapterLabelMap(engine), [engine, engineVersion]);
   const entries = React9.useMemo(() => {
     const toc = engine && engine.book && Array.isArray(engine.book.toc) ? engine.book.toc : [];
     return toc;
-  }, [engine]);
-  const indexOfHref = React9.useCallback((href) => {
-    const direct = chapterIndexForHref(engine, href);
-    if (direct >= 0) return direct;
-    try {
-      const resolved = engine && engine.resolveLink ? engine.resolveLink(chapterIndex, href) : null;
-      return typeof resolved === "number" ? resolved : -1;
-    } catch (_error) {
-      return -1;
-    }
-  }, [engine, chapterIndex]);
-  const jump = (href) => {
-    const index = indexOfHref(href);
+  }, [engine, engineVersion]);
+  const flat = React9.useMemo(() => flattenToc(entries, engine), [entries, engine, engineVersion]);
+  const byKey = React9.useMemo(() => new Map(flat.map((item) => [item.key, item])), [flat]);
+  const anchor = tocAnchor?.bookId === bookId && tocAnchor.chapterIndex === chapterIndex ? tocAnchor : null;
+  const location = React9.useMemo(() => locateTocEntry({ flat, chapterIndex, anchor }), [flat, chapterIndex, anchor]);
+  const currentKey = location?.key;
+  const currentVisible = !!location && location.ancestors.every((key) => !collapsed[key]);
+  React9.useLayoutEffect(() => {
+    if (!location) return;
+    setCollapsed((previous) => {
+      if (!location.ancestors.some((key) => previous[key])) return previous;
+      const next = { ...previous };
+      for (const key of location.ancestors) delete next[key];
+      return next;
+    });
+  }, [location]);
+  const jump = (key) => {
+    const index = byKey.get(key)?.chapterIndex ?? -1;
     if (index >= 0) {
       ui.goChapter(index);
     } else {
@@ -105713,16 +105775,32 @@ function TocPanel({ ui }) {
     }
   };
   const toggle2 = (key) => setCollapsed((previous) => ({ ...previous, [key]: !previous[key] }));
-  const renderEntries = (list, depth) => {
+  const bodyRef = React9.useRef(null);
+  React9.useLayoutEffect(() => {
+    if (!currentKey || !currentVisible) return void 0;
+    const center = () => {
+      const body = bodyRef.current;
+      const current = body?.querySelector(".qmr-toc-item.is-current");
+      if (!body || !current || !body.clientHeight) return;
+      const bodyRect = body.getBoundingClientRect();
+      const itemRect = current.getBoundingClientRect();
+      const offset = itemRect.top - bodyRect.top - (body.clientTop || 0) + body.scrollTop;
+      body.scrollTop = Math.max(0, offset - (body.clientHeight - itemRect.height) / 2);
+    };
+    center();
+    const frame = requestAnimationFrame(center);
+    return () => cancelAnimationFrame(frame);
+  }, [entries, currentKey, currentVisible]);
+  const renderEntries = (list, depth, parentKey = "") => {
     if (!Array.isArray(list) || !list.length) return null;
     return h8("div", { className: "qmr-toc-tree" }, list.map((entry, i) => {
       if (!entry) return null;
       const href = String(entry.href || "");
-      const key = `${depth}-${i}-${href}`;
+      const localKey = `${depth}-${i}-${href}`;
+      const key = parentKey ? `${parentKey}/${localKey}` : localKey;
       const children = Array.isArray(entry.children) ? entry.children : [];
       const isOpen = !collapsed[key];
-      const index = indexOfHref(href);
-      const isCurrent = index >= 0 && index === chapterIndex;
+      const isCurrent = key === currentKey;
       return h8(
         "div",
         { key },
@@ -105740,10 +105818,10 @@ function TocPanel({ ui }) {
             type: "button",
             className: `qmr-toc-item${isCurrent ? " is-current" : ""}`,
             "aria-current": isCurrent ? "true" : void 0,
-            onClick: () => jump(href)
+            onClick: () => jump(key)
           }, stripTags(entry.label) || href || "\u672A\u547D\u540D")
         ),
-        children.length && isOpen ? h8("div", { className: "qmr-toc-children" }, renderEntries(children, depth + 1)) : null
+        children.length && isOpen ? h8("div", { className: "qmr-toc-children" }, renderEntries(children, depth + 1, key)) : null
       );
     }));
   };
@@ -105765,7 +105843,7 @@ function TocPanel({ ui }) {
     ),
     h8(
       "div",
-      { className: "qmr-panel-body" },
+      { className: "qmr-panel-body", ref: bodyRef },
       h8(
         "div",
         { className: "qmr-group-title" },
@@ -106648,6 +106726,15 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const pdfWidthRef = React14.useRef(0);
   const themeVars = readerThemeVars(settings.theme);
   const labels = React14.useMemo(() => chapterLabelMap(engine), [engine, engineVersion]);
+  const tocFragments = React14.useMemo(() => {
+    const byChapter = /* @__PURE__ */ new Map();
+    for (const item of flattenToc(engine?.book?.toc, engine)) {
+      if (item.chapterIndex < 0 || !item.fragment) continue;
+      if (!byChapter.has(item.chapterIndex)) byChapter.set(item.chapterIndex, []);
+      byChapter.get(item.chapterIndex).push(item.fragment);
+    }
+    return byChapter;
+  }, [engine, engineVersion]);
   const [rendered, setRendered] = React14.useState({ html: "", key: "" });
   const html = rendered.html;
   const setHtml = (html2) => setRendered({ html: html2, key: `${bookId}:${chapterIndex}` });
@@ -106702,8 +106789,22 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     searchIndex,
     searchResults,
     focusHighlightId,
-    restoreScroll
+    restoreScroll,
+    tocFragments
   };
+  const reportTocAnchor = React14.useCallback(() => {
+    const live = liveRef.current;
+    if (live.bookId == null || !positionReadyRef.current || positionIdentityRef.current !== `${live.bookId}:${live.chapterIndex}`) return;
+    const fragment = detectSectionAnchor({
+      flow: flowRef.current,
+      viewport: viewportRef.current,
+      fragments: live.tocFragments?.get(live.chapterIndex),
+      mode: live.settings?.flow
+    });
+    const previous = ui.store.get().tocAnchor;
+    if (previous?.bookId === live.bookId && previous.chapterIndex === live.chapterIndex && previous.fragment === fragment) return;
+    ui.store.set({ tocAnchor: { bookId: live.bookId, chapterIndex: live.chapterIndex, fragment } });
+  }, [ui]);
   React14.useLayoutEffect(() => {
     if (!isPdf || !viewportRef.current) return void 0;
     const viewport = viewportRef.current;
@@ -107052,6 +107153,9 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
           setPage(landLast ? Math.max(0, measured.pages - 1) : Math.round(fraction * Math.max(0, measured.pages - 1)));
           pendingRestoreRef.current = null;
           positionReadyRef.current = true;
+          requestAnimationFrame(() => {
+            if (restoreEpochRef.current === epoch && positionIdentityRef.current === identity) reportTocAnchor();
+          });
         });
       })().catch((error) => {
         if (restoreEpochRef.current === epoch) ui.reportError(error, true);
@@ -107070,6 +107174,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     engine,
     measure,
     setPage,
+    reportTocAnchor,
     ui
   ]);
   React14.useLayoutEffect(() => {
@@ -107212,6 +107317,12 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       viewport?.removeEventListener("scroll", capture);
     };
   }, [isPdf, page, captureTextAnchor]);
+  React14.useLayoutEffect(() => {
+    if (panel !== "toc") return void 0;
+    reportTocAnchor();
+    const frame = requestAnimationFrame(reportTocAnchor);
+    return () => cancelAnimationFrame(frame);
+  }, [panel, bookId, chapterIndex, page, html, chapterBusy, reportTocAnchor]);
   const reportPosition = React14.useCallback(() => {
     const live = liveRef.current;
     if (live.bookId == null || !positionReadyRef.current || positionIdentityRef.current !== `${live.bookId}:${live.chapterIndex}`) return;
@@ -107238,7 +107349,8 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       scroll: Math.min(1, Math.max(0, scroll)),
       textQuote: quote
     });
-  }, [ui]);
+    reportTocAnchor();
+  }, [ui, reportTocAnchor]);
   React14.useEffect(() => {
     ui.store.set({ page, pageCount });
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
@@ -107705,7 +107817,10 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       "aria-label": "\u76EE\u5F55",
       "aria-pressed": panel === "toc",
       title: "\u76EE\u5F55",
-      onClick: () => ui.setPanel("toc")
+      onClick: () => {
+        reportTocAnchor();
+        ui.setPanel("toc");
+      }
     }, h13(IconToc, { width: 16, height: 16 })),
     h13("button", {
       type: "button",
