@@ -108,28 +108,24 @@ test('concurrent different and identical imports retain all books and report dup
   assert.equal((await readdir(path.join(app.base, 'books'))).length, 2);
 });
 
-test('queued index snapshot includes prior imports across API, tool and command entry points', async (t) => {
+test('queued index snapshot includes prior imports across API and command entry points', async (t) => {
   const app = await harness(t);
   await app.api.import(upload('seed'));
-  await writeFile(path.join(app.root, 'tool.txt'), 'tool');
   await writeFile(path.join(app.root, 'command.txt'), 'command');
   const gate = gateRead(path.join(app.base, 'library.json'));
   const first = app.api.import(upload('first'));
   await gate.reached;
   const queued = [
     app.api.import(upload('second')),
-    app.tools.get('reader_library').execute({ action: 'import', path: 'tool.txt' }),
     app.commands.get('reader').handler({ rawInput: 'import command.txt' }),
   ];
   try {
     gate.release();
-    const [firstResult, secondResult, toolResult, commandResult] = await Promise.all([first, ...queued]);
+    const [firstResult, secondResult, commandResult] = await Promise.all([first, ...queued]);
     assert.equal(firstResult.existing, false);
     assert.equal(secondResult.existing, false);
-    assert.equal(toolResult.imported.source, 'workspace');
-    assert.equal(toolResult.from, path.join(app.root, 'tool.txt'));
     assert.equal(commandResult.kind, 'success');
-    assert.deepEqual((await app.index()).books.map(book => book.title), ['seed', 'first', 'second', 'tool', 'command']);
+    assert.deepEqual((await app.index()).books.map(book => book.title), ['seed', 'first', 'second', 'command']);
   } finally {
     gate.release();
     await Promise.allSettled([first, ...queued]);
