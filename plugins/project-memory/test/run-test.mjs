@@ -1,0 +1,1457 @@
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, utimesSync, chmodSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { chunkText } from '../src/chunker.js'
+import { scanSymbols } from '../src/symbols.js'
+import { ProjectMemoryStore } from '../src/store.js'
+import { memoryRootFor, resolveIndexRoot, sha256OfFile } from '../src/util/fs.js'
+import { indexDocTool } from '../src/tools/index-doc.js'
+import { indexRepoTool } from '../src/tools/index-repo.js'
+import { queryMemoryTool } from '../src/tools/query-memory.js'
+import { rememberTool } from '../src/tools/remember.js'
+import { forgetTool } from '../src/tools/forget.js'
+import { watchRepoTool } from '../src/tools/watch-repo.js'
+import { statsTool } from '../src/tools/stats.js'
+import { WatchManager } from '../src/watch.js'
+import { resolveLinkedSymbols } from '../src/link.js'
+import { rankEntriesMergedScored, rankEntriesStreaming, rankExperienceScored, tokenizeRaw } from '../src/util/search.js'
+import { findProjectRoot, indexFile, setupLazyIndexing, codeFirst } from '../src/lazy.js'
+
+/**
+ * 读取期链接解析的测试助手：返回某条 doc entry 命中的符号 id。
+ * @param {object} store 待查 store（或等价的 `{allEntries, entriesVersion}` 桩）
+ * @param {string} docId 目标 doc 的 id
+ * @param {number} limit 放宽上限，避免断言被默认的 5 截断
+ * @returns {string[]}
+ */
+function linkedIdsOf(store, docId, limit = 50) {
+  const doc = store.allEntries().find((e) => e.id === docId)
+  return resolveLinkedSymbols(store, doc, limit).map((s) => s.id)
+}
+
+/** 直接从磁盘 shard 聚合 entry，模拟"另一个进程重新加载"（绕过进程内 storeCache）。 */
+function storeLikeFromShards(memDir) {
+  const entries = []
+  for (const name of readdirSync(path.join(memDir, 'shards'))) {
+    const shard = JSON.parse(readFileSync(path.join(memDir, 'shards', name), 'utf8'))
+    if (Array.isArray(shard.entries)) entries.push(...shard.entries)
+  }
+  return { allEntries: () => entries, entriesVersion: 1 }
+}
+
+let passed = 0
+let failed = 0
+function check(name, cond) {
+  if (cond) {
+    passed++
+    console.log(`  ok  ${name}`)
+  } else {
+    failed++
+    console.error(`FAIL  ${name}`)
+  }
+}
+
+const fakeLLM = {
+  async *stream() {
+    const body = JSON.stringify({
+      title: 'Payment Module',
+      summary: 'Handles order payments via PaymentService. Constraint: fees must stay under 1%.',
+      keywords: ['payment', 'fees', 'gateway', 'PaymentService'],
+    })
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: body }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: body } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  },
+}
+
+const config = {
+  memoryDir: '.dsh-project-memory',
+  chunkChars: 3000,
+  maxChunksPerFile: 40,
+  maxFileSizeMb: 50,
+  maxOutputChars: 8000,
+  maxPdfPages: 1000,
+  llmQueryExpansion: true,
+  expansionCount: 6,
+  watch: true,
+  watchInterval: 15,
+  // 召回期可选 LLM（查询扩展/反思）需要显式路由；索引期零 LLM，与这里无关
+  llm: { provider: 'test', model: 'test-model' },
+  // 全局 insight store 必须**密闭**：不指定时它读的是开发机真实的 ~/.config/dsh-project-memory/global.json，
+  // 而用户的经验条目一旦命中测试用的乱码查询（实测被 `zzz-no-such-topic-xyz` 切出的 2 字符片段
+  // `no` 打中一条），下面 "no-hit introspection" 的断言就会红——测试结果取决于开发机有多少条个人经验。
+  insight: { globalFile: path.join(mkdtempSync(path.join(tmpdir(), 'pm-global-')), 'global.json') },
+}
+
+const root = mkdtempSync(path.join(tmpdir(), 'pm-test-'))
+const docsDir = path.join(root, 'docs')
+const srcDir = path.join(root, 'src')
+mkdirSync(docsDir, { recursive: true })
+mkdirSync(srcDir, { recursive: true })
+// 项目标记：index_doc / 懒索引现在只认标记（不再对任意目录兜底），夹具必须是个真项目。
+writeFileSync(path.join(root, 'package.json'), '{"name":"pm-test"}')
+
+const mdPath = path.join(docsDir, 'spec.md')
+writeFileSync(
+  mdPath,
+  '# Overview\n\nThis project handles payments end to end via PaymentService.\n\n# Fees\n\nFees must stay under 1%.\n\n# Archived\n\nOld section that changed.',
+)
+const pyPath = path.join(srcDir, 'payments.py')
+writeFileSync(pyPath, 'class PaymentService:\n    def charge(self, amount):\n        pass\n\ndef refund(tx):\n    pass\n')
+
+const ctx = { llm: fakeLLM }
+
+console.log('\n== chunker ==')
+const chunks = chunkText('# A\n\ncontent one\n\n# B\n\ncontent two', 3000, 40)
+check('splits headings', chunks.length === 2 && chunks[0].title === 'A' && chunks[1].title === 'B')
+check('tracks source lines', typeof chunks[0].line === 'number' && chunks[0].line >= 1)
+check('chunker survives degenerate chunkChars', chunkText('abc def ghi', 0, 40).length === 1)
+check('chunker survives negative chunkChars and maxChunks', chunkText('# A\n\nx\n\n# B\n\ny', -5, -3).length === 2)
+
+console.log('\n== symbols ==')
+const symbols = scanSymbols(pyPath, 'class PaymentService:\n    def charge(self, amount):\n        pass\n\ndef refund(tx):\n    pass\n')
+check('scans python class + functions', symbols.length === 3)
+check('symbol has source line', symbols.every((s) => typeof s.sourceLine === 'number'))
+check('symbol keywords include name', symbols.some((s) => s.keywords.includes('refund')))
+
+const csSource = `using System;
+using System.IO;
+class Program {
+    private static void Main() {
+        if (!File.Exists("x")) return;
+        var p = Path.Combine("a", "b");
+        Process.Start(p);
+    }
+    public string GetName(int id) {
+        return id.ToString();
+    }
+    private void DumpType(Type t) {
+        // no-op
+    }
+    public static (long dx, long dy) ReadMoveDir(int dir) {
+        return (0, 0);
+    }
+}`
+const csSymbols = scanSymbols('Program.cs', csSource)
+check('C# only captures declarations (no method-call noise)', csSymbols.length === 5)
+check('C# captures class + functions', csSymbols.every((s) => ['Program', 'Main', 'GetName', 'DumpType', 'ReadMoveDir'].includes(s.title.split(' ')[0])))
+
+const rustSymbols = scanSymbols('lib.rs', 'pub fn visible() {}\npub(crate) async fn scoped() {}\nfn hidden() {}\npub struct Thing {}\n')
+check(
+  'rust captures pub fn / pub(crate) async fn / private fn',
+  ['visible', 'scoped', 'hidden'].every((n) => rustSymbols.some((s) => s.keywords.includes(n))),
+)
+check('rust struct still detected', rustSymbols.some((s) => s.title.startsWith('Thing')))
+
+console.log('\n== go/rust/c/shell masking ==')
+{
+  const goSrc = [
+    'package main',
+    '',
+    'const route = "https://x/fakeFunc"',
+    '// func commentedOut() {}',
+    'func realFn() {}',
+  ].join('\n')
+  const goNames = scanSymbols('main.go', goSrc).map((s) => s.keywords[0])
+  check('go: string/comment funcs ignored', !goNames.includes('fakeFunc') && !goNames.includes('commentedOut'))
+  check('go: real func detected', goNames.includes('realFn'))
+
+  const rustSrc = [
+    'const s = "fn strFake()";',
+    '/* fn blockFake() */ /* nested /* deeper */ still */',
+    "fn lifetime<'a>(x: &'a str) {}",
+    'fn realRust() {}',
+  ].join('\n')
+  const rustNames = scanSymbols('lib2.rs', rustSrc).map((s) => s.keywords[0])
+  check('rust: string/comment/nested-comment fns ignored', !rustNames.includes('strFake') && !rustNames.includes('blockFake') && !rustNames.includes('deeper'))
+  check('rust: lifetime fn detected', rustNames.includes('lifetime'))
+  check('rust: plain fn detected', rustNames.includes('realRust'))
+
+  const cSrc = [
+    'static char* url = "https://x/fakeC();";',
+    '// int commentedC() { return 0; }',
+    'int realC(void)',
+    '{',
+    '    return url != 0;',
+    '}',
+  ].join('\n')
+  const cNames = scanSymbols('m.c', cSrc).map((s) => s.keywords[0])
+  check('c: string/comment decls ignored', !cNames.includes('fakeC') && !cNames.includes('commentedC'))
+  check('c: real decl detected', cNames.includes('realC'))
+
+  const shSrc = [
+    '#!/usr/bin/env bash',
+    'URL="https://x/fakeShell"',
+    'count=${#URL}',
+    'real_shell() { echo "$count"; }',
+  ].join('\n')
+  const shNames = scanSymbols('run.sh', shSrc).map((s) => s.keywords[0])
+  check('shell: string content not a symbol, ${#} survives', !shNames.includes('fakeShell') && shNames.includes('real_shell'))
+}
+
+console.log('\n== js/ts scanner: masking, continuation ==')
+{
+  const js = [
+    '',
+    'const url = "https://fake.example/function decoy()"',
+    '// function commentedOut() {}',
+    '/* function blockCommented() {} */',
+    'export const realArrow = async (req) => { return url }',
+    'export const splitArrow =',
+    '  async (evt) => {}',
+    'export function',
+    '  multilineFn(',
+    '    a,',
+    '    b,',
+    '  ) {}',
+    'class Widget extends Base {',
+    '  methodOne(x) {}',
+    '}',
+  ].join('\n')
+  const got = scanSymbols('app.js', js).map((s) => s.keywords[0])
+  check('js: string/comment content not scanned as symbols', !got.includes('decoy') && !got.includes('commentedOut') && !got.includes('blockCommented'))
+  check('js: arrow function detected', got.includes('realArrow'))
+  check('js: arrow with value on next line detected', got.includes('splitArrow'))
+  check('js: multi-line signature detected', got.includes('multilineFn'))
+  check('js: indented class method detected', scanSymbols('app.js', 'class A {\n  run(x) {}\n}').some((s) => s.keywords.includes('run')))
+}
+
+console.log('\n== js/go scanner: unterminated quote does not leak across lines ==')
+{
+  const leak1 = ["const re = /['\"]/g;", 'export function victim() {}'].join('\n')
+  check('js: regex literal with quotes does not poison next lines', scanSymbols('a.js', leak1).some((s) => s.keywords.includes('victim')))
+  const leak2 = ['msg = "unterminated', 'export function victim2() {}'].join('\n')
+  check('js: unterminated string resets at end of line', scanSymbols('b.js', leak2).some((s) => s.keywords.includes('victim2')))
+  const leak3 = ['msg := "unterminated', 'func victim3() {}'].join('\n')
+  check('go: unterminated string resets at end of line', scanSymbols('c.go', leak3).some((s) => s.keywords.includes('victim3')))
+  const tmpl = ['const t = `fn fake()`;', 'export function survivor() {}'].join('\n')
+  check('js: backtick template still masked across constructs', !scanSymbols('d.js', tmpl).some((s) => s.keywords.includes('fake')) && scanSymbols('d.js', tmpl).some((s) => s.keywords.includes('survivor')))
+}
+
+console.log('\n== python scanner: strings, nesting, methods ==')
+{
+  const py = [
+    'import os',
+    '',
+    'LABEL = "# not a comment"',
+    '',
+    'def top_level(a):',
+    "    s = 'def fake(): pass'",
+    '    return s',
+    '',
+    'class Service:',
+    '    def method(self):',
+    '        pass',
+    '',
+    '    async def async_method(self):',
+    '        pass',
+    '',
+    'RESULT = sum(',
+    '    [1 for x in [] if x],',
+    '    # def nested_fake():',
+    '    [],',
+    ')',
+    '',
+    'def after_call(b):',
+    '    pass',
+  ].join('\n')
+  const gotNames = scanSymbols('svc.py', py).map((s) => s.keywords[0])
+  check('py: string/comment defs ignored', !gotNames.includes('fake') && !gotNames.includes('nested_fake'))
+  check('py: indented methods detected', gotNames.includes('method') && gotNames.includes('async_method'))
+  check('py: scanning resumes after bracket-nested region', gotNames.includes('after_call'))
+  check('py: top-level def and class kept', gotNames.includes('top_level') && gotNames.includes('Service'))
+}
+
+console.log('\n== sharded store layout & migration ==')
+{
+  const migDir = path.join(mkdtempSync(path.join(tmpdir(), 'pm-mig-')), 'mem')
+  mkdirSync(migDir, { recursive: true })
+  writeFileSync(
+    path.join(migDir, 'index.json'),
+    JSON.stringify({ version: 1, files: { 'docs/a.md': { sha256: 'aa', size: 10, type: 'doc', indexedAt: '2026-08-25T00:00:00Z' } } }),
+  )
+  writeFileSync(
+    path.join(migDir, 'entries.json'),
+    JSON.stringify({ 'docs/a.md': [{ id: 'a#1', type: 'doc', sourcePath: 'docs/a.md', sourceLine: 1, title: 'A', summary: 's', keywords: ['a'] }] }),
+  )
+  writeFileSync(path.join(migDir, 'experience.json'), '[]')
+  writeFileSync(path.join(migDir, 'watch.json'), '[]')
+
+  const migrated = new ProjectMemoryStore(migDir).load()
+  check('migration keeps files and entries in memory', migrated.fileRecord('docs/a.md')?.sha256 === 'aa' && (migrated.entries['docs/a.md'] || []).length === 1)
+  check('migration writes format marker', existsSync(path.join(migDir, 'format.json')))
+  check('migration removes legacy entries.json / index.json', !existsSync(path.join(migDir, 'entries.json')) && !existsSync(path.join(migDir, 'index.json')))
+  const shardFiles = readdirSync(path.join(migDir, 'shards')).filter((n) => n.endsWith('.json'))
+  check('migration writes one shard per file', shardFiles.length === 1)
+  const shard = JSON.parse(readFileSync(path.join(migDir, 'shards', shardFiles[0]), 'utf8'))
+  check('shard is self-describing', shard.relPath === 'docs/a.md' && shard.record.sha256 === 'aa' && shard.entries.length === 1)
+
+  migrated.removeFile('docs/a.md')
+  migrated.save()
+  check('removeFile deletes the shard on disk', readdirSync(path.join(migDir, 'shards')).length === 0)
+
+  // 幂等：再次 load 不重复迁移、不报错
+  const again = new ProjectMemoryStore(migDir).load()
+  check('reload after migration is stable', again.stats().files === 0)
+
+  // 缓存语义：同目录两个实例是同一份状态
+  const instA = new ProjectMemoryStore(migDir).load()
+  const instB = new ProjectMemoryStore(migDir).load()
+  check('same-dir instances share one state', instA === instB || instA.files === instB.files || Object.keys(instA.files).length === Object.keys(instB.files).length)
+}
+
+console.log('\n== store ==')
+{
+  const storeDir = memoryRootFor(root, config.memoryDir)
+  const store = new ProjectMemoryStore(storeDir).load()
+  const add1 = store.addExperience({ problem: 'pdfjs import fails on Node 24', solution: 'use legacy build', sourceFile: 'a.js' })
+  const add2 = store.addExperience({ problem: 'different problem entirely', solution: 'x' })
+  const add3 = store.addExperience({ problem: 'pdfjs import fails on Node 24 again', solution: 'use legacy build + worker:false' })
+  check('adds experience', add1.superseded === false && add2.superseded === false)
+  check('supersedes similar problem', add3.superseded === true && store.experience.length === 2)
+  store.save()
+  check('persists to disk', existsSync(path.join(storeDir, 'experience.json')))
+  check('store files written compact', !readFileSync(path.join(storeDir, 'experience.json'), 'utf8').includes('\n  '))
+  check('searches experience', rankExperienceScored(store.experience, 'pdfjs import').length === 1)
+  const staleTmp = path.join(storeDir, 'experience.json.999999.tmp')
+  writeFileSync(staleTmp, '{}')
+  utimesSync(staleTmp, new Date(Date.now() - 120000), new Date(Date.now() - 120000))
+  store.save()
+  check('stale tmp files cleaned on save', !existsSync(staleTmp))
+}
+
+console.log('\n== IDF caching & streaming TF ==')
+{
+  const cacheDir = mkdtempSync(path.join(tmpdir(), 'pm-idf-cache-'))
+  const cacheMemDir = memoryRootFor(cacheDir, config.memoryDir)
+  const store = new ProjectMemoryStore(cacheMemDir).load()
+
+  // Add test entries
+  store.setEntries('a.md', [
+    { id: '1', type: 'doc', sourcePath: 'a.md', sourceLine: 1, title: 'Database Pool Config', summary: 'How to configure database connection pool', keywords: ['database', 'pool', 'config'], searchText: 'database pool config database pool config database pool config database pool config database pool config pool config how to configure database connection pool a.md' },
+    { id: '2', type: 'doc', sourcePath: 'b.md', sourceLine: 1, title: 'Pool Tuning', summary: 'Tuning connection pool parameters', keywords: ['pool', 'tuning'], searchText: 'pool tuning pool tuning pool tuning pool tuning pool tuning pool tuning tuning connection pool parameters b.md' },
+    { id: '3', type: 'doc', sourcePath: 'c.md', sourceLine: 1, title: 'Other', summary: 'Unrelated', keywords: ['other'], searchText: 'other other other other other other unrelated c.md' },
+  ])
+  store.save()
+
+  // Test IDF cache creation
+  const idf1 = store.getIdfCache()
+  check('IDF cache built on first query', Object.keys(idf1).length > 0 && idf1.pool > 0)
+
+  // Test cache hit (same version)
+  const idf2 = store.getIdfCache()
+  check('IDF cache hit on same version', idf2 === idf1)
+
+  // A no-op save() must keep the cache: watch polls commit→save every 15s even when
+  // nothing changed, which used to bump the version and wipe the IDF cache on each poll.
+  store.save()
+  const idf3 = store.getIdfCache()
+  check('no-op save() keeps the IDF cache', idf3 === idf1)
+
+  // IDF 只依赖 entries（title/keywords/summary），失效边界应当**恰好**是"条目变了"：
+  // 新增条目必须重建；只写经验/insight 不应重建（旧实现任何脏写都重建，watch 每轮白建一次）。
+  store.setEntries('probe.md', [
+    { id: 'p9', type: 'doc', sourcePath: 'probe.md', sourceLine: 1, title: 'Probe', summary: 'idf probe', keywords: ['probe'] },
+  ])
+  store.save()
+  const idf4 = store.getIdfCache()
+  check('条目变化后 IDF 重建', idf4 !== idf1)
+  const beforeExp = idf4
+  store.addExperience({ problem: 'idf cache probe', solution: 'dirty the store' })
+  store.save()
+  check('只写经验不重建 IDF', store.getIdfCache() === beforeExp)
+
+  // IDF 语料必须与**检索**同源（title×5 + keywords + summary + terms + sourcePath）。
+  // 此前这里手抄的副本缺了后两项，于是只出现在 `terms` 里的词 df=0 → 虚高 IDF。
+  {
+    const alignStore = new ProjectMemoryStore(memoryRootFor(mkdtempSync(path.join(tmpdir(), 'pm-idf-align-')), config.memoryDir)).load()
+    alignStore.setEntries('terms.md', [
+      { id: 'x1', type: 'doc', sourcePath: 'terms.md', sourceLine: 1, title: 'Plain', summary: 'plain summary', keywords: ['plain'], terms: 'zebra' },
+    ])
+    const idfAlign = alignStore.getIdfCache()
+    check('只在 terms 里的词进了 IDF 语料', (idfAlign.zebra || 0) > 0)
+    check('只在 sourcePath 里的词进了 IDF 语料', (idfAlign.terms || 0) > 0)
+  }
+
+  // Test streaming rank function directly
+  const { rankEntriesStreaming } = await import('../src/util/search.js')
+  const entries = store.allEntries()
+  const queries = ['database pool']
+  const scored = rankEntriesStreaming(entries, queries, idf1, 8)
+  check('rankEntriesStreaming returns scored results', scored.length > 0 && scored[0].entry.id === '1')
+
+  // Test that score decreases with less relevant docs
+  const scored2 = rankEntriesStreaming(entries, ['tuning'], idf1, 8)
+  check('streaming TF ranks tuning higher for b.md', scored2[0]?.entry?.id === '2')
+
+  // Test empty query handling
+  const empty = rankEntriesStreaming(entries, [], idf1, 8)
+  check('empty query returns zero-score entries', empty.length <= 8 && empty.every((r) => r.score === 0))
+
+  // Test searchText precomputation on setEntries
+  const freshStore = new ProjectMemoryStore(memoryRootFor(mkdtempSync(path.join(tmpdir(), 'pm-fresh-')), config.memoryDir)).load()
+  freshStore.setEntries('test.js', [
+    { id: 't1', type: 'symbol', sourcePath: 'test.js', sourceLine: 1, title: 'Test', summary: 'test function', keywords: ['test'], }
+  ])
+  check('setEntries adds searchText to entries', freshStore.entries['test.js'][0].searchText !== undefined)
+}
+
+console.log('\n== experience phrase boost ==')
+{
+  const expStore = new ProjectMemoryStore(path.join(mkdtempSync(path.join(tmpdir(), 'pm-exp-phrase-')), 'mem')).load()
+  expStore.addExperience({ problem: '数据库连接池配置参数调优', solution: '调大 maxPoolSize', sourceFile: 'a.js' })
+  expStore.addExperience({ problem: '连接池耗尽报错', solution: '检查泄漏', sourceFile: 'b.js' })
+  expStore.addExperience({ problem: '其他问题', solution: 'x', sourceFile: 'c.js' })
+  // 查询包含经验 problem 完整短语，应触发短语加分
+  const r1 = rankExperienceScored(expStore.experience, '数据库连接池配置参数调优')
+  check('经验层短语加分: 数据库连接池配置参数调优 -> 自身 排前', r1[0]?.item?.id === expStore.experience[0]?.id)
+  // 同义词展开也应生效
+  const r2 = rankExperienceScored(expStore.experience, '连接池')
+  check('经验层同义词展开: 连接池 召回 数据库连接池配置参数调优', r2.some((e) => e.item.problem === '数据库连接池配置参数调优'))
+}
+
+console.log('\n== experience capacity ==')
+{
+  const capStore = new ProjectMemoryStore(path.join(mkdtempSync(path.join(tmpdir(), 'dsh-cap-')), 'mem')).load()
+  capStore.files = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`f${i}.js`, 'h']))
+  for (let i = 0; i < 130; i++) {
+    capStore.experience.push({ id: `e${i}`, problem: `case${i} trouble`, solution: 'x', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString() })
+  }
+  const pruned = capStore.pruneExperience()
+  check('cap: prunes to dynamic max (120)', capStore.experience.length === 120 && pruned === 10)
+  check('cap: drops oldest batch', !capStore.experience.some((e) => Number(e.id.slice(1)) < 10) && capStore.experience.some((e) => e.id === 'e129'))
+  let added = 0
+  for (let i = 0; i < 150; i++) {
+    const r = capStore.addExperience({ problem: `topic${i} trouble`, solution: 'x' })
+    if (!r.superseded) added++
+  }
+  check('cap: addExperience keeps store at max', capStore.experience.length === 120 && added === 150)
+  check('cap: clamps at 2000 on huge projects', Math.max(100, Math.min(2000, 5000 * 2)) === 2000)
+  check('cap: floors at 100 on empty projects', Math.max(100, Math.min(2000, 0 * 2)) === 100)
+}
+
+console.log('\n== supersede boundary (regression) ==')
+{
+  const ngxStore = new ProjectMemoryStore(path.join(mkdtempSync(path.join(tmpdir(), 'pm-ngx-')), 'mem')).load()
+  ngxStore.addExperience({ problem: '如何配置 nginx 反向代理', solution: 'proxy_pass to upstream' })
+  const ngxSecond = ngxStore.addExperience({ problem: '如何配置 nginx 负载均衡', solution: 'upstream round-robin' })
+  check(
+    'distinct problems with shared prefix do not supersede',
+    ngxSecond.superseded === false && ngxStore.experience.length === 2,
+  )
+}
+
+console.log('\n== index_doc ==')
+const docTool = indexDocTool(ctx, config)
+let out = await docTool.execute({ file_path: mdPath })
+check('indexes md', out.startsWith('Indexed:') && out.includes('Entries: 3'))
+out = await docTool.execute({ file_path: mdPath })
+check('skips unchanged on re-run', out.startsWith('Skipped (unchanged)'))
+
+console.log('\n== index_doc defaults to the project-root store ==')
+{
+  const fragRoot = mkdtempSync(path.join(tmpdir(), 'pm-frag-'))
+  mkdirSync(path.join(fragRoot, 'docs'), { recursive: true })
+  writeFileSync(path.join(fragRoot, 'package.json'), '{"name":"frag"}')
+  const specPath = path.join(fragRoot, 'docs', 'spec.txt')
+  writeFileSync(specPath, '# Spec\n\ncontent here.')
+  await docTool.execute({ file_path: specPath })
+  check(
+    'index_doc without root lands in the project-root store',
+    existsSync(path.join(fragRoot, '.dsh-project-memory', 'format.json')) &&
+      !existsSync(path.join(fragRoot, 'docs', '.dsh-project-memory')),
+  )
+}
+
+console.log('\n== summary cap (no LLM) ==')
+const { summarizeText } = await import('../src/util/text.js')
+const huge = 'oops the model echoed the whole chunk back '.repeat(200)
+check('caps summary length', summarizeText(huge).length <= 300)
+
+console.log('\n== index_repo ==')
+const repoTool = indexRepoTool(ctx, config)
+out = await repoTool.execute({ root })
+check('indexes repo picks up code symbols, skips unchanged doc', out.includes('docs indexed: 0') && out.includes('code symbols updated: 1'))
+
+console.log('\n== index_repo skips dumps ==')
+const dumpDir = mkdtempSync(path.join(tmpdir(), 'pm-dump-'))
+const dumpFile = path.join(dumpDir, 'dump_cmdhist.txt')
+writeFileSync(
+  dumpFile,
+  '=== Assembly-CSharp loaded: Assembly-CSharp, Version=1.0.0.0\n\n== TYPE Foo : base=Object\n  M Int32 Bar()',
+)
+const dumpRepoTool = indexRepoTool(ctx, config)
+out = await dumpRepoTool.execute({ root: dumpDir })
+check('dump file counted as skipped, not indexed', out.includes('docs indexed: 0') && out.includes('unchanged skipped: 1'))
+const dumpStore = new ProjectMemoryStore(memoryRootFor(dumpDir, config.memoryDir)).load()
+check('dump file leaves no memory entries', dumpStore.stats().entries === 0)
+
+console.log('\n== query_memory ==')
+const queryTool = queryMemoryTool(ctx, config)
+out = await queryTool.execute({ root, query: 'payment fees constraint' })
+check('recalls doc summary with source', out.includes('spec.md') && out.includes('1%'))
+check('query output carries the entry status placeholder (H3)', out.includes('- status: exact'))
+out = await queryTool.execute({ root, query: 'refund' })
+check('recalls code symbol', out.includes('refund') && out.includes('payments.py'))
+check('symbol rows carry status too', out.includes('- status: exact'))
+out = await queryTool.execute({ root, query: 'pdfjs import' })
+check('recalls experience note', out.includes('pdfjs import fails on Node 24'))
+
+console.log('\n== query_memory streaming path (IDF cache) ==')
+{
+  const streamRoot = mkdtempSync(path.join(tmpdir(), 'pm-stream-'))
+  const streamDocs = path.join(streamRoot, 'docs')
+  const streamSrc = path.join(streamRoot, 'src')
+  mkdirSync(streamDocs, { recursive: true })
+  mkdirSync(streamSrc, { recursive: true })
+  writeFileSync(path.join(streamDocs, 'api.md'), '# API\n\nPayment module fees constraint guide.')
+  writeFileSync(path.join(streamSrc, 'db.js'), 'export function getPool() {}\nexport const POOL_SIZE = 10\n')
+  const streamConfig = { ...config, llmQueryExpansion: false }
+  const streamTool = queryMemoryTool(ctx, streamConfig)
+  const streamRepoTool = indexRepoTool(ctx, streamConfig)
+  // Index first
+  await streamRepoTool.execute({ root: streamRoot })
+  // First query builds IDF cache
+  out = await streamTool.execute({ root: streamRoot, query: 'payment fees' })
+  check('streaming query returns results', out.includes('API') && out.includes('constraint'))
+  // Second query uses cached IDF
+  out = await streamTool.execute({ root: streamRoot, query: 'constraint' })
+  check('cached IDF query returns results', out.includes('API') && out.toLowerCase().includes('constraint'))
+}
+
+console.log('\n== entry id 前缀必须是单射（旧 relativeId 会把两个文件撞成一个）==')
+{
+  // 旧规则 `replace(/[\\/:\s]/g, '_')` 之于 `a b.md` 与 `a_b.md` 是同一条前缀 → `${prefix}#0`
+  // 同 id。撞 id 的后果不是"不好看"：rankEntriesStreaming 按 id 合并多查询命中，两个文件的条目
+  // 会被合成一条、低分的那条静默消失。
+  const { entryIdPrefix } = await import('../src/util/entry-id.js')
+  const paths = [
+    'a b.md', 'a_b.md', 'a/b.md', 'a\\b.md', 'a:b.md', 'a  b.md', 'a%b.md', 'a#0.md',
+    'a%5Fb.md', '面试 演示.md', '面试_演示.md', 'x.md', 'x.md#0', 'src/foo_bar.js', 'src/foo bar.js',
+  ]
+  const prefixes = paths.map(entryIdPrefix)
+  check(`${paths.length} 个不同路径 → ${paths.length} 个不同前缀（实际 ${new Set(prefixes).size}）`, new Set(prefixes).size === paths.length)
+  check('空格与下划线不再等价', entryIdPrefix('a b.md') !== entryIdPrefix('a_b.md'))
+  check('旧实现会撞的完整 id 也不相等', `${entryIdPrefix('a b.md')}#0` !== `${entryIdPrefix('a_b.md')}#0`)
+  const symA = scanSymbols('a b.ts', 'a b.ts', 'export function alpha() { return 1 }\n').map((s) => s.id)
+  const symB = scanSymbols('a_b.ts', 'a_b.ts', 'export function alpha() { return 1 }\n').map((s) => s.id)
+  check('符号表那条路径同样单射', symA.length > 0 && symB.length > 0 && !symA.some((id) => symB.includes(id)))
+}
+
+console.log('\n== 检索合并键不再把两个文件合成一条 ==')
+{
+  const collideRoot = mkdtempSync(path.join(tmpdir(), 'pm-idcollide-'))
+  writeFileSync(path.join(collideRoot, 'a b.md'), '# Alpha\n\nshared needletoken gateway constraint\n')
+  writeFileSync(path.join(collideRoot, 'a_b.md'), '# Beta\n\nshared needletoken refund constraint\n')
+  await indexRepoTool(ctx, { ...config, llmQueryExpansion: false }).execute({ root: collideRoot })
+  const collideStore = new ProjectMemoryStore(memoryRootFor(collideRoot, config.memoryDir)).load()
+  const docIds = collideStore
+    .allEntries()
+    .filter((e) => e.type === 'doc' && String(e.sourcePath).endsWith('.md'))
+    .map((e) => e.id)
+  check(`两个文件的 doc id 不同（${docIds.join(' | ')}）`, docIds.length === 2 && new Set(docIds).size === 2)
+  const merged = rankEntriesStreaming(collideStore.allEntries(), ['shared needletoken'], {}, 8)
+  const sources = new Set(merged.map((r) => r.entry.sourcePath))
+  check(
+    `两条 doc 都还在检索结果里（实际 ${[...sources].join(', ') || '空'}）`,
+    sources.has('a b.md') && sources.has('a_b.md'),
+  )
+}
+
+console.log('\n== no-hit introspection & stats tool ==')
+{
+  out = await queryTool.execute({ root, query: 'zzz-no-such-topic-xyz' })
+  check('no-hit query shows store overview', out.includes('No memory matches') && out.includes('Store overview:') && /\d+ files indexed/.test(out))
+  out = await queryTool.execute({ root, query: 'zzz-no-such-topic-xyz', type: 'experience' })
+  check('no-hit experience query hints remember not index', out.includes('remember') && !out.includes('index_repo'))
+  const stats = new ProjectMemoryStore(memoryRootFor(root, config.memoryDir)).load()
+  const expectedFiles = Object.keys(stats.files).length
+  out = await statsTool(config).execute({ root })
+  check('stats tool lists totals and last index', out.includes(`Files indexed: ${expectedFiles}`) && out.includes('Last index:'))
+  check('stats tool lists per-file entries', out.includes('spec.md [doc] entries:') && out.includes('payments.py [code] entries:'))
+}
+
+console.log('\n== links are resolved at read time, not persisted ==')
+{
+  const lpRoot = mkdtempSync(path.join(tmpdir(), 'pm-linkdisk-'))
+  mkdirSync(path.join(lpRoot, 'docs'), { recursive: true })
+  mkdirSync(path.join(lpRoot, 'src'), { recursive: true })
+  const gwPath = path.join(lpRoot, 'src', 'gw.py')
+  writeFileSync(gwPath, 'class Gateway:\n    def charge(self): pass\n')
+  const spec = path.join(lpRoot, 'docs', 'spec.md')
+  writeFileSync(spec, '# Spec\n\nSee gateway notes.')
+  const lpMemDir = memoryRootFor(lpRoot, config.memoryDir)
+  const specRel = path.relative(lpRoot, spec).split(path.sep).join('/')
+
+  // 关键顺序：**文档先入库、符号后到**。旧实现把链接物化在索引那一刻，这条顺序会永久丢链接。
+  await docTool.execute({ file_path: spec, root: lpRoot })
+  {
+    const st = new ProjectMemoryStore(lpMemDir).load()
+    st.markFile('src/gw.py', { sha256: 'gw', size: 1, type: 'code', indexedAt: new Date().toISOString() })
+    st.setEntries('src/gw.py', scanSymbols(gwPath, readFileSync(gwPath, 'utf8')))
+    st.save()
+  }
+
+  const shardDir = path.join(lpMemDir, 'shards')
+  // 落盘只留事实：链接、searchText、typeSig 都是派生/中间量，不应出现在任何 shard 里。
+  let sawEntries = 0
+  let derivedOnDisk = 0
+  for (const name of readdirSync(shardDir)) {
+    const shard = JSON.parse(readFileSync(path.join(shardDir, name), 'utf8'))
+    for (const e of Array.isArray(shard.entries) ? shard.entries : []) {
+      sawEntries++
+      if ('linkedSymbols' in e || 'searchText' in e || 'typeSig' in e) derivedOnDisk++
+    }
+  }
+  check(
+    '派生字段不落盘（linkedSymbols / searchText / typeSig）',
+    sawEntries > 0 && derivedOnDisk === 0,
+  )
+  // 只凭磁盘上剩下的内容（等价于另一个进程重新加载）也要能解出链接
+  const reloaded = storeLikeFromShards(lpMemDir)
+  const specEntry = reloaded.allEntries().find((e) => e.sourcePath === specRel)
+  check(
+    '仅凭磁盘 shard 即可解出 Gateway 链接（文档先索引、符号后到也不丢）',
+    resolveLinkedSymbols(reloaded, specEntry, 5).some((s) => s.keywords?.[0] === 'Gateway'),
+  )
+}
+
+console.log('\n== derived fields live in memory, not on disk ==')
+{
+  const dir = path.join(mkdtempSync(path.join(tmpdir(), 'pm-derived-')), 'mem')
+  const st = new ProjectMemoryStore(dir).load()
+  st.setEntries('docs/a.md', [
+    { id: 'a1', type: 'doc', sourcePath: 'docs/a.md', sourceLine: 1, title: 'Alpha', summary: 'beta gamma', keywords: ['alpha'] },
+  ])
+  st.markFile('docs/a.md', { sha256: 'h', size: 1, type: 'doc', indexedAt: new Date().toISOString() })
+  st.save()
+  let onDisk = null
+  for (const name of readdirSync(path.join(dir, 'shards'))) {
+    const shard = JSON.parse(readFileSync(path.join(dir, 'shards', name), 'utf8'))
+    if (shard.relPath === 'docs/a.md') onDisk = shard.entries[0]
+  }
+  check('searchText 不写盘', Boolean(onDisk) && !('searchText' in onDisk))
+  // 内存里按需物化（供 rankEntriesStreaming 用）
+  delete st.entries['docs/a.md'][0].searchText
+  const got = st.allEntries()
+  check('allEntries 按需物化 searchText', typeof got[0].searchText === 'string' && got[0].searchText.includes('alpha'))
+}
+
+console.log('\n== symbol declaration is one bounded line ==')
+{
+  const { oneLineDeclaration, MAX_DECLARATION } = await import('../src/util/text.js')
+  check('限长到 MAX_DECLARATION', oneLineDeclaration('x'.repeat(MAX_DECLARATION * 5)).length === MAX_DECLARATION)
+  check('压平成单行', !oneLineDeclaration('a\n\n   b').includes('\n'))
+}
+
+console.log('\n== legacy type-cache directory is self-healed ==')
+{
+  const dir = path.join(mkdtempSync(path.join(tmpdir(), 'pm-typecache-')), 'mem')
+  mkdirSync(path.join(dir, 'type-cache'), { recursive: true })
+  writeFileSync(path.join(dir, 'type-cache', 'deadbeefdeadbeef.json'), '{}')
+  // 0.5.11 起不再用这个缓存（永远命中不了），首次 load 顺手清掉
+  new ProjectMemoryStore(dir).load()
+  check('加载时清掉旧的 type-cache 目录', !existsSync(path.join(dir, 'type-cache')))
+}
+
+console.log('\n== legacy shards compact themselves over saves ==')
+{
+  const dir = path.join(mkdtempSync(path.join(tmpdir(), 'pm-compact-')), 'mem')
+  mkdirSync(path.join(dir, 'shards'), { recursive: true })
+  writeFileSync(path.join(dir, 'format.json'), JSON.stringify({ version: 2, layout: 'sharded' }))
+  // 手工写一个「0.5.10 时代」的分片：带 linkedSymbols / searchText（文件名须与 store 的
+  // shardRelPath 一致，否则 save() 会写到规范路径、把未规范命名的旧文件留在原地）
+  const rel = 'docs/a.md'
+  const shardName = `${createHash('sha256').update(rel).digest('hex')}.json`
+  writeFileSync(path.join(dir, 'shards', shardName), JSON.stringify({
+    relPath: rel,
+    record: { sha256: 'h', size: 1, type: 'doc', indexedAt: new Date().toISOString() },
+    entries: [{ id: 'a1', type: 'doc', sourcePath: rel, sourceLine: 1, title: 'Alpha', summary: 'beta', keywords: [], searchText: 'legacy', linkedSymbols: ['s1'] }],
+  }))
+  const st = new ProjectMemoryStore(dir).load()
+  check('加载即剥离内存里的派生字段并排队', !('searchText' in st.entries[rel][0]) && st.pendingCompaction === 1)
+  st.save()
+  const onDisk = JSON.parse(readFileSync(path.join(dir, 'shards', shardName), 'utf8'))
+  check('下一次 save 自动压实该分片', !('searchText' in onDisk.entries[0]) && !('linkedSymbols' in onDisk.entries[0]))
+  check('压实队列清空', st.pendingCompaction === 0)
+}
+
+console.log('\n== remember / forget ==')
+const remTool = rememberTool(config)
+out = await remTool.execute({ root, problem: 'OPS import breaks', solution: 'import from legacy build', source_file: 'x.js' })
+check('remember saves', out.includes('Saved experience note'))
+const forgetToolInst = forgetTool(config)
+out = await forgetToolInst.execute({ root, id_or_query: 'OPS import breaks' })
+check('forget removes', out.includes('Removed'))
+
+console.log('\n== concurrent store writes without lock ==')
+const lockDir = mkdtempSync(path.join(tmpdir(), 'pm-lock-'))
+const mkStore = () => new ProjectMemoryStore(memoryRootFor(lockDir, config.memoryDir))
+await Promise.all([
+  (async () => {
+    const s = mkStore().load()
+    s.commit((s) => s.addExperience({ problem: 'p1', solution: 's1' }))
+  })(),
+  (async () => {
+    const s = mkStore().load()
+    s.commit((s) => s.addExperience({ problem: 'p2', solution: 's2' }))
+  })(),
+])
+const lockStore = mkStore().load()
+check('no lost writes under contention (commit-based)', lockStore.experience.length === 2)
+
+console.log('\n== incremental cleanup ==')
+writeFileSync(pyPath, 'class PaymentService:\n    def charge(self, amount):\n        pass\n')
+out = await repoTool.execute({ root })
+check('reindex keeps docs, updates changed code', out.includes('docs indexed: 0') && out.includes('code symbols updated: 1'))
+
+console.log('\n== merged BM25 (query expansion fallback) ==')
+// 走生产函数 rankEntriesMergedScored（recall 的 insight 层用同一条）
+const merged = rankEntriesMergedScored(
+  [
+    { id: '1', title: 'Refund flow', summary: 'Handles order refunds', keywords: ['refund'], sourcePath: 'a.md' },
+    { id: '2', title: 'Login', summary: 'Auth token', keywords: ['auth'], sourcePath: 'b.md' },
+  ],
+  ['refund', 'money back'],
+)
+check('merged search ranks by max score', merged.length === 1 && merged[0].entry.id === '1')
+
+console.log('\n== BM25 term frequency & field weighting ==')
+{
+  const tfDocs = [
+    { id: 'low', title: 'Alpha notes', summary: 'fees y z w', keywords: [], sourcePath: 'a.md' },
+    { id: 'high', title: 'Beta notes', summary: 'fees fees fees x', keywords: [], sourcePath: 'b.md' },
+  ]
+  check('higher term frequency ranks first', rankEntriesStreaming(tfDocs, ['fees'], {}, 8)[0]?.entry.id === 'high')
+  const fieldDocs = [
+    { id: 'body', title: 'Other title', summary: 'about zephyr stuff', keywords: [], sourcePath: 'c.md' },
+    { id: 'head', title: 'Zephyr spec', summary: 'nothing relevant here', keywords: [], sourcePath: 'd.md' },
+  ]
+  check('title hit outweighs body hit', rankEntriesStreaming(fieldDocs, ['zephyr'], {}, 8)[0]?.entry.id === 'head')
+}
+
+console.log('\n== CJK query: phrase boost + synonyms ==')
+{
+  const cjkDocs = [
+    { id: 'd1', title: '数据库连接池配置详解', summary: '如何配置连接池', keywords: ['数据库连接池', '配置'], sourcePath: 'a.md' },
+    { id: 'd2', title: '连接池调优', summary: '连接池参数调优', keywords: ['连接池', '调优'], sourcePath: 'b.md' },
+    { id: 'd3', title: '其他文档', summary: '无关内容', keywords: ['其他'], sourcePath: 'c.md' },
+  ]
+  // 短语加分：查询"数据库连接池配置"，标题含"数据库连接池配置"应加分（d1 包含查询短语）
+  const r1 = rankEntriesStreaming(cjkDocs, ['数据库连接池配置'], {}, 8).map((r) => r.entry)
+  check('精确短语加分: 数据库连接池配置 -> 数据库连接池配置详解 排前', r1[0]?.id === 'd1')
+  // 同义词展开：查询"连接池"应召回"数据库连接池配置详解"
+  const r2 = rankEntriesStreaming(cjkDocs, ['连接池'], {}, 8).map((r) => r.entry)
+  check('同义词展开: 连接池 召回 数据库连接池配置详解', r2.some((d) => d.id === 'd1'))
+  // expandQuery undefined 不抛错
+  const { buildBm25 } = await import('../src/util/search.js')
+  const bm25 = buildBm25(cjkDocs, (d) => `${d.title} ${d.keywords.join(' ')} ${d.summary}`)
+  const empty = bm25.score(undefined)
+  check('expandQuery(undefined) 不抛错且返回空', Array.isArray(empty) && empty.length === 0)
+}
+
+console.log('\n== doc <-> symbol cross-linking ==')
+const linkedStore = new ProjectMemoryStore(memoryRootFor(root, config.memoryDir)).load()
+const resolvedSyms = linkedStore
+  .allEntries()
+  .filter((e) => e.type === 'doc')
+  .flatMap((d) => resolveLinkedSymbols(linkedStore, d, 50))
+check('links doc entries to mentioned symbols', resolvedSyms.some((s) => s.title.includes('PaymentService')))
+out = await queryTool.execute({ root, query: 'payments' })
+check('query shows references to linked symbols', out.includes('references:') && out.includes('PaymentService'))
+
+console.log('\n== link hygiene ==')
+{
+  const linkStore = new ProjectMemoryStore(path.join(mkdtempSync(path.join(tmpdir(), 'pm-link-')), 'mem')).load()
+  linkStore.setEntries('src/a.js', [
+    {
+      id: 's1', type: 'symbol', sourcePath: 'src/a.js', sourceLine: 1,
+      title: 'parseConfig (function)', summary: 'function parseConfig', keywords: ['parseConfig', 'function'],
+    },
+  ])
+  linkStore.setEntries('docs/spec.md', [
+    {
+      id: 'd1', type: 'doc', sourcePath: 'docs/spec.md', sourceLine: 1,
+      title: 'Config guide', summary: 'Describes several function entry points.', keywords: ['config'],
+    },
+    {
+      id: 'd2', type: 'doc', sourcePath: 'docs/spec.md', sourceLine: 9,
+      title: 'Parsing', summary: 'parseConfig loads values at boot.', keywords: ['parseConfig'],
+    },
+  ])
+  check('generic word does not link every symbol', linkedIdsOf(linkStore, 'd1').length === 0)
+  check('real name match still links', linkedIdsOf(linkStore, 'd2').includes('s1'))
+  check('同一条链接只出现一次（id 去重）', linkedIdsOf(linkStore, 'd2').filter((id) => id === 's1').length === 1)
+}
+
+console.log('\n== link word boundaries ==')
+{
+  const bStore = new ProjectMemoryStore(path.join(mkdtempSync(path.join(tmpdir(), 'pm-linkb-')), 'mem')).load()
+  bStore.setEntries('src/r.js', [
+    {
+      id: 'sr', type: 'symbol', sourcePath: 'src/r.js', sourceLine: 1,
+      title: 'run (function)', summary: 'function run', keywords: ['run', 'verb'],
+    },
+  ])
+  bStore.setEntries('docs/x.md', [
+    {
+      id: 'dx', type: 'doc', sourcePath: 'docs/x.md', sourceLine: 1,
+      title: 'Runtime notes', summary: 'About runtime internals.', keywords: ['runtime'],
+    },
+  ])
+  bStore.setEntries('docs/y.md', [
+    {
+      id: 'dy', type: 'doc', sourcePath: 'docs/y.md', sourceLine: 1,
+      title: 'Run guide', summary: 'How to run tasks.', keywords: ['run'],
+    },
+  ])
+  check('substring run does not match runtime', linkedIdsOf(bStore, 'dx').length === 0)
+  check('standalone run matches', linkedIdsOf(bStore, 'dy').includes('sr'))
+}
+
+console.log('\n== CJK link boundaries ==')
+{
+  const cjkStore = new ProjectMemoryStore(path.join(mkdtempSync(path.join(tmpdir(), 'pm-linkcjk-')), 'mem')).load()
+  // 符号: 用户服务
+  cjkStore.setEntries('src/svc.js', [
+    { id: 'svc', type: 'symbol', sourcePath: 'src/svc.js', sourceLine: 1, title: '用户服务 (class)', summary: '', keywords: ['用户服务'] },
+  ])
+  // 符号: 用户服务V2
+  cjkStore.setEntries('src/svc2.js', [
+    { id: 'svc2', type: 'symbol', sourcePath: 'src/svc2.js', sourceLine: 1, title: '用户服务V2 (class)', summary: '', keywords: ['用户服务V2'] },
+  ])
+  // 文档: 调用用户服务（前边界是 CJK，应命中）
+  cjkStore.setEntries('docs/a.md', [
+    { id: 'da', type: 'doc', sourcePath: 'docs/a.md', sourceLine: 1, title: '调用用户服务', summary: '如何调用用户服务', keywords: [] },
+  ])
+  // 文档: 用户服务管理器（后缀 CJK，不应命中 用户服务）
+  cjkStore.setEntries('docs/b.md', [
+    { id: 'db', type: 'doc', sourcePath: 'docs/b.md', sourceLine: 1, title: '用户服务管理器', summary: '管理器', keywords: [] },
+  ])
+  // 文档: 用户服务V22（混合名后缀数字，不应命中 用户服务V2）
+  cjkStore.setEntries('docs/c.md', [
+    { id: 'dc', type: 'doc', sourcePath: 'docs/c.md', sourceLine: 1, title: '用户服务V22', summary: 'V22 版本', keywords: [] },
+  ])
+  // 文档: 用户服务V2管理器（混合名后缀 CJK，不应命中 用户服务V2）
+  cjkStore.setEntries('docs/d.md', [
+    { id: 'dd', type: 'doc', sourcePath: 'docs/d.md', sourceLine: 1, title: '用户服务V2管理器', summary: '管理器', keywords: [] },
+  ])
+  // 文档: 用户服务V2（精确匹配，应命中）
+  cjkStore.setEntries('docs/e.md', [
+    { id: 'de', type: 'doc', sourcePath: 'docs/e.md', sourceLine: 1, title: '用户服务V2', summary: 'V2 版本', keywords: [] },
+  ])
+  check('前边界 CJK 允许匹配: 调用用户服务 -> 用户服务', linkedIdsOf(cjkStore, 'da').includes('svc'))
+  check('后缀 CJK 阻断: 用户服务管理器 -/-> 用户服务', !linkedIdsOf(cjkStore, 'db').includes('svc'))
+  check('混合名后缀数字阻断: 用户服务V22 -/-> 用户服务V2', !linkedIdsOf(cjkStore, 'dc').includes('svc2'))
+  check('混合名后缀 CJK 阻断: 用户服务V2管理器 -/-> 用户服务V2', !linkedIdsOf(cjkStore, 'dd').includes('svc2'))
+  check('精确匹配: 用户服务V2 -> 用户服务V2', linkedIdsOf(cjkStore, 'de').includes('svc2'))
+  // 纯 CJK 符号名不应误链混合后缀
+  check('纯 CJK 名阻断混合后缀: 用户服务V2管理器 -/-> 用户服务', !linkedIdsOf(cjkStore, 'dd').includes('svc'))
+}
+
+console.log('\n== link resolution is bounded and ranked ==')
+{
+  const rStore = new ProjectMemoryStore(path.join(mkdtempSync(path.join(tmpdir(), 'pm-linkrank-')), 'mem')).load()
+  rStore.setEntries('src/all.js', Array.from({ length: 10 }, (_, i) => ({
+    id: `w${i}`, type: 'symbol', sourcePath: `src/m${i}.js`, sourceLine: 1,
+    title: `Widget${i} (class)`, summary: '', keywords: [`Widget${i}`],
+  })))
+  rStore.setEntries('docs/r.md', [
+    {
+      id: 'dr', type: 'doc', sourcePath: 'docs/r.md', sourceLine: 1,
+      title: 'Widgets', summary: 'Widget3 Widget3 Widget3 Widget1 Widget2 Widget4 Widget5 Widget6', keywords: [],
+    },
+  ])
+  const top = resolveLinkedSymbols(rStore, rStore.allEntries().find((e) => e.id === 'dr'), 5)
+  check('limit 生效：最多返回 5 个', top.length === 5)
+  check('按命中次数排序：Widget3 居首', top[0]?.keywords?.[0] === 'Widget3')
+  check('超出 limit 的低相关符号被截掉', !top.some((s) => s.keywords?.[0] === 'Widget6'))
+}
+
+console.log('\n== link resolution reflects the current symbol table ==')
+{
+  const oStore = new ProjectMemoryStore(path.join(mkdtempSync(path.join(tmpdir(), 'pm-linkorder-')), 'mem')).load()
+  oStore.setEntries('docs/late.md', [
+    { id: 'dl', type: 'doc', sourcePath: 'docs/late.md', sourceLine: 1, title: 'Late', summary: 'LateService handles it.', keywords: [] },
+  ])
+  check('符号未到时不解出链接', linkedIdsOf(oStore, 'dl').length === 0)
+  oStore.setEntries('src/late.js', [
+    { id: 'sl', type: 'symbol', sourcePath: 'src/late.js', sourceLine: 1, title: 'LateService (class)', summary: '', keywords: ['LateService'] },
+  ])
+  check('符号后到时立即解出（无需重新索引文档）', linkedIdsOf(oStore, 'dl').includes('sl'))
+}
+
+console.log('\n== watch reloads store each poll (external writes preserved) ==')
+{
+  const extRoot = mkdtempSync(path.join(tmpdir(), 'pm-watchext-'))
+  const extDocs = path.join(extRoot, 'docs')
+  mkdirSync(extDocs, { recursive: true })
+  writeFileSync(path.join(extDocs, 'a.md'), '# Doc A\n\nAlpha content.')
+  let llmCalls = 0
+  const countingLLM = {
+    async *stream(...args) {
+      llmCalls++
+      yield* fakeLLM.stream(...args)
+    },
+  }
+  const extWm = new WatchManager({ llm: countingLLM }, config)
+  extWm.addRoot(extRoot)
+  await extWm.poll()
+  check('initial poll indexes the doc with zero LLM calls', llmCalls === 0)
+  const firstStore = new ProjectMemoryStore(memoryRootFor(extRoot, config.memoryDir)).load()
+  check('watch wrote the doc entry', (firstStore.entries['docs/a.md'] || []).length >= 1)
+
+  // external writer (index_doc / lazy path) indexes a second doc straight to disk
+  const memDir = memoryRootFor(extRoot, config.memoryDir)
+  const docB = path.join(extDocs, 'b.md')
+  writeFileSync(docB, '# Doc B\n\nBeta content.')
+  const { hash } = await sha256OfFile(docB)
+  const diskStore = new ProjectMemoryStore(memDir).load()
+  diskStore.commit((s) => {
+    s.markFile('docs/b.md', { sha256: hash, size: 20, type: 'doc', indexedAt: new Date().toISOString() })
+    s.setEntries('docs/b.md', [
+      {
+        id: 'ext-b', type: 'doc', sourcePath: 'docs/b.md', sourceLine: 1,
+        title: 'Doc B', summary: 'External beta entry.', keywords: ['beta'], terms: 'beta content',
+      },
+    ])
+  })
+
+  await extWm.poll()
+  check('watch skips externally indexed doc (no repeat LLM)', llmCalls === 0)
+  const afterExt = new ProjectMemoryStore(memDir).load()
+  check('external entry survives watch save', afterExt.fileRecord('docs/b.md')?.type === 'doc' && afterExt.entries['docs/b.md']?.[0]?.id === 'ext-b')
+  extWm.stop()
+}
+
+console.log('\n== corrupt json backup ==')
+{
+  const cDir = path.join(mkdtempSync(path.join(tmpdir(), 'pm-corrupt-')), 'mem')
+  mkdirSync(cDir, { recursive: true })
+  writeFileSync(path.join(cDir, 'entries.json'), '{not valid json')
+  writeFileSync(path.join(cDir, 'experience.json'), '[]')
+  const s = new ProjectMemoryStore(cDir).load()
+  check('corrupt entries start fresh', Object.keys(s.entries).length === 0)
+  const backups = readdirSync(cDir).filter((n) => n.startsWith('entries.json.') && n.endsWith('.corrupt'))
+  check('corrupt file backed up as .corrupt', backups.length === 1)
+}
+
+console.log('\n== silent watch (poll) ==')
+const wm = new WatchManager(ctx, config)
+wm.addRoot(root)
+const authJs = path.join(srcDir, 'auth.js')
+writeFileSync(authJs, 'export function login() {}\nexport const TOKEN_TTL = 3600\n')
+const newMd = path.join(docsDir, 'auth-spec.md')
+writeFileSync(newMd, '# Auth Spec\n\nTokens expire after 1 hour.')
+await wm.poll()
+const watched = new ProjectMemoryStore(memoryRootFor(root, config.memoryDir)).load()
+check('watch indexes new code file silently', watched.fileRecord('src/auth.js') && (watched.entries['src/auth.js'] || []).length >= 1)
+check('watch indexes new doc file silently', !!watched.fileRecord('docs/auth-spec.md'))
+const watchDump = path.join(docsDir, 'watch-dump.txt')
+writeFileSync(watchDump, '=== Assembly-CSharp loaded: Assembly-CSharp, Version=1.0.0.0\n\n== TYPE Foo : base=Object\n')
+await wm.poll()
+await wm.poll()
+const afterDump = new ProjectMemoryStore(memoryRootFor(root, config.memoryDir)).load()
+check('watch dump file leaves no shell record', !afterDump.fileRecord('docs/watch-dump.txt'))
+wm.stop()
+
+console.log('\n== watch failure retries ==')
+{
+  const failRoot = mkdtempSync(path.join(tmpdir(), 'pm-watchfail-'))
+  writeFileSync(path.join(failRoot, 'broken.pdf'), 'definitely not a pdf payload')
+  const failWm = new WatchManager(ctx, config)
+  failWm.addRoot(failRoot)
+  const errs = []
+  const origError = console.error
+  console.error = (...a) => errs.push(a.join(' '))
+  try {
+    await failWm.poll()
+    check(
+      'failed index rolls back snapshot so next poll retries',
+      !('broken.pdf' in failWm.roots.get(failRoot).snapshot),
+    )
+    writeFileSync(
+      path.join(failRoot, 'skip.txt'),
+      '=== Assembly-CSharp loaded: Assembly-CSharp, Version=1.0.0.0\n\n== TYPE Foo : base=Object\n',
+    )
+    await failWm.poll()
+    await failWm.poll()
+  } finally {
+    console.error = origError
+  }
+  const snap = failWm.roots.get(failRoot).snapshot
+  check('dump-skip path keeps snapshot (no re-hash churn)', snap['skip.txt'] !== undefined && !('broken.pdf' in snap))
+  check(
+    'a permanently failing file is reported once, not every poll',
+    errs.filter((l) => l.includes('re-index failed for broken.pdf')).length === 1,
+  )
+  failWm.stop()
+}
+
+console.log('\n== watch_repo tool ==')
+const watchTool = watchRepoTool(wm, config)
+const sessionCwd = mkdtempSync(path.join(tmpdir(), 'pm-session-'))
+const execMock = { agent: { session: { header: { cwd: sessionCwd } } } }
+out = await watchTool.execute({ root }, execMock)
+check('watch_repo starts watching', out.includes('Watching'))
+const sessionStore = new ProjectMemoryStore(memoryRootFor(sessionCwd, config.memoryDir)).load()
+check('watch mirrored into session cwd watchlist', sessionStore.watchlist.includes(root))
+out = await watchTool.execute({ root, watch: false }, execMock)
+check('watch_repo stops watching', out.includes('Stopped watching'))
+const sessionStoreAfter = new ProjectMemoryStore(memoryRootFor(sessionCwd, config.memoryDir)).load()
+check('watch removed from session cwd watchlist', !sessionStoreAfter.watchlist.includes(root))
+const tmpRefusal = await watchTool.execute({ root: tmpdir() }, execMock)
+check('watch_repo refuses the shared temp dir', tmpRefusal.includes('Refusing to use'))
+check('watch_repo refusal does not persist the root', !new ProjectMemoryStore(memoryRootFor(sessionCwd, config.memoryDir)).load().watchlist.includes(path.resolve(tmpdir())))
+check('addRoot refuses the shared temp dir', new WatchManager(ctx, config).addRoot(tmpdir()) === false)
+check('addRoot refuses the filesystem root', new WatchManager(ctx, config).addRoot(path.parse(process.cwd()).root) === false)
+
+const wmClamp = new WatchManager(ctx, config)
+wmClamp.start(0)
+check('watch interval clamped to >= 1s', wmClamp._baseInterval === 1000 && wmClamp.timer?._idleTimeout === 1000)
+wmClamp.stop()
+
+console.log('\n== watch restore (persisted roots) ==')
+const restoreRoot = mkdtempSync(path.join(tmpdir(), 'pm-restore-'))
+const ghostRoot = path.join(tmpdir(), `pm-ghost-${Date.now()}-missing`)
+const restoreStore = new ProjectMemoryStore(memoryRootFor(restoreRoot, config.memoryDir))
+restoreStore.addWatch(restoreRoot)
+restoreStore.addWatch(ghostRoot)
+restoreStore.addWatch(path.resolve(tmpdir()))
+restoreStore.save()
+const restoreCwd = process.cwd
+process.cwd = () => restoreRoot
+const restoreWm = new WatchManager(ctx, config)
+restoreWm.restorePersisted()
+process.cwd = restoreCwd
+check('restorePersisted resumes a persisted watch root', restoreWm.roots.has(restoreRoot))
+check('restorePersisted skips a root that no longer exists', !restoreWm.roots.has(ghostRoot))
+check(
+  'a dead root is dropped from the persisted watchlist',
+  !new ProjectMemoryStore(memoryRootFor(restoreRoot, config.memoryDir)).load().watchlist.includes(ghostRoot),
+)
+check('addRoot refuses a non-existent root', new WatchManager(ctx, config).addRoot(ghostRoot) === false)
+check('restorePersisted skips the shared temp dir', !restoreWm.roots.has(path.resolve(tmpdir())))
+check(
+  'an unwatchable root is dropped from the persisted watchlist',
+  !new ProjectMemoryStore(memoryRootFor(restoreRoot, config.memoryDir)).load().watchlist.includes(path.resolve(tmpdir())),
+)
+restoreWm.stop()
+
+console.log('\n== code size limit ==')
+const sizeRoot = mkdtempSync(path.join(tmpdir(), 'pm-size-'))
+writeFileSync(path.join(sizeRoot, 'package.json'), '{}') // 让这条用例真的走到体积判定，而不是被"没有项目根"提前拦下
+const bigCs = path.join(sizeRoot, 'huge.cs')
+writeFileSync(bigCs, `public class Huge {\n  public static string S = "${'x'.repeat(1024 * 1024)}";\n}\n`)
+const sizeLimited = { ...config, maxFileSizeMb: 0.001 }
+const lazyLimited = await indexFile(ctx, sizeLimited, bigCs)
+check('oversized code file skipped by lazy index', lazyLimited === false)
+check(
+  'oversized code file leaves no record',
+  !new ProjectMemoryStore(memoryRootFor(sizeRoot, config.memoryDir)).load().fileRecord('huge.cs'),
+)
+check('missing file is skipped silently by lazy index', (await indexFile(ctx, config, path.join(sizeRoot, 'gone.js'))) === false)
+
+console.log('\n== config defaults ==')
+const { Config } = await import('../src/index.js')
+const configJson = JSON.parse(JSON.stringify(Config))
+const objectNode = configJson.refs[String(configJson.uid)]
+const defaults = {}
+for (const [key, refId] of Object.entries(objectNode?.dict || {})) {
+  const ref = configJson.refs[refId]
+  if (ref && ref.meta && ref.meta.default !== undefined) defaults[key] = ref.meta.default
+}
+check('query expansion off by default', defaults.llmQueryExpansion === false)
+check('lazy indexing on by default', defaults.lazyIndexing === true)
+check('full auto-index off by default', defaults.autoIndexOnFirstUse === false)
+
+// 回归：Schema 默认值不得把引擎的「相对阈值」分支钉死成旧的绝对 overlap 判据
+const { cfgEngine } = await import('../src/auto-inject.js')
+const defaultEngine = cfgEngine(new Config({}))
+check('default config leaves the legacy absolute gate off', defaultEngine.relevanceMin === null)
+check('default config uses the relative hint threshold', defaultEngine.signalMinRatio === 0.5)
+check(
+  'an explicit relevanceMin still restores the legacy gate',
+  cfgEngine(new Config({ autoContext: { relevanceMin: 0.25 } })).relevanceMin === 0.25,
+)
+check(
+  'engine keys are declarable through the config schema',
+  (() => {
+    const c = new Config({ autoContext: { signalMinRatio: 0.4, editedMax: 5, skipEchoSelfTodo: false, entryMaxInsights: 4 } })
+    const e = cfgEngine(c)
+    return e.signalMinRatio === 0.4 && e.editedMax === 5 && e.skipEchoSelfTodo === false && e.entryMaxInsights === 4
+  })(),
+)
+
+// 回归：预算审计日志必须**默认静默**（终端是用户可见面），且开关要走 schema 而不是被引擎忽略
+check('default config keeps the budget audit silent', defaultEngine.budgetLog === 'off')
+check('default config does not repeat an injected item in the same session', defaultEngine.reinjectItemsAfter === 0)
+check(
+  'an explicit budgetLog survives the schema and reaches the engine',
+  cfgEngine(new Config({ autoContext: { budgetLog: 'once' } })).budgetLog === 'once',
+)
+check(
+  'an unknown budgetLog value is rejected by the schema',
+  (() => {
+    try {
+      new Config({ autoContext: { budgetLog: 'loud' } })
+      return false
+    } catch {
+      return true
+    }
+  })(),
+)
+
+console.log('\n== dump detection ==')
+const { looksLikeDump } = await import('../src/util/fs.js')
+check(
+  'detects IL2CPP reflection dump',
+  looksLikeDump('=== Assembly-CSharp loaded: Assembly-CSharp, Version=1.0.0.0\n\n== TYPE Foo : base=Object'),
+)
+check(
+  'does not flag a plain text banner',
+  !looksLikeDump('============================================\nES 桌宠 · 苍翼混沌效应 (BlazBlue Entropy Effect)'),
+)
+check('does not flag markdown', !looksLikeDump('# 使用步骤\n\n把游戏内每个动作'))
+check('empty input is not a dump', !looksLikeDump(''))
+
+console.log('\n== CJK tokenization coverage ==')
+check('hiragana bigram-tokenized', tokenizeRaw('こんにちは の設定').includes('こん'))
+check('katakana bigram-tokenized', tokenizeRaw('セーブデータ 確認').includes('セー'))
+check('hangul bigram-tokenized', tokenizeRaw('결제 모듈 修正').includes('결제'))
+check('latin word tokenized', tokenizeRaw('payment module fees').includes('payment'))
+
+console.log('\n== store key normalization ==')
+const { storeKey } = await import('../src/util/fs.js')
+check(
+  'keys lowercased on case-insensitive platforms',
+  storeKey('Docs\\Readme.MD', 'win32') === 'docs\\readme.md' && storeKey('Docs/Readme.MD', 'darwin') === 'docs/readme.md',
+)
+check('keys untouched on case-sensitive platforms', storeKey('Docs/Readme.MD', 'linux') === 'Docs/Readme.MD')
+
+const { buildDocEntries } = await import('../src/doc-pipeline.js')
+const docDumpFile = path.join(docsDir, 'dump.txt')
+writeFileSync(docDumpFile, '=== Assembly-CSharp loaded: Assembly-CSharp, Version=1.0.0.0\n\n== TYPE Foo : base=Object\n')
+check('buildDocEntries returns null for a dump', (await buildDocEntries('dump.txt', docDumpFile, {})) === null)
+
+const bigPdf = path.join(mkdtempSync(path.join(tmpdir(), 'pm-pdf-')), 'big.pdf')
+writeFileSync(bigPdf, Buffer.alloc(2048, 0x41))
+let pdfErr = null
+try {
+  await buildDocEntries('big.pdf', bigPdf, { maxFileSizeMb: 0.001 })
+} catch (err) {
+  pdfErr = err
+}
+check('oversized PDF rejected by byte limit', pdfErr !== null && /too large/i.test(pdfErr.message))
+
+const smallTxt = path.join(mkdtempSync(path.join(tmpdir(), 'pm-txt-')), 'note.txt')
+writeFileSync(smallTxt, '# Note\n\nhello world content.')
+let zeroRes = null
+let zeroErr = null
+try {
+  zeroRes = await buildDocEntries('note.txt', smallTxt, { maxFileSizeMb: 0 })
+} catch (err) {
+  zeroErr = err
+}
+check('maxFileSizeMb=0 means unlimited for text docs', zeroErr === null && zeroRes !== null && zeroRes.length === 1)
+
+console.log('\n== doc entries are structural (zero-LLM index) ==')
+{
+  const concRoot = mkdtempSync(path.join(tmpdir(), 'pm-conc-'))
+  const multiMd = path.join(concRoot, 'multi.md')
+  writeFileSync(multiMd, Array.from({ length: 6 }, (_, i) => `# S${i}\n\nsection ${i} body marker${i}.\n`).join('\n'))
+  const entriesConc = await buildDocEntries('multi.md', multiMd, {})
+  check('one entry per section, document order kept', entriesConc.length === 6 && entriesConc.every((e, i) => e.title === `S${i}`))
+  check('each entry carries full-chunk terms', entriesConc.every((e, i) => e.terms.includes(`marker${i}`)))
+}
+
+console.log('\n== lazy queue ordering ==')
+check(
+  'code files are processed before docs',
+  JSON.stringify(codeFirst(['a.md', 'b.js', 'c.ts', 'd.txt'])) === JSON.stringify(['b.js', 'c.ts', 'a.md', 'd.txt']),
+)
+check(
+  'unsupported extensions skip before root detection',
+  (await indexFile(ctx, config, '/nonexistent-dir-for-sure/xyz.json')) === false,
+)
+
+console.log('\n== lazy read-time indexing (fs/observed) ==')
+const lazyRoot = mkdtempSync(path.join(tmpdir(), 'lazy-'))
+mkdirSync(path.join(lazyRoot, 'sub'), { recursive: true })
+writeFileSync(path.join(lazyRoot, 'package.json'), '{}')
+writeFileSync(path.join(lazyRoot, 'sub', 'utils.js'), 'export function parse() {}\n')
+check('finds project root via marker', findProjectRoot(path.join(lazyRoot, 'sub', 'utils.js')) === lazyRoot)
+
+const dumpLazy = path.join(lazyRoot, 'sub', 'dump.txt')
+writeFileSync(dumpLazy, '=== Assembly-CSharp loaded: Assembly-CSharp, Version=1.0.0.0\n\n== TYPE Foo : base=Object\n')
+await indexFile(ctx, config, dumpLazy)
+const lazyDumpStore = new ProjectMemoryStore(memoryRootFor(lazyRoot, config.memoryDir)).load()
+check('lazy dump file leaves no shell record', !lazyDumpStore.fileRecord('sub/dump.txt'))
+
+console.log('\n== project root requires a marker (no heuristics, no fallback) ==')
+{
+  // 旧实现把"随便一个目录"升格成项目根的三条路径，正是 issue #5 的 OOM 起点：
+  //   readme+源码目录启发式、找不到标记就兜底到文件所在目录、以及 `.dsh-project-memory`
+  //   自己算标记导致的自我固化。现在三者都必须不成立。
+  const noMarkerRoot = mkdtempSync(path.join(tmpdir(), 'pm-fb-'))
+  mkdirSync(path.join(noMarkerRoot, 'app'), { recursive: true })
+  writeFileSync(path.join(noMarkerRoot, 'README.txt'), 'demo')
+  writeFileSync(path.join(noMarkerRoot, 'app', 'main.js'), 'export function run() {}\n')
+  check(
+    'readme + source dirs are NOT enough to become a project root',
+    findProjectRoot(path.join(noMarkerRoot, 'app', 'main.js')) === null,
+  )
+  check(
+    'a marker-less dir is not self-promoted from its own files',
+    findProjectRoot(path.join(noMarkerRoot, 'note.txt')) === null,
+  )
+  check(
+    'lazy index skips a file that has no project root',
+    (await indexFile(ctx, config, path.join(noMarkerRoot, 'app', 'main.js'))) === false,
+  )
+  check('no store is created for a marker-less file', !existsSync(path.join(noMarkerRoot, '.dsh-project-memory')))
+
+  const selfMarkerRoot = mkdtempSync(path.join(tmpdir(), 'pm-selfmark-'))
+  mkdirSync(path.join(selfMarkerRoot, '.dsh-project-memory'), { recursive: true })
+  writeFileSync(path.join(selfMarkerRoot, 'note.md'), '# hi')
+  check(
+    '.dsh-project-memory is not a project marker (no self-fixation)',
+    findProjectRoot(path.join(selfMarkerRoot, 'note.md')) === null,
+  )
+
+  const nestedRoot = mkdtempSync(path.join(tmpdir(), 'pm-nested-'))
+  mkdirSync(path.join(nestedRoot, 'app'), { recursive: true })
+  mkdirSync(path.join(nestedRoot, 'tools', 'plugin'), { recursive: true })
+  writeFileSync(path.join(nestedRoot, 'package.json'), '{"name":"nested"}')
+  writeFileSync(path.join(nestedRoot, 'README.md'), 'root doc')
+  writeFileSync(path.join(nestedRoot, 'app', 'main.js'), 'export function run() {}\n')
+  writeFileSync(path.join(nestedRoot, 'tools', 'plugin', 'README.md'), 'sub readme')
+  writeFileSync(path.join(nestedRoot, 'tools', 'plugin', 'Plugin.cs'), 'class P {}\n')
+  check(
+    'sub-folder readme does not hijack the project root',
+    findProjectRoot(path.join(nestedRoot, 'tools', 'plugin', 'Plugin.cs')) === nestedRoot,
+  )
+  check(
+    'an explicitly registered root beats marker detection',
+    findProjectRoot(path.join(noMarkerRoot, 'app', 'main.js'), { extraRoots: [noMarkerRoot] }) === noMarkerRoot,
+  )
+}
+
+console.log('\n== project root detection at real-world scale ==')
+{
+  const gitRoot = mkdtempSync(path.join(tmpdir(), 'pm-git-'))
+  mkdirSync(path.join(gitRoot, '.git'), { recursive: true })
+  const deep = path.join(gitRoot, 'src', 'main', 'java', 'com', 'company', 'app', 'module', 'service')
+  mkdirSync(deep, { recursive: true })
+  const deepFile = path.join(deep, 'Foo.java')
+  writeFileSync(deepFile, 'class Foo {}\n')
+  check('vcs boundary wins beyond the old 8-level cap', findProjectRoot(deepFile) === gitRoot)
+
+  const mono = mkdtempSync(path.join(tmpdir(), 'pm-mono-'))
+  mkdirSync(path.join(mono, '.git'), { recursive: true })
+  mkdirSync(path.join(mono, 'packages', 'foo', 'src'), { recursive: true })
+  writeFileSync(path.join(mono, 'packages', 'foo', 'package.json'), '{"name":"foo"}')
+  const pkgFile = path.join(mono, 'packages', 'foo', 'src', 'x.js')
+  writeFileSync(pkgFile, 'export function x() {}\n')
+  check('monorepo: vcs boundary beats a nearer package.json', findProjectRoot(pkgFile) === mono)
+}
+
+console.log('\n== default ignore list ==')
+{
+  const { walkDir } = await import('../src/util/fs.js')
+  const igRoot = mkdtempSync(path.join(tmpdir(), 'pm-ignore-'))
+  mkdirSync(path.join(igRoot, 'vendor', 'github.com', 'x'), { recursive: true })
+  mkdirSync(path.join(igRoot, 'obj'), { recursive: true })
+  mkdirSync(path.join(igRoot, 'Library'), { recursive: true })
+  mkdirSync(path.join(igRoot, 'src'), { recursive: true })
+  writeFileSync(path.join(igRoot, 'vendor', 'github.com', 'x', 'lib.go'), 'package x')
+  writeFileSync(path.join(igRoot, 'obj', 'tmp.cs'), 'class T {}')
+  writeFileSync(path.join(igRoot, 'Library', 'junk.js'), 'void 0')
+  writeFileSync(path.join(igRoot, 'src', 'main.go'), 'package main')
+  writeFileSync(path.join(igRoot, 'src', 'extra.go'), 'package main')
+  mkdirSync(path.join(igRoot, 'src', 'deep'), { recursive: true })
+  writeFileSync(path.join(igRoot, 'src', 'deep', 'nested.go'), 'package main')
+  const walked = walkDir(igRoot)
+  const rel = walked.files.map((f) => path.relative(igRoot, f).split(path.sep).join('/'))
+  check(
+    'vendor/obj/Library excluded from repo walks',
+    JSON.stringify(rel) === JSON.stringify(['src/deep/nested.go', 'src/extra.go', 'src/main.go']) && walked.truncated === false,
+  )
+  const capped = walkDir(igRoot, { maxFiles: 2 })
+  check('walkDir caps the file count and reports truncation', capped.files.length <= 2 && capped.truncated === true)
+  const shallow = walkDir(igRoot, { maxDepth: 1 })
+  check('walkDir caps depth', !shallow.files.some((f) => f.endsWith('nested.go')) && shallow.truncated === true)
+}
+
+console.log('\n== nested project roots are not indexed twice ==')
+{
+  const { walkDir, hasOwnStore } = await import('../src/util/fs.js')
+  const { indexRepository } = await import('../src/tools/index-repo.js')
+  const parent = mkdtempSync(path.join(tmpdir(), 'pm-nested-'))
+  const child = path.join(parent, 'child')
+  mkdirSync(path.join(child, 'src'), { recursive: true })
+  writeFileSync(path.join(parent, 'own.js'), 'export function own() {}\n')
+  writeFileSync(path.join(child, 'src', 'inner.js'), 'export function inner() {}\n')
+
+  // 没有 store 的兄弟目录照常走（空 .dsh-project-memory 不算数）
+  mkdirSync(path.join(parent, 'empty-store', '.dsh-project-memory'), { recursive: true })
+  writeFileSync(path.join(parent, 'empty-store', 'keep.js'), 'export function keep() {}\n')
+  check('an empty .dsh-project-memory is not a nested root', !hasOwnStore(path.join(parent, 'empty-store'), '.dsh-project-memory'))
+  const walked = walkDir(parent, { nestedStoreName: '.dsh-project-memory' })
+  check('a nested root without its own store is still walked', walked.files.some((f) => f.endsWith('keep.js')) && walked.skipped.length === 0)
+
+  // 给子根建一个真实 store（走一次 save 就会写 format.json）
+  const childStore = new ProjectMemoryStore(path.join(child, '.dsh-project-memory'))
+  childStore.setEntries('src/inner.js', [{ id: 'inner', relPath: 'src/inner.js', title: 'inner', summary: 'inner' }])
+  childStore.save()
+  check('a saved store is recognised as a nested root', hasOwnStore(child, '.dsh-project-memory'))
+
+  const walked2 = walkDir(parent, { nestedStoreName: '.dsh-project-memory' })
+  check('walk skips the nested root and reports it', walked2.skipped.length === 1 && walked2.skipped[0] === child)
+  check('walk no longer yields files under the nested root', !walked2.files.some((f) => f.includes(`${path.sep}child${path.sep}`)))
+
+  // 存量重复：先手工在父 store 里塞一条属于子树的旧条目，跑一次父根索引应把它清掉
+  const parentStore = new ProjectMemoryStore(path.join(parent, '.dsh-project-memory'))
+  parentStore.setEntries('child/src/inner.js', [{ id: 'dup', relPath: 'child/src/inner.js', title: 'dup', summary: 'dup' }])
+  parentStore.setEntries('own.js', [{ id: 'own', relPath: 'own.js', title: 'own', summary: 'own' }])
+  parentStore.save()
+  const report = await indexRepository(ctx, config, parent)
+  const after = new ProjectMemoryStore(path.join(parent, '.dsh-project-memory')).load()
+  check('index_repo keeps the parent\'s own file', !!after.fileRecord('own.js'))
+  check('index_repo does not index the nested root', !after.fileRecord('child/src/inner.js'))
+  check('a stale duplicate from before is removed', !after.fileRecord('child/src/inner.js') && after.entries['child/src/inner.js'] === undefined)
+  check('the report says what was skipped', report.includes('nested project root(s) with their own store') && report.includes('child'))
+}
+
+console.log('\n== 读不到的目录不等于"已删除"（walkDir / index_repo）==')
+{
+  // 旧实现 walkDir 对 readdirSync 失败直接 `continue`：那棵子树既不进 `seen`、又不置 truncated，
+  // 于是 index_repo 收尾把它当"本轮没见到 = 已删除"清掉了派生索引（静默），下次索引再重建一遍。
+  const { walkDir } = await import('../src/util/fs.js')
+  const { indexRepository } = await import('../src/tools/index-repo.js')
+  const lockRoot = mkdtempSync(path.join(tmpdir(), 'pm-eacces-'))
+  const locked = path.join(lockRoot, 'locked')
+  mkdirSync(locked, { recursive: true })
+  writeFileSync(path.join(lockRoot, 'ok.js'), 'export function ok() {}\n')
+  writeFileSync(path.join(locked, 'hidden.js'), 'export function hidden() {}\n')
+
+  // Windows 上 chmod 不拦 readdir；root 无视权限位。这两种环境下 EACCES 构造不出来。
+  const canLock = process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() !== 0
+  if (!canLock) {
+    console.log('  --  skip: Windows 或 root（chmod 拦不住 readdir，本用例无法构造 EACCES）')
+  } else {
+    await indexRepository(ctx, config, lockRoot)
+    const seeded = new ProjectMemoryStore(memoryRootFor(lockRoot, config.memoryDir)).load()
+    check('前置：locked/hidden.js 已被索引', !!seeded.fileRecord('locked/hidden.js'))
+
+    chmodSync(locked, 0o000)
+    let report = ''
+    try {
+      const walked = walkDir(lockRoot)
+      check('读不到的目录被列进 unreadable', walked.unreadable.includes(locked))
+      check('读不到也置 truncated（调用方据此跳过 unseen 清理）', walked.truncated === true && walked.capped === false)
+      report = await indexRepository(ctx, config, lockRoot)
+    } finally {
+      chmodSync(locked, 0o755)
+    }
+    const after = new ProjectMemoryStore(memoryRootFor(lockRoot, config.memoryDir)).load()
+    check('EACCES 目录下的既有条目不得被清', !!after.fileRecord('locked/hidden.js'))
+    check('报告点明"读不到"，且不谎报成撞上限', report.includes('could not read') && !report.includes('safety limit'))
+  }
+}
+
+
+console.log('\n== root detection ignores system temp ancestors ==')
+{
+  // 旧实现用 ceiling（tmpdir）挡"临时目录上方的垃圾目录"；现在由"只认标记 + 撞到
+  // 家目录/系统目录就停"共同保证：标记缺失一律 null，显式登记的根则优先。
+  const fakeTmp = mkdtempSync(path.join(tmpdir(), 'pm-ceiling-'))
+  const proj = path.join(fakeTmp, 'proj')
+  mkdirSync(proj, { recursive: true })
+  writeFileSync(path.join(proj, 'main.js'), 'export function main() {}\n')
+  check('marker-less ancestors do not hijack the project root', findProjectRoot(path.join(proj, 'main.js')) === null)
+  check('an explicitly registered root is returned as-is', findProjectRoot(path.join(proj, 'main.js'), { extraRoots: [proj] }) === proj)
+
+  const marked = path.join(fakeTmp, 'marked')
+  mkdirSync(marked, { recursive: true })
+  writeFileSync(path.join(marked, 'go.mod'), 'module x')
+  writeFileSync(path.join(marked, 'main.go'), 'package main')
+  check('a real marker is still honoured below the temp boundary', findProjectRoot(path.join(marked, 'main.go')) === marked)
+}
+
+const bareDir = mkdtempSync(path.join(tmpdir(), 'pm-bare-'))
+writeFileSync(path.join(bareDir, 'note.txt'), 'x')
+
+const sessionCwdRoot = mkdtempSync(path.join(tmpdir(), 'pm-cwd-'))
+const procCwdSpy = process.cwd
+process.cwd = () => bareDir
+check(
+  'root defaults to session cwd when process cwd differs',
+  resolveIndexRoot({ agent: { session: { header: { cwd: sessionCwdRoot } } } }, undefined) === sessionCwdRoot,
+)
+check(
+  'explicit root wins over session cwd',
+  resolveIndexRoot({ agent: { session: { header: { cwd: sessionCwdRoot } } } }, bareDir) === bareDir,
+)
+check(
+  'falls back to process cwd without a session',
+  resolveIndexRoot(undefined, undefined) === bareDir,
+)
+process.cwd = procCwdSpy
+
+const listeners = {}
+const lazyCtx = {
+  llm: fakeLLM,
+  on(evt, fn) {
+    listeners[evt] = fn
+  },
+  effect() {},
+}
+const lazyWatch = new WatchManager(lazyCtx, config)
+setupLazyIndexing(lazyCtx, config, lazyWatch)
+await new Promise((r) => setTimeout(r, 400))
+writeFileSync(path.join(lazyRoot, 'sub', 'utils.js'), 'export function parse() {}\nexport function serialize() {}\n')
+listeners['fs/observed']({ displayPath: path.join(lazyRoot, 'sub', 'utils.js') }, { kind: 'present', version: 'v1' })
+await new Promise((r) => setTimeout(r, 700))
+const lazyStore = new ProjectMemoryStore(memoryRootFor(lazyRoot, config.memoryDir)).load()
+check(
+  'indexes a file the moment it is read',
+  lazyStore.fileRecord('sub/utils.js') && (lazyStore.entries['sub/utils.js'] || []).length >= 1,
+)
+check('does not re-extract an unchanged re-read', (await lazyStore.fileRecord('sub/utils.js')) !== undefined)
+check(
+  'lazy index auto-registers the project root with the watch manager',
+  lazyWatch.roots.has(lazyRoot),
+)
+check(
+  'lazy-registered root is persisted for restart recovery',
+  new ProjectMemoryStore(memoryRootFor(lazyRoot, config.memoryDir)).load().watchlist.includes(lazyRoot),
+)
+
+console.log('\n== query expansion disabled skips the LLM ==')
+const boomLLM = {
+  async *stream() {
+    throw new Error('llm must not be called when llmQueryExpansion is off')
+  },
+}
+const noExpandTool = queryMemoryTool({ llm: boomLLM }, { ...config, llmQueryExpansion: false })
+out = await noExpandTool.execute({ root, query: 'fees' })
+check('query works without any LLM call', out.includes('spec.md') && out.includes('1%'))
+
+console.log('\n== CJK query respects llmQueryExpansion off ==')
+await remTool.execute({ root, problem: '构建脚本在 Windows 下路径分隔符报错', solution: '统一使用 path.join 拼接' })
+out = await noExpandTool.execute({ root, query: '构建脚本 路径分隔符报错' })
+check('chinese query hits chinese note without any llm call', out.includes('path.join'))
+
+console.log('\n== bundle patch references the real package name ==')
+{
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const patchText = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+  check('patch name matches package.json name', patchText.includes(`name: "${pkg.name}"`))
+  check('patch does not reference the retired bare name', !/name:\s*dsh-project-memory\s*$/.test(patchText))
+}
+
+console.log(`\n${failed === 0 ? 'ALL CHECKS PASSED' : `${failed} CHECKS FAILED`} (${passed} passed)`)
+process.exit(failed === 0 ? 0 : 1)

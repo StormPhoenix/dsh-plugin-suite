@@ -37,15 +37,6 @@ const PLUGINS = [
     },
   },
   {
-    folder: 'memory',
-    name: 'dsh-memory',
-    id: 'memory',
-    entry: './lib/index.js',
-    extra: ({ patch }) => {
-      assert.match(patch, /path: !!js dshHomePath\('memory\/memory\.db'\)/);
-    },
-  },
-  {
     folder: 'qiaomu-reader',
     name: 'qiaomu-reader-dsh',
     id: 'qiaomu-reader',
@@ -63,6 +54,17 @@ const PLUGINS = [
       assert.match(pkg.version, /-local\./);
       checkSyntax(dir, ['runtime/cli-bridge.mjs']);
       assert.doesNotMatch(JSON.stringify(pkg.scripts), /scripts\//);
+    },
+  },
+  {
+    folder: 'project-memory',
+    name: '@yolk_vat-y/dsh-project-memory',
+    id: 'project-memory',
+    entry: './src/index.js',
+    client: { entry: './client/client.js', moduleId: '@yolk_vat-y/dsh-project-memory' },
+    extra: ({ pkg }) => {
+      assert.equal(pkg.private, true);
+      assert.match(pkg.version, /-local\./);
     },
   },
 ];
@@ -91,8 +93,14 @@ function checkDeclaredDependencies(dir, pkg) {
       try {
         require.resolve(dependency);
       } catch {
-        // The resolution error only names a path; this states the one action that fixes it.
-        assert.fail(`Missing ${kind} dependency: ${dependency}; run pnpm install at repository root`);
+        // Type-only packages (@types/*) have no runtime entry for Node to resolve;
+        // their package.json presence still proves the install happened.
+        try {
+          require.resolve(`${dependency}/package.json`);
+        } catch {
+          // The resolution error only names a path; this states the one action that fixes it.
+          assert.fail(`Missing ${kind} dependency: ${dependency}; run pnpm install at repository root`);
+        }
       }
     }
   }
