@@ -106713,6 +106713,16 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     showChrome();
     return () => clearTimeout(chromeTimerRef.current);
   }, [showChrome]);
+  const topBarRef = React14.useRef(null);
+  const bottomBarRef = React14.useRef(null);
+  const onReaderPointerMove = React14.useCallback((event) => {
+    const content = event.currentTarget;
+    const topBar2 = topBarRef.current;
+    const bottomBar2 = bottomBarRef.current;
+    if (!content || !topBar2 && !bottomBar2) return;
+    const rect = content.getBoundingClientRect();
+    if (topBar2 && event.clientY <= rect.top + topBar2.offsetHeight || bottomBar2 && event.clientY >= rect.bottom - bottomBar2.offsetHeight) showChrome();
+  }, [showChrome]);
   React14.useEffect(() => {
     ui.store.set({ companionSelection: null });
   }, [bookId, chapterIndex]);
@@ -107764,7 +107774,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   };
   const topBar = h13(
     "div",
-    { className: `qmr-topbar${chromeVisible ? "" : " qmr-chrome-hidden"}` },
+    { className: `qmr-topbar${chromeVisible ? "" : " qmr-chrome-hidden"}`, ref: topBarRef },
     h13("button", {
       type: "button",
       className: "qmr-btn qmr-btn-icon",
@@ -107810,7 +107820,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   );
   const bottomBar = h13(
     "div",
-    { className: `qmr-bottombar${chromeVisible ? "" : " qmr-chrome-hidden"}` },
+    { className: `qmr-bottombar${chromeVisible ? "" : " qmr-chrome-hidden"}`, ref: bottomBarRef },
     h13("button", {
       type: "button",
       className: `qmr-icon-btn${panel === "toc" ? " is-active" : ""}`,
@@ -107875,9 +107885,8 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
         "div",
         {
           className: `qmr-reader-content${settings.flow === "scroll" ? " qmr-flow-scroll" : ""}`,
-          onPointerMoveCapture: showChrome,
+          onPointerMoveCapture: onReaderPointerMove,
           onPointerDownCapture: showChrome,
-          onWheelCapture: showChrome,
           onFocusCapture: showChrome,
           onKeyDownCapture: showChrome
         },

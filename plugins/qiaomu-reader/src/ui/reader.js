@@ -232,6 +232,18 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     showChrome();
     return () => clearTimeout(chromeTimerRef.current);
   }, [showChrome]);
+  const topBarRef = React.useRef(null);
+  const bottomBarRef = React.useRef(null);
+  // 隐藏的工具条带 pointer-events:none，收不到自身事件；边缘召唤只能在 content 层按 clientY 命中顶/底条带。
+  const onReaderPointerMove = React.useCallback((event) => {
+    const content = event.currentTarget;
+    const topBar = topBarRef.current;
+    const bottomBar = bottomBarRef.current;
+    if (!content || (!topBar && !bottomBar)) return;
+    const rect = content.getBoundingClientRect();
+    if ((topBar && event.clientY <= rect.top + topBar.offsetHeight)
+      || (bottomBar && event.clientY >= rect.bottom - bottomBar.offsetHeight)) showChrome();
+  }, [showChrome]);
   React.useEffect(() => { ui.store.set({ companionSelection: null }); }, [bookId, chapterIndex]);
 
   const book = ui.bookOf(bookId);
@@ -1358,7 +1370,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
 
   const topBar = h(
       'div',
-      { className: `qmr-topbar${chromeVisible ? '' : ' qmr-chrome-hidden'}` },
+      { className: `qmr-topbar${chromeVisible ? '' : ' qmr-chrome-hidden'}`, ref: topBarRef },
       h('button', {
         type: 'button',
         className: 'qmr-btn qmr-btn-icon',
@@ -1398,7 +1410,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     );
   const bottomBar = h(
       'div',
-      { className: `qmr-bottombar${chromeVisible ? '' : ' qmr-chrome-hidden'}` },
+      { className: `qmr-bottombar${chromeVisible ? '' : ' qmr-chrome-hidden'}`, ref: bottomBarRef },
       h('button', {
         type: 'button', className: `qmr-icon-btn${panel === 'toc' ? ' is-active' : ''}`,
         'aria-label': '目录', 'aria-pressed': panel === 'toc', title: '目录',
@@ -1458,9 +1470,8 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
         'div',
         {
           className: `qmr-reader-content${settings.flow === 'scroll' ? ' qmr-flow-scroll' : ''}`,
-          onPointerMoveCapture: showChrome,
+          onPointerMoveCapture: onReaderPointerMove,
           onPointerDownCapture: showChrome,
-          onWheelCapture: showChrome,
           onFocusCapture: showChrome,
           onKeyDownCapture: showChrome,
         },
