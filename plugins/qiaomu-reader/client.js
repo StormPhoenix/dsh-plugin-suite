@@ -106851,7 +106851,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       const range = document.createRange();
       range.setStart(caretNode, caretOffset);
       range.setEnd(caretNode, caretOffset + 1);
-      textAnchorRef.current = { node: caretNode, offset: caretOffset, y: range.getBoundingClientRect().top - box.top, chapterIndex, bookId };
+      textAnchorRef.current = { node: caretNode, offset: caretOffset, y: range.getBoundingClientRect().top - box.top, scrollTop: viewport.scrollTop, chapterIndex, bookId };
       return;
     }
     const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT);
@@ -106868,7 +106868,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
             range.setEnd(node, offset + 1);
             const part = range.getBoundingClientRect();
             if (part.bottom > box.top && part.top < box.bottom && part.right > box.left && part.left < box.right) {
-              textAnchorRef.current = { node, offset, y: part.top - box.top, chapterIndex, bookId };
+              textAnchorRef.current = { node, offset, y: part.top - box.top, scrollTop: viewport.scrollTop, chapterIndex, bookId };
               return;
             }
           }
@@ -107162,6 +107162,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
           }
           setPage(landLast ? Math.max(0, measured.pages - 1) : Math.round(fraction * Math.max(0, measured.pages - 1)));
           pendingRestoreRef.current = null;
+          textAnchorRef.current = null;
           positionReadyRef.current = true;
           requestAnimationFrame(() => {
             if (restoreEpochRef.current === epoch && positionIdentityRef.current === identity) reportTocAnchor();
@@ -107271,7 +107272,11 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       try {
         measure();
         const anchor = textAnchorRef.current;
-        if (anchor && anchor.node.isConnected && anchor.bookId === bookId && anchor.chapterIndex === chapterIndex) {
+        const anchorViewport = viewportRef.current;
+        const anchorMoved = !!(anchor && anchorViewport && Number.isFinite(anchor.scrollTop) && Math.abs(anchorViewport.scrollTop - anchor.scrollTop) > Math.max(1, anchorViewport.clientHeight));
+        if (anchorMoved) {
+          textAnchorRef.current = null;
+        } else if (anchor && anchor.node.isConnected && anchor.bookId === bookId && anchor.chapterIndex === chapterIndex) {
           const range = document.createRange();
           range.setStart(anchor.node, anchor.offset);
           range.setEnd(anchor.node, Math.min(anchor.node.length, anchor.offset + 1));

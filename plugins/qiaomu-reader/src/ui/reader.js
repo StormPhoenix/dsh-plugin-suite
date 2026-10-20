@@ -378,7 +378,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     if (caretNode?.nodeType === Node.TEXT_NODE && flow.contains(caretNode) && caretOffset < caretNode.length) {
       const range = document.createRange();
       range.setStart(caretNode, caretOffset); range.setEnd(caretNode, caretOffset + 1);
-      textAnchorRef.current = { node: caretNode, offset: caretOffset, y: range.getBoundingClientRect().top - box.top, chapterIndex, bookId };
+      textAnchorRef.current = { node: caretNode, offset: caretOffset, y: range.getBoundingClientRect().top - box.top, scrollTop: viewport.scrollTop, chapterIndex, bookId };
       return;
     }
     const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT);
@@ -395,7 +395,7 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
             range.setStart(node, offset); range.setEnd(node, offset + 1);
             const part = range.getBoundingClientRect();
             if (part.bottom > box.top && part.top < box.bottom && part.right > box.left && part.left < box.right) {
-              textAnchorRef.current = { node, offset, y: part.top - box.top, chapterIndex, bookId };
+              textAnchorRef.current = { node, offset, y: part.top - box.top, scrollTop: viewport.scrollTop, chapterIndex, bookId };
               return;
             }
           }
@@ -701,6 +701,8 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
           }
           setPage(landLast ? Math.max(0, measured.pages - 1) : Math.round(fraction * Math.max(0, measured.pages - 1)));
           pendingRestoreRef.current = null;
+          // 落点已就位：切章早期捕获的锚点（章首第一行）必须作废，否则后续 resize 会把视口拉回章首。
+          textAnchorRef.current = null;
           positionReadyRef.current = true;
           requestAnimationFrame(() => {
             if (restoreEpochRef.current === epoch && positionIdentityRef.current === identity) reportTocAnchor();
@@ -826,7 +828,17 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       try {
         measure();
         const anchor = textAnchorRef.current;
-        if (anchor && anchor.node.isConnected && anchor.bookId === bookId && anchor.chapterIndex === chapterIndex) {
+        /*
+         * 锚点只在「用户没离开捕获时的位置」才代表当前视线：
+         * 切章瞬间会在滚动位置仍为 0 时捕获到本章第一行，异步恢复到章尾后若再按锚点回填，
+         * 视口会被拉回章首。位置偏移超过一屏即视为过期，直接丢弃。
+         */
+        const anchorViewport = viewportRef.current;
+        const anchorMoved = !!(anchor && anchorViewport && Number.isFinite(anchor.scrollTop)
+          && Math.abs(anchorViewport.scrollTop - anchor.scrollTop) > Math.max(1, anchorViewport.clientHeight));
+        if (anchorMoved) {
+          textAnchorRef.current = null;
+        } else if (anchor && anchor.node.isConnected && anchor.bookId === bookId && anchor.chapterIndex === chapterIndex) {
           const range = document.createRange();
           range.setStart(anchor.node, anchor.offset);
           range.setEnd(anchor.node, Math.min(anchor.node.length, anchor.offset + 1));

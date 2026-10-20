@@ -125,6 +125,15 @@ test('hidden anchors without layout rectangles never replace a visible section',
   }
 });
 
+test('text anchor is discarded once the viewport left its capture position', async () => {
+  const source = await readFile(new URL('../src/ui/reader.js', import.meta.url), 'utf8');
+  // 捕获锚点时记下当时的滚动位置，回填前据此判断锚点是否还代表当前视线。
+  assert.match(source, /scrollTop: viewport\.scrollTop,\s*chapterIndex, bookId/);
+  assert.match(source, /Math\.abs\(anchorViewport\.scrollTop - anchor\.scrollTop\) > Math\.max\(1, anchorViewport\.clientHeight\)/);
+  // 落点写完后必须作废旧锚点：切章早期捕获的章首锚点会在后续 resize 时把视口拉回章首。
+  assert.match(source, /textAnchorRef\.current = null;\s*positionReadyRef\.current = true;/);
+});
+
 test('delayed restore explicitly samples on the next frame and discards superseded restores', async () => {
   const source = await readFile(new URL('../src/ui/reader.js', import.meta.url), 'utf8');
   const callback = source.match(/positionReadyRef\.current = true;\s*(requestAnimationFrame\(\(\) => \{\s*if \(restoreEpochRef\.current === epoch && positionIdentityRef\.current === identity\) reportTocAnchor\(\);\s*\}\);)/)?.[1];
