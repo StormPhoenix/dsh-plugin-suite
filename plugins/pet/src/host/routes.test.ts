@@ -43,6 +43,8 @@ let savedHome: string | undefined;
 let savedElectron: string | undefined;
 /** apply() 注册的全部 effect 释放函数（after 里调用：否则常驻定时器会让测试进程不退出） */
 const disposers: Array<() => void> = [];
+/** apply() 通过 ctx.provide 挂出去的服务（宿主半侧的对外 Cordis 面） */
+const provided = new Map<string, unknown>();
 
 /** 最小响应桩：writeHead 记状态码，Writable 收集 body（sendFile 经 pipe 写入） */
 class FakeRes extends Writable {
@@ -102,6 +104,11 @@ before(() => {
       } catch {
         /* 源码形态下内置配置不可达，refreshDesktop 会抛给调用方——这里吞掉，不影响路由注册 */
       }
+    },
+    // 对外 Cordis 服务（第三方注册余额查询）：与 DSH 一致，provide 返回释放函数
+    provide: (name: string, value: unknown) => {
+      provided.set(name, value);
+      return noop;
     },
     on: () => noop,
     webServer: { register: (spec: { handler: typeof handler }) => ((handler = spec.handler), noop) },
@@ -198,14 +205,57 @@ describe('/state + /balance —— 轮询统一状态与余额动作端点', () 
       sections: Record<string, { counter: number; data: unknown }>;
       pets: Record<string, unknown>;
     };
-    assert.deepEqual(Object.keys(body.sections).sort(), ['balance', 'notify', 'workStatus']);
+    assert.deepEqual(Object.keys(body.sections).sort(), ['balance', 'config', 'menu', 'notify', 'workStatus']);
     assert.equal(body.sections.balance.counter, 0, '没人写过时 counter=0（前端首拉当基线）');
     assert.equal(body.sections.balance.data, null);
+    assert.equal(body.sections.config.data, null, '配置变更信号也没人写过（counter=0 / data=null）');
     assert.deepEqual(body.pets, {});
   });
 
   test('非 GET → 405（只读端点）', async () => {
     assert.equal((await call('/dsh-pet-7340/state', 'POST')).status, 405);
+  });
+
+  test('只传 since / 只传 timeout → 400（成对必填，与 /playback 的 wait/timeout 同一套约定）', async () => {
+    assert.equal((await call('/dsh-pet-7340/state?since=0')).status, 400);
+    assert.equal((await call('/dsh-pet-7340/state?timeout=1000')).status, 400);
+  });
+
+  test('非法 since / timeout → 400（非整数、负数、小数、超上限）', async () => {
+    for (const q of [
+      'since=abc&timeout=1000',
+      'since=-1&timeout=1000',
+      'since=0&timeout=99999',
+      'since=0&timeout=1.5',
+    ]) {
+      assert.equal((await call('/dsh-pet-7340/state?' + q)).status, 400, q);
+    }
+  });
+
+  test('since 与当前版本不同 → 立刻返回全量（不挂起）', async () => {
+    const r = await call('/dsh-pet-7340/state?since=12345&timeout=10000');
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body) as { counter: number; sections: Record<string, unknown> };
+    assert.equal(typeof body.counter, 'number', '响应必须带顶层 counter（调用方拿它当下一拍的 since）');
+    assert.ok(body.sections, '立刻返回时同样是全量状态');
+  });
+
+  test('since 与当前版本相同 + timeout=0 → 走挂起分支但下一拍就醒（等价"立刻返回"）', async () => {
+    const first = JSON.parse((await call('/dsh-pet-7340/state')).body) as { counter: number };
+    const r = await call('/dsh-pet-7340/state?since=' + first.counter + '&timeout=0');
+    assert.equal(r.status, 200);
+    assert.equal((JSON.parse(r.body) as { counter: number }).counter, first.counter, '没人写过 → 版本号不变');
+  });
+
+  test('since 与当前版本相同 → **真的挂起**，到点才返回（长轮询的核心行为）', async () => {
+    const first = JSON.parse((await call('/dsh-pet-7340/state')).body) as { counter: number };
+    const t0 = Date.now();
+    const r = await call('/dsh-pet-7340/state?since=' + first.counter + '&timeout=200');
+    const elapsed = Date.now() - t0;
+    assert.equal(r.status, 200);
+    // 没人写叶子 → 只能等超时。这条用例存在的意义就是证明"挂起"不是空话：
+    // 其余用例都用 timeout=0，走同一个分支但不会真的等。
+    assert.ok(elapsed >= 180, `应当真的挂起约 200ms，实测 ${elapsed}ms`);
   });
 
   test('POST /balance 是动作端点：只回 { ok: true }，不返回余额数据', async () => {
@@ -240,12 +290,16 @@ describe('轮询统一后删掉的旧端点 —— 不得复活', () => {
   // 保留这条守卫是为了防止"顺手又加回一个 /xxx 轮询端点"（那正是这次要消灭的东西）。
   // 注意 /broadcast 不在此列：它以**新的语义**回来了（POST 写入端点，见下方专门的分组），
   // 这里的守卫只要求它不再是一个 GET 读端点。
-  for (const path of ['/dsh-pet-7340/work-status', '/dsh-pet-7340/notify']) {
+  for (const path of ['/dsh-pet-7340/notify']) {
     test(`${path} 已删除（GET 不再是端点）`, async () => {
       const r = await call(path);
       assert.notEqual(r.status, 200, `${path} 应已并入 /state`);
     });
   }
+
+  test('/work-status 的 GET 读端点已删除（现在是 POST/DELETE 写端点）', async () => {
+    assert.equal((await call('/dsh-pet-7340/work-status')).status, 405);
+  });
 
   test('/broadcast 的 GET 读端点已删除（数据只有 /state 一个出口）', async () => {
     assert.equal((await call('/dsh-pet-7340/broadcast')).status, 405);
@@ -296,6 +350,43 @@ describe('/broadcast —— 第三方投喂（POST 写入端点，issue #76）',
     assert.equal(body.ok, false, '读不到配置绝不能回 ok:true——否则调用方以为气泡已投喂');
     assert.equal(body.reason, 'generate-error');
   });
+
+  test('非法 duration → bad-request，且**在读配置之前**就短路（不是 generate-error）', async () => {
+    // 与本文件里"配置不可达"这一前提配合：若 duration 校验被放到读配置之后，
+    // 这几条会变成 generate-error——断言 reason 就同时钉住了**短路顺序**。
+    for (const duration of [-1, -0.5, '3000', {}, [], true]) {
+      const r = await call('/dsh-pet-7340/broadcast?pet=main', 'POST', JSON.stringify({ text: '该喝水了', duration }));
+      assert.equal(r.status, 200, `duration=${JSON.stringify(duration)}`);
+      assert.equal(
+        (JSON.parse(r.body) as { reason: string }).reason,
+        'bad-request',
+        `duration=${JSON.stringify(duration)} 应在读配置前被拦下`,
+      );
+    }
+  });
+});
+
+describe('/bubble/clear —— 清空气泡（POST 写入端点，issue #122 第 5 条）', () => {
+  // 覆盖范围同 /broadcast：源码形态下 readAllConfig 必然抛错，"成功写进 pets.<id>.say"
+  // 那条路径在这里测不了（宠物选择由 broadcast.test.ts 的 decideBubbleClear 单测覆盖）。
+  // 这里只钉路由层契约：方法、无请求体、失败口径。
+
+  test('GET → 405（清空是动作端点，不是读端点）', async () => {
+    assert.equal((await call('/dsh-pet-7340/bubble/clear?pet=main')).status, 405);
+  });
+
+  test('无请求体也照常受理（不像 /broadcast 那样要求 JSON body）', async () => {
+    const r = await call('/dsh-pet-7340/bubble/clear?pet=main', 'POST');
+    assert.notEqual(r.status, 400, '本端点不解析请求体，不该因为"没给 body"而 400');
+  });
+
+  test('配置不可达时不静默：显式 ok:false/generate-error（不假装气泡已清空）', async () => {
+    const r = await call('/dsh-pet-7340/bubble/clear?pet=main', 'POST');
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body) as { ok: boolean; reason: string };
+    assert.equal(body.ok, false, '读不到配置绝不能回 ok:true——否则调用方以为气泡已收起');
+    assert.equal(body.reason, 'generate-error');
+  });
 });
 
 describe('/anim —— 点播动画（POST 写入端点）', () => {
@@ -319,6 +410,49 @@ describe('/anim —— 点播动画（POST 写入端点）', () => {
     const body = JSON.parse(r.body) as { ok: boolean; reason: string };
     assert.equal(body.ok, false, '读不到配置绝不能回 ok:true——否则调用方以为动画已点播');
     assert.equal(body.reason, 'generate-error');
+  });
+});
+
+describe('/position + /throw —— 位置与抛掷指令（POST 写入端点）', () => {
+  // 覆盖范围同 /anim：源码形态下 PACKAGE_ROOT 解析为 <pkg>/src，readAllConfig 必然抛错，
+  // 因此"成功写进 pets.<id>.position / pets.<id>.throw"那条路径在这里测不了（参数校验、坐标夹取
+  // 与宠物解析由 motion-cue.test.ts 的决策层单测覆盖）。这里只钉路由层契约：方法、JSON 解析、失败口径。
+
+  test('GET → 405（两条都是动作端点，不是读端点）', async () => {
+    assert.equal((await call('/dsh-pet-7340/position?pet=main')).status, 405);
+    assert.equal((await call('/dsh-pet-7340/throw?pet=main')).status, 405);
+  });
+
+  test('请求体不是合法 JSON → 400', async () => {
+    for (const path of ['position', 'throw']) {
+      const r = await call(`/dsh-pet-7340/${path}?pet=main`, 'POST', '{ 不是 json');
+      assert.equal(r.status, 400, path);
+      assert.match(r.body, /invalid JSON body/);
+    }
+  });
+
+  test('配置不可达时不静默：显式 ok:false/generate-error（不假装已挪位 / 已抛出）', async () => {
+    const pos = await call(
+      '/dsh-pet-7340/position?pet=main',
+      'POST',
+      JSON.stringify({ x: 0.5, y: 0.5, mode: 'spring' }),
+    );
+    assert.equal(pos.status, 200);
+    const posBody = JSON.parse(pos.body) as { ok: boolean; reason: string };
+    assert.equal(posBody.ok, false, '读不到配置绝不能回 ok:true——否则调用方以为宠物已经挪过去了');
+    assert.equal(posBody.reason, 'generate-error');
+
+    const thr = await call('/dsh-pet-7340/throw?pet=main', 'POST', JSON.stringify({ angle: 45, power: 1 }));
+    assert.equal(thr.status, 200);
+    const thrBody = JSON.parse(thr.body) as { ok: boolean; reason: string };
+    assert.equal(thrBody.ok, false, '读不到配置绝不能回 ok:true——否则调用方以为宠物已经飞出去了');
+    assert.equal(thrBody.reason, 'generate-error');
+  });
+
+  test('空请求体（不是对象）→ 不抛，走失败口径', async () => {
+    const r = await call('/dsh-pet-7340/position?pet=main', 'POST', 'null');
+    assert.equal(r.status, 200);
+    assert.equal((JSON.parse(r.body) as { ok: boolean }).ok, false);
   });
 });
 
@@ -445,5 +579,247 @@ describe('pic/memes 路由 —— 素材根不得当路径片段（与 thumb 同
     const r = await call('/dsh-pet-7340/pic/memes/..%255C..%255C..%255Coutside-memes/leak.png');
     assert.equal(r.status, 404);
     assert.equal(r.body.includes(SECRET), false);
+  });
+});
+
+describe('pet 必填 —— 缺省一律 pet-required（issue #122 第 1 条：绝不退到列表第一只）', () => {
+  // 与 /broadcast 的 duration 同一处境：pet 空串**不必读配置**就能拒，所以这一组在"配置不可达"
+  // 的源码形态下照样能测——断言 reason 同时钉住了**短路顺序**（是 pet-required，不是 generate-error）。
+  // 决策层那 5 条（/anim、/broadcast、/bubble/clear、/position、/throw）的同一分支由各自的
+  // *.test.ts 覆盖：它们的 pet 解析住在决策模块里，路由层拿不到"没读配置"的时机。
+
+  test('/lock 与 /lock/release：不给 pet / 空串 / 全空白 → pet-required', async () => {
+    for (const path of ['lock', 'lock/release']) {
+      for (const q of ['', '?pet=', '?pet=%20%20']) {
+        const r = await call(`/dsh-pet-7340/${path}${q}`, 'POST', '{}');
+        assert.equal(r.status, 200, `${path}${q} 业务失败走 200 + ok:false`);
+        const body = JSON.parse(r.body) as { ok: boolean; reason: string };
+        assert.equal(body.ok, false, `${path}${q}`);
+        assert.equal(body.reason, 'pet-required', `${path}${q}`);
+      }
+    }
+  });
+
+  test('/whisper：不给 pet → pet-required（不再拿空串去生成、再写进没人消费的叶子）', async () => {
+    const r = await call('/dsh-pet-7340/whisper', 'POST');
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body) as { ok: boolean; reason: string };
+    assert.equal(body.ok, false);
+    assert.equal(body.reason, 'pet-required');
+  });
+
+  test('/chat：不给 pet → pet-required（GET 与 POST 都是）', async () => {
+    const g = await call('/dsh-pet-7340/chat');
+    assert.equal(g.status, 200);
+    assert.equal((JSON.parse(g.body) as { reason: string }).reason, 'pet-required');
+    const p = await call('/dsh-pet-7340/chat', 'POST', JSON.stringify({ text: '在吗' }));
+    assert.equal(p.status, 200);
+    assert.equal((JSON.parse(p.body) as { reason: string }).reason, 'pet-required');
+  });
+
+  test('/chat：方法不对仍是 405（pet 校验不抢在协议层错误前面）', async () => {
+    assert.equal((await call('/dsh-pet-7340/chat', 'PUT')).status, 405);
+    assert.equal((await call('/dsh-pet-7340/chat', 'DELETE')).status, 405);
+  });
+});
+
+describe('surface 必填 —— 缺省/非法一律 bad-request，且短路在读盘之前（issue #122 第 1 条）', () => {
+  // 与 pet 空串同一处境：surface 的**参数级**校验放在读配置之前，所以这一组在"配置不可达"的
+  // 源码形态下照样能测——断言 reason 同时钉住了**短路顺序**（是 bad-request，不是 generate-error）。
+  test('/lock、/whisper、/chat POST：不给 surface / 非法值 → bad-request', async () => {
+    const cases: Array<[string, string, string | undefined]> = [
+      ['lock', 'POST', '{}'],
+      ['whisper', 'POST', undefined],
+      ['chat', 'POST', JSON.stringify({ text: '在吗' })],
+    ];
+    for (const [path, method, body] of cases) {
+      for (const q of ['', '&surface=nope', '&surface=WEB', '&surface=']) {
+        const r = await call(`/dsh-pet-7340/${path}?pet=main${q}`, method, body);
+        assert.equal(r.status, 200, `${path}${q} 业务失败走 200 + ok:false`);
+        const b = JSON.parse(r.body) as { ok: boolean; reason: string };
+        assert.equal(b.ok, false, `${path}${q}`);
+        assert.equal(b.reason, 'bad-request', `${path}${q} 应是 bad-request（不是 generate-error）`);
+      }
+    }
+  });
+
+  test('/chat GET 与 /lock/release 不校验 surface：照旧走到读配置那一步（generate-error）', async () => {
+    // 释放必须永远能成功（否则宠物中途被隐藏就撤不掉锁）；GET 是读记忆，与显示在哪一端无关。
+    // 两者都**忽略** surface——连非法值也不该报 bad-request。
+    const g = await call('/dsh-pet-7340/chat?pet=main&surface=nope');
+    assert.equal(g.status, 200);
+    assert.equal((JSON.parse(g.body) as { reason: string }).reason, 'generate-error');
+    const rel = await call('/dsh-pet-7340/lock/release?pet=main&surface=nope', 'POST', '{}');
+    assert.equal(rel.status, 200);
+    assert.equal((JSON.parse(rel.body) as { reason: string }).reason, 'generate-error');
+  });
+});
+
+describe('/pose —— 桌面端实况（GET 查询 / POST 上报），与 surface 无关', () => {
+  // 与 /whisper、/chat 的"pet 必填"同一处境：这些断言在"配置不可达"的源码形态下照样成立，
+  // 正好钉住**短路顺序**（pet 先报，surface 根本不参与）。
+  test('/pose：不给 pet → pet-required；方法不对 → 405', async () => {
+    const r = await call('/dsh-pet-7340/pose');
+    assert.equal(r.status, 200);
+    assert.equal((JSON.parse(r.body) as { reason: string }).reason, 'pet-required');
+    assert.equal((await call('/dsh-pet-7340/pose?pet=main', 'POST')).status, 405);
+  });
+
+  test('/pose/report：方法不对 → 405；非法 JSON → 400（协议层错误先于业务）', async () => {
+    assert.equal((await call('/dsh-pet-7340/pose/report?pet=main')).status, 405);
+    assert.equal((await call('/dsh-pet-7340/pose/report?pet=main', 'POST', '{ 不是 json')).status, 400);
+  });
+
+  test('两条都**不校验** surface：连非法值也照旧走到读配置那一步', async () => {
+    // 它们是**读 / 内部**端点（同 GET /chat、GET /playback）——surface 只加在会产生渲染端可见效果
+    // 的动作端点上。这条同时钉住"以后别顺手把 surface 加进来"。
+    const g = await call('/dsh-pet-7340/pose?pet=main&surface=nope');
+    assert.equal(g.status, 200);
+    assert.equal((JSON.parse(g.body) as { reason: string }).reason, 'generate-error');
+    const p = await call(
+      '/dsh-pet-7340/pose/report?pet=main&surface=nope',
+      'POST',
+      JSON.stringify({ x: 0.5, y: 0.5, facing: 'left' }),
+    );
+    assert.equal(p.status, 200);
+    assert.equal((JSON.parse(p.body) as { reason: string }).reason, 'generate-error');
+  });
+});
+
+describe('?rounds= —— 非法值 bad-request，合法值不误杀（issue #141）', () => {
+  // 源码形态下配置不可达：能报 bad-request 就证明校验抢在读盘之前（否则会是 generate-error）。
+  test('非法 → bad-request（负数 / 小数 / 非数字 / 超上限）', async () => {
+    for (const bad of ['-1', '1.5', 'abc', '201']) {
+      const r = await call(`/dsh-pet-7340/chat?pet=main&rounds=${bad}`);
+      const body = JSON.parse(r.body) as { ok: boolean; reason: string };
+      assert.equal(body.ok, false, bad);
+      assert.equal(body.reason, 'bad-request', bad);
+    }
+  });
+
+  test('合法 / 空串 / 不传 → 不报 bad-request（本文件里走到 generate-error）', async () => {
+    for (const q of ['&rounds=0', '&rounds=3', '&rounds=', '']) {
+      const r = await call(`/dsh-pet-7340/chat?pet=main${q}`);
+      assert.equal((JSON.parse(r.body) as { reason: string }).reason, 'generate-error', q);
+    }
+  });
+});
+
+describe('/pet-display —— 业务失败一律 200 + ok:false（不用 400/404 表达业务结论）', () => {
+  test('GET → 405（写端点；方法错是协议层错误，照旧不是 200）', async () => {
+    assert.equal((await call('/dsh-pet-7340/pet-display')).status, 405);
+  });
+
+  test('请求体不是合法 JSON → 400（协议层错误，与其它端点同一口径）', async () => {
+    const r = await call('/dsh-pet-7340/pet-display', 'POST', '{ 不是 json');
+    assert.equal(r.status, 400);
+    assert.match(r.body, /invalid JSON body/);
+  });
+
+  test('缺 id → 200 + pet-required（与 9 条 ?pet= 路由同一对词汇）', async () => {
+    for (const body of [{ display: 'none' }, { id: '   ', display: 'none' }, { display: 'none' }]) {
+      const r = await call('/dsh-pet-7340/pet-display', 'POST', JSON.stringify(body));
+      assert.equal(r.status, 200, JSON.stringify(body));
+      const parsed = JSON.parse(r.body) as { ok: boolean; reason: string };
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.reason, 'pet-required');
+    }
+  });
+
+  test('display 非法 → 200 + bad-request（白名单 web/desktop/both/none）', async () => {
+    const r = await call('/dsh-pet-7340/pet-display', 'POST', JSON.stringify({ id: 'main', display: 'nope' }));
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body) as { ok: boolean; reason: string };
+    assert.equal(body.ok, false);
+    assert.equal(body.reason, 'bad-request');
+  });
+});
+
+describe('/work-status —— 外部写入工作状态', () => {
+  type StateBody = { sections: { workStatus: { data: { state: string | null; task: string | null } } } };
+  const work = async () => JSON.parse((await call('/dsh-pet-7340/state')).body) as StateBody;
+
+  test('POST 写入 state/task，/state 同步可见', async () => {
+    const r = await call('/dsh-pet-7340/work-status', 'POST', JSON.stringify({ state: 'working', task: '编译中' }));
+    assert.equal(r.status, 200);
+    assert.deepEqual(JSON.parse(r.body), { state: 'working', task: '编译中' });
+    assert.deepEqual((await work()).sections.workStatus.data, { state: 'working', task: '编译中' });
+  });
+
+  test('省略 task 保留上一次；显式 null / 空串清空', async () => {
+    await call('/dsh-pet-7340/work-status', 'POST', JSON.stringify({ state: 'working', task: '保留我' }));
+
+    const keep = await call('/dsh-pet-7340/work-status', 'POST', JSON.stringify({ state: 'result' }));
+    assert.deepEqual(JSON.parse(keep.body), { state: 'result', task: '保留我' });
+
+    const nulled = await call('/dsh-pet-7340/work-status', 'POST', JSON.stringify({ state: 'working', task: null }));
+    assert.deepEqual(JSON.parse(nulled.body), { state: 'working', task: null });
+
+    const emptied = await call('/dsh-pet-7340/work-status', 'POST', JSON.stringify({ state: 'working', task: '   ' }));
+    assert.deepEqual(JSON.parse(emptied.body), { state: 'working', task: null });
+  });
+
+  test('DELETE 清空回空闲且幂等', async () => {
+    await call('/dsh-pet-7340/work-status', 'POST', JSON.stringify({ state: 'success', task: '完成' }));
+
+    const del = await call('/dsh-pet-7340/work-status', 'DELETE');
+    assert.equal(del.status, 204);
+    assert.equal(del.body, '');
+    assert.deepEqual((await work()).sections.workStatus.data, { state: null, task: null });
+
+    const again = await call('/dsh-pet-7340/work-status', 'DELETE');
+    assert.equal(again.status, 204);
+  });
+
+  test('非法输入 → 400；GET → 405；body 超限 → 413', async () => {
+    const bad = [
+      '{',
+      JSON.stringify({ state: 'nope' }),
+      JSON.stringify({ state: 'working', task: 42 }),
+      JSON.stringify({ state: 'working', task: 'x'.repeat(41) }),
+    ];
+    for (const body of bad) {
+      const r = await call('/dsh-pet-7340/work-status', 'POST', body);
+      assert.equal(r.status, 400, body.slice(0, 60));
+    }
+    assert.equal((await call('/dsh-pet-7340/work-status')).status, 405);
+    const big = await call(
+      '/dsh-pet-7340/work-status',
+      'POST',
+      JSON.stringify({ state: 'working', task: 'x'.repeat(9000) }),
+    );
+    assert.equal(big.status, 413);
+  });
+});
+
+describe('对外 Cordis 服务 —— 第三方注册余额查询', () => {
+  interface BalanceApi {
+    register: (def: { id: string; fetch: (ctx: { provider: string }) => Promise<unknown> }) => () => void;
+    list: () => { builtin: string[]; external: string[] };
+  }
+  const api = (): BalanceApi => {
+    const value = provided.get('petApi7340') as { balance?: BalanceApi } | undefined;
+    assert.ok(value?.balance, 'apply() 必须挂出 petApi7340.balance');
+    return value.balance;
+  };
+
+  test('挂出的是 register + list（没有 unregister：注销走 register 的返回值）', () => {
+    const balance = api() as unknown as Record<string, unknown>;
+    assert.equal(typeof balance.register, 'function');
+    assert.equal(typeof balance.list, 'function');
+    assert.equal('unregister' in balance, false);
+  });
+
+  test('通过服务注册后 list 可见，调用 disposer 后消失', () => {
+    const dispose = api().register({
+      id: 'route-test-plugin',
+      fetch: async ({ provider }) => ({ ok: true, provider, shape: 'points', data: { unit: '积分', total: '1' } }),
+    });
+    try {
+      assert.ok(api().list().external.includes('route-test-plugin'));
+    } finally {
+      dispose();
+    }
+    assert.equal(api().list().external.includes('route-test-plugin'), false);
   });
 });

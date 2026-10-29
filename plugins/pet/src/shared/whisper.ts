@@ -54,13 +54,16 @@ export const MEME_IMG_CLASS = 'pet-bub-img';
 export const MEME_BUBBLE_CLASS = 'has-img';
 
 /** 气泡配图样式 —— 两端注入同一份（与 SCORE_POPUP_CSS / MENU_CSS 同理，避免两处各写一遍）。
- * 尺寸取宠物宽度变量：浏览器用 --dsh-pet-size、桌面用 --pet-size（既有差异），
- * 这里用 CSS 变量回退同时兼容两者，调用方无需传尺寸。 */
+ * 尺寸锚在**字号**上：基准 `--m` = 气泡正文最终字号 `--f`（各壳注入，见 shared/fonts.ts 的 resolveFontPx），
+ * 于是字号调大图同步变大，图文比例不会一边涨一边不动；`--f` 未注入时回退到原表达式
+ * （宠物宽 × 0.0455），与改造前一致，调用方无需传尺寸。
+ * 系数 = 原系数 ÷ 0.0455，故默认 462px 宠物 / 21px 字号下与改造前逐像素一致（0.34 → 7.4725）。
+ * `max-width:100%` 是兜底：气泡宽度上限随字号收口，图再宽也只缩到泡内，绝不顶出白底
+ * （改造前图是固定 0.34×宠物宽且无上限：关掉 followPet 把字号调到 14 以下时，图会戳出气泡约 25px）。 */
 export const MEME_BUBBLE_CSS = [
-  '.pet-bub-img{display:block;width:calc(var(--dsh-pet-size,var(--pet-size,462px))*0.34);height:auto;',
-  'border-radius:calc(var(--dsh-pet-size,var(--pet-size,462px))*0.026);',
-  'margin:0 auto calc(var(--dsh-pet-size,var(--pet-size,462px))*0.017);object-fit:cover;',
-  'pointer-events:none;user-select:none}',
+  '.pet-bub-img{--m:var(--f,calc(var(--dsh-pet-size,var(--pet-size,462px))*0.0455));display:block;' +
+    'width:calc(var(--m)*7.4725);max-width:100%;height:auto;border-radius:calc(var(--m)*0.5714);' +
+    'margin:0 auto calc(var(--m)*0.3736);object-fit:cover;pointer-events:none;user-select:none}',
   '.pet-bubble.has-img,.dsh-pet-bubble.has-img{min-width:0}',
 ].join('');
 
@@ -92,5 +95,27 @@ export function createMemeImage(name?: string, base = '/dsh-pet-7340', assetRoot
   img.className = MEME_IMG_CLASS;
   img.src = memeImageUrl(key, base, assetRoot);
   img.alt = key;
+  return img;
+}
+
+/**
+ * 生成「外部地址配图」节点 —— 配图的另一种形态（issue #122 第 1 条的 url 参数：素材由第三方
+ * 自己托管，只给地址）。
+ *
+ * 与 createMemeImage 共用同一份 class 与样式（MEME_BUBBLE_CSS），区别只在 `src`：这里**直接用
+ * 给定的完整地址**，不拼 `<base>/pic/memes/<素材根>/<名>.png`（地址与本页 origin 无关，所以
+ * 连 `base` 都不需要——桌面端页面是 file://，正因如此名称形态才必须传 BASE）。
+ *
+ * 两种形态**二选一**，由宿主判定层保证；消费端按字段名区分，不做 `startsWith('http')` 嗅探。
+ * 地址为空 → null（调用方走纯文本路径，与名称形态同一契约）。
+ */
+export function createMemeImageFromUrl(url?: string): HTMLImageElement | null {
+  const href = String(url ?? '').trim();
+  if (!href) return null;
+  injectMemeBubbleCss();
+  const img = document.createElement('img');
+  img.className = MEME_IMG_CLASS;
+  img.src = href;
+  img.alt = '';
   return img;
 }

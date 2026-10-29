@@ -15,6 +15,8 @@
  *   关闭深度思考：碎碎念只求随口一句，不开推理（省时省 token）。无 reasoning 元数据的
  *   模型（如 reasoningEfforts: false）显式传 off 会被 dsh-llm 判为 UNSUPPORTED_REASONING_EFFORT
  *   并折叠成空流（表现为"模型未返回文本"），因此这类模型省略该字段（语义等价于不传）；
+ * - sessionId: PET_CALL_IDENTITY —— 调用身份（见 llm-call.ts）；
+ * - 无正文时读 BlockAssembler.finish 报真实失败原因（dsh-llm 把适配器抛错折进终止块）；
  * - 流式收集 + BlockAssembler 拼装文本；生成失败显式返回结构化原因，不伪造文案；
  * - 短超时（LLM 冷启动/慢响应时快速放弃，不留挂起请求）。
  */

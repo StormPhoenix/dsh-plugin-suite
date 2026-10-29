@@ -1,8 +1,7 @@
-import type { AccountBalanceSnapshot, BalanceProvider, BalanceResult } from './types';
-/** 已登记的服务商（登记口径见模块头：只收有接口的，其余 → `unsupported`） */
-export declare const BALANCE_PROVIDERS: BalanceProvider[];
-/** provider id → 唯一匹配定义；未匹配返回 undefined（= 不支持查询） */
-export declare function matchBalanceProvider(provider: string): BalanceProvider | undefined;
+import type { AccountBalanceSnapshot, BalanceResult } from './types';
+export { BUILTIN_PROVIDERS, listBalanceProviders, matchBalanceProvider, registerBalanceProvider } from './registry';
+/** 已登记的内置服务商（保持旧导出名：测试与既有调用方不受影响） */
+export declare const BALANCE_PROVIDERS: import("./types").BalanceProvider[];
 /**
  * 按当前服务商查询余额。
  * @param provider agentDefaultModel.currentSelection().provider
@@ -14,4 +13,4 @@ export declare function matchBalanceProvider(provider: string): BalanceProvider 
 export declare function queryBalance(provider: string, resolveKey: (ref: string) => Promise<string | undefined>, resolveAccount?: () => Promise<AccountBalanceSnapshot | null | undefined>): Promise<BalanceResult>;
 export { parseAccountBalance } from './providers/deepseek-account';
 export { parseCommandCode } from './providers/commandcode';
-export type { AccountBalanceSnapshot, BalanceFetchContext, BalanceProvider, BalanceResult, BalanceShape, BalanceSuccess, CredentialSpec, MoneyBalance, PricingTier, WindowsUsage, } from './types';
+export type { AccountBalanceSnapshot, BalanceFetchContext, BalanceProvider, BalanceResult, BalanceShape, BalanceSuccess, CredentialSpec, MoneyBalance, PluginFetchContext, PluginProvider, PointsBalance, PricingTier, WindowsUsage, } from './types';

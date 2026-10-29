@@ -80,6 +80,19 @@ describe('flattenConfigPets —— 成品 → 渲染列表的唯一填充点', (
     assert.deepEqual(pet.animations, ['a.webm']);
   });
 
+  test('实例级人设 whisperPrompt：原样带出，不参与条目级覆盖（回落由 host 消费端做）', () => {
+    const merged = {
+      main: {
+        whisperPrompt: '条目人设',
+        pets: [{ id: 'x', whisperPrompt: '实例人设' }, { id: 'y' }],
+      },
+    };
+    const [a, b] = flattenConfigPets(merged as Record<string, Record<string, unknown>>);
+    // 条目级字段是"实例写了也以 conf 为准"，人设是反例：实例那份必须留下来（它是覆盖）
+    assert.equal(a.whisperPrompt, '实例人设');
+    assert.equal('whisperPrompt' in b, false, '没写就是没写——回落由 host 的 petPersona 做，这里不填生效值');
+  });
+
   test('源码守卫：客户端只有这一处填充，host 的写接口返回成品聚合', () => {
     const clientPet = readSource('../client/pet.ts');
     const clientSettings = readSource('../client/settings.ts');
@@ -98,9 +111,10 @@ describe('flattenConfigPets —— 成品 → 渲染列表的唯一填充点', (
     }
     // ② 容器必须经 flattenConfigPets 拿条目级字段
     assert.ok(/flattenConfigPets/.test(clientPet), '容器必须用 flattenConfigPets 拍平成品聚合');
-    // ③ host 的 GET / PUT / POST /config 都返回成品聚合——设置页拿写接口的响应直接拍平，不自己拼字段
+    // ③ host 的 GET / PUT / POST /config 与 POST /pet-display 都返回成品聚合——调用方拿写接口的
+    //    响应直接拍平，不自己拼字段，也不再补一次 GET（补拉的那一次可能拿到陈旧配置）
     const returns = host.match(/obj: readAllConfig\(configPaths\)/g) ?? [];
-    assert.equal(returns.length, 3, 'GET / PUT / POST /config 都应返回成品聚合（obj: readAllConfig(configPaths)）');
+    assert.equal(returns.length, 4, 'GET / PUT / POST /config 与 POST /pet-display 都应返回成品聚合');
     // 只扫 /config 那一段：动作端点（POST /balance 等）返回 { ok: true } 是**对的**（动作不带数据，
     // 数据只有 /state 一个出口），全文件扫描会把它们误判成"config 写接口返回了 ok:true"。
     const configBlock = /if \(rest === 'config'\) \{([\s\S]*?)\n {4}\}/.exec(host)?.[1] ?? '';

@@ -123,6 +123,53 @@ export declare const trimTrail: (trail: DragSample[], now: number) => DragSample
 /** 过阻尼弹簧单轴速度步进：调用方随后 x += v*dt。
  *  power = 总力度（K/C 同乘：系统形态不变，收敛速度快 p 倍 = 跟手更贴/更松）。 */
 export declare const springStep: (v: number, x: number, target: number, dt: number, power?: number) => number;
+/** 软钳速：`cap*(1-e^(-s/cap))`，任意速度下单调可区分、渐近不超过 cap。
+ *  导出供抛掷指令（`POST /throw` 的 power）复用——接口抛掷与拖拽甩抛走同一条限速，手感一致。 */
+export declare const softClampSpeed: (speed: number) => number;
+/** 抛掷指令的力度锚点：`power = 1.0` 对应软钳速**前**的 1200 px/s
+ *  （实际初速会被软上限压到约 1021 px/s，见 softClampSpeed）。 */
+export declare const THROW_SPEED_ANCHOR = 1200;
+/**
+ * 抛掷指令（`POST /dsh-pet-7340/throw` 的 `angle` + `power`）→ 初速度 (vx, vy)，px/s。
+ *
+ * `angle` 单位度，`0` = 正右，**逆时针为正**——屏幕坐标 y 向下，所以 `vy` 取负号
+ * （"往上抛"写 90，而不是 270）。任意实数角度都成立（sin/cos 天然按 360 周期）。
+ * 初速 = `power × THROW_SPEED_ANCHOR`，再过**既有软上限**：与拖拽甩抛同一条限速，
+ * 所以任意 `power` 都单调可区分且恒不超过 `MAX_THROW_SPEED`。
+ *
+ * 两端（浏览器 overlay / 桌面 sprite）共用本函数，保证接口抛掷的初速换算严格一致。
+ */
+export declare const throwVelocity: (angleDeg: number, power: number) => {
+    vx: number;
+    vy: number;
+};
+/**
+ * 弹弓的力度来源与拖拽甩抛是**两条独立的路**，物理侧完全共用：
+ * 这里只把「拉距」换成初速度，之后照样交给 startThrow → throwStep / throwStepRegion
+ *（重力 / 边缘反弹 / 地面摩擦 / 落地 Q 弹 / 宠物互撞 / 多屏空洞都不变）。
+ *
+ * 两条约定：
+ *   - 方向 = 拉的**反方向**（往左下拉 → 往右上弹），见 pullAngle；
+ *   - 力度**不设上限**：既不过 softClampSpeed，也不夹 power。软钳速是为手速抖动设的，
+ *     拉得远和拉得更远必须能区分开——那正是「按距离给力度」的意义。
+ * 刻度与 throwVelocity 同源：power = 1 对应 THROW_SPEED_ANCHOR，并乘同一个
+ * physics.throwPower（设置页「总力度」，与拖拽甩抛共用一份配置）。
+ */
+export declare const SLINGSHOT_REF_RATIO = 0.6;
+/** 「一倍力度」的拉距（px）：随宠物尺寸缩放——小宠物不必拖同样远才炸 */
+export declare const slingshotRefDist: (size: number) => number;
+/** 拉距 → 力度倍率（px / 参考拉距）：线性、单调、**不夹取**；0 拉距 = 0 力度 */
+export declare const slingshotPower: (dist: number, size: number) => number;
+/**
+ * 拉向量（起点 → 松手点，屏幕坐标，y 向下）→ 弹射角度（度，0 = 正右、逆时针为正）。
+ * 弹的是拉的**反方向**：往左拉 → 正右飞出；往上拉 → 向下落。角度约定与 throwVelocity 同一套。
+ */
+export declare const pullAngle: (pullX: number, pullY: number) => number;
+/** 弹弓初速：角度约定、力度锚点与 throwVelocity 相同，但**没有软上限**（任意 power 都单调可区分） */
+export declare const slingshotVelocity: (angleDeg: number, power: number, throwPower?: number) => {
+    vx: number;
+    vy: number;
+};
 /**
  * 由拖拽轨迹估算松手初速 (vx, vy)，px/s。
  * 方向：窗口首末端点位移方向（抗抖）。大小：端点平均与峰值按 PEAK_WEIGHT 加权，
@@ -178,6 +225,18 @@ export declare const throwStepRegion: (s: ThrowState, dtRaw: number, space: Thro
     bounced: boolean;
     atRest: boolean;
 };
+/** 单步允许的最大位移（px）：一帧位移超过它就拆成多步积分 */
+export declare const SUBSTEP_PX = 8;
+/** 单帧最多拆几步（兜底：极端速度下别把一帧拖成几百次积分） */
+export declare const SUBSTEP_MAX = 64;
+/**
+ * 一帧该积几步（整数 ≥ 1）。**N = 1 是常态**：普通甩抛一帧位移远小于 8px，与旧的单步积分逐位相同；
+ * 只有弹弓拉得很远、初速到几千 px/s 时才会拆多步——否则一帧跨过上百 px 会跳过「落地」与「反弹」
+ * 那几帧，Q 弹、摩擦、atRest 判定都会漏。
+ *
+ * dt 先按 MAX_STEP_DT 夹取（与 throwStep 内部的夹取同源），保证步数算的就是实际要积的时间。
+ */
+export declare const throwSubsteps: (vx: number, vy: number, dt: number) => number;
 /** 多宠物碰撞恢复系数：能量损失约 0.5%（e = 0.995，接近完全弹性） */
 export declare const PET_BOUNCE_E = 0.995;
 /** 一只参与碰撞的宠物：位置（包围盒左上角，px）+ 速度（px/s）+ 宽（px，质量 ∝ size²） */

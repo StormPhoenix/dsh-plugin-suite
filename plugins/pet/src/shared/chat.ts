@@ -6,12 +6,13 @@
 // 交互语义（与碎碎念同一显示效果，只多一步用户输入）：
 //    右键菜单「对话」→ 极简输入框 + 确认 → 点确认后弹窗消失 →
 //    桌宠把回复用碎碎念同款方式展示（说话动画 + 白色气泡 10s 消失）。
-//  **回复不再由本组件带回**：POST /chat 是动作端点，只回 {ok}，回复写进 S 的
-//    pets.<id>.say，由调用方（容器/桌面外壳）的 /state 轮询展示——onSent 只用来
-//    叫醒一拍，让结果 0 延迟可见（见各端实现）。
+//  **回复由 S 的 pets.<id>.say 带回展示**：POST /chat 成功时响应里也有正文
+//    （`{ok,text,image?}`，与写进叶子的同一份），但本组件**不用**它——回复统一走
+//    /state 轮询展示，onSent 只用来叫醒一拍，让结果 0 延迟可见（见各端实现）。
 // 记忆语义：memory.json 全存不删；host 每次请求只截尾部 chatMemoryRounds 轮进上下文。
 
-/** POST /dsh-pet-7340/chat?pet=<id> {text}：只回是否受理（回复走 /state 的 pets.<id>.say） */
+/** POST /dsh-pet-7340/chat?pet=<id> {text}：回执为 `{ok,text,image?}`；本类型只声明消费方
+ *  用到的 `ok`（正文展示一律走 /state 的 pets.<id>.say） */
 export type ChatSendState =
   | { ok: true }
   | { ok: false; reason: 'provider-missing' | 'generate-error' | 'config-error' | 'bad-request'; message?: string };
@@ -51,8 +52,11 @@ export const CHAT_CSS = [
   '.dsh-pet-chat{position:fixed;z-index:2147483001;width:160px;max-width:80vw;',
   'background:rgba(255,255,255,.98);border:1px solid rgba(0,0,0,.12);border-radius:10px;',
   'box-shadow:0 10px 32px rgba(0,0,0,.22);color:#2b2b2b;font-size:14px;line-height:1.5;',
-  // 字体与桌宠气泡同款（上首软糖体，两端均已注入 @font-face），风格一致不显正式
-  "font-family:'ShangshouSoftCandy','Yuanti SC','YouYuan','幼圆','Comic Sans MS','PingFang SC','Microsoft YaHei',sans-serif;",
+  // 字体与桌宠气泡同款（上首软糖体，两端均已注入 @font-face），风格一致不显正式。
+  // 字体族走全局配置变量 --dsh-pet-font-family：弹窗挂在 body 下、继承不到宠物根容器，
+  // 所以由两端注入在 documentElement（回退参数 = 改造前的原栈）。
+  // 字号保持固定 14px：配置里的 font.size 只作用于气泡与悬浮提示，不改变本弹窗。
+  "font-family:var(--dsh-pet-font-family,'ShangshouSoftCandy','Yuanti SC','YouYuan','幼圆','Comic Sans MS','PingFang SC','Microsoft YaHei',sans-serif);",
   'user-select:none}',
   '.dsh-pet-chat *{box-sizing:border-box}',
   '.dsh-pet-chat-input{display:block;width:100%;border:none;outline:none;background:transparent;',
@@ -99,6 +103,9 @@ export function mountChatDialog(opts: {
   petId: string;
   /** 端点基址：浏览器默认相对 /dsh-pet-7340/chat；桌面传绝对 URL（file:// 页面需绝对） */
   baseUrl?: string;
+  /** 这个弹窗开在**哪一端**：`POST /chat` 的 `?surface=` 是必填的（宿主据此把"必然不可能"提前
+   *  拒掉，见 src/host/surface.ts）。弹窗只可能开在网页或桌面，所以这里只有两个取值。 */
+  surface: 'web' | 'desktop';
   x: number;
   y: number;
   /** 发送成功后调用（弹窗此时已关闭）：调用方叫醒一拍 /state 让回复 0 延迟出现。
@@ -109,9 +116,10 @@ export function mountChatDialog(opts: {
   clamp?: { x: number; y: number; w: number; h: number };
 }): ChatDialogMount {
   injectChatCss();
-  const { petId, x, y, onSent, onClose, clamp } = opts;
+  const { petId, surface, x, y, onSent, onClose, clamp } = opts;
   const baseUrl = opts.baseUrl ?? '/dsh-pet-7340/chat';
-  const withPet = baseUrl + '?pet=' + encodeURIComponent(petId);
+  // `surface` 必填（宿主校验）；这个 URL 只用于 POST 发送——GET 读记忆那条路不需要它
+  const withPet = baseUrl + '?pet=' + encodeURIComponent(petId) + '&surface=' + surface;
   const c =
     clamp && Number.isFinite(clamp.x + clamp.y + clamp.w + clamp.h)
       ? clamp

@@ -39,6 +39,9 @@ export declare const zh: {
     sizeHint: string;
     nameLabel: string;
     nameHint: string;
+    personaLabel: string;
+    personaHint: string;
+    personaCount: string;
     balanceEnabled: string;
     balanceEnabledHint: string;
     whisperEnabled: string;
@@ -61,6 +64,7 @@ export declare const zh: {
     marginX: string;
     marginY: string;
     save: string;
+    saveHotkey: string;
     sync: string;
     confirmSync: string;
     corruptTitle: string;
@@ -75,6 +79,8 @@ export declare const zh: {
     memesDir: string;
     saved: string;
     loadError: string;
+    loading: string;
+    retry: string;
     invalid: string;
     busy: string;
     extraPetsHint: string;
@@ -101,6 +107,22 @@ export declare const zh: {
     physicsPetCollision: string;
     physicsPetCollisionHint: string;
     invalidPhysics: string;
+    fontTitle: string;
+    fontHint: string;
+    fontFamilyLabel: string;
+    fontFamilyHint: string;
+    fontSizeLabel: string;
+    fontSizeHint: string;
+    fontFollowToggle: string;
+    fontFollowToggleHint: string;
+    invalidFont: string;
+    'font.candy': string;
+    'font.yahei': string;
+    'font.youyuan': string;
+    'font.kaiti': string;
+    'font.simsun': string;
+    'font.comic': string;
+    'font.system': string;
     modelTitle: string;
     modelHint: string;
     modelFollow: string;
@@ -169,6 +191,9 @@ export declare const en: {
     sizeHint: string;
     nameLabel: string;
     nameHint: string;
+    personaLabel: string;
+    personaHint: string;
+    personaCount: string;
     balanceEnabled: string;
     balanceEnabledHint: string;
     whisperEnabled: string;
@@ -191,6 +216,7 @@ export declare const en: {
     marginX: string;
     marginY: string;
     save: string;
+    saveHotkey: string;
     sync: string;
     confirmSync: string;
     corruptTitle: string;
@@ -205,6 +231,8 @@ export declare const en: {
     memesDir: string;
     saved: string;
     loadError: string;
+    loading: string;
+    retry: string;
     invalid: string;
     busy: string;
     extraPetsHint: string;
@@ -231,6 +259,22 @@ export declare const en: {
     physicsPetCollision: string;
     physicsPetCollisionHint: string;
     invalidPhysics: string;
+    fontTitle: string;
+    fontHint: string;
+    fontFamilyLabel: string;
+    fontFamilyHint: string;
+    fontSizeLabel: string;
+    fontSizeHint: string;
+    fontFollowToggle: string;
+    fontFollowToggleHint: string;
+    invalidFont: string;
+    'font.candy': string;
+    'font.yahei': string;
+    'font.youyuan': string;
+    'font.kaiti': string;
+    'font.simsun': string;
+    'font.comic': string;
+    'font.system': string;
     modelTitle: string;
     modelHint: string;
     modelFollow: string;
@@ -297,6 +341,7 @@ export declare function makePetConfigSection(rt: {
     useState: <T>(init: T) => [T, Dispatch<SetStateAction<T>>];
     useEffect: (effect: ReactNS.EffectCallback, deps?: ReactNS.DependencyList) => void;
     useRef: <T>(initial: T) => ReactNS.MutableRefObject<T>;
+    useCallback: typeof ReactNS.useCallback;
     t: (key: string) => string;
 }): FunctionComponent<{
     close?: () => void;

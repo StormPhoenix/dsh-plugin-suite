@@ -109,6 +109,7 @@ function flattenConfigPets(merged) {
 			animationWeights: conf.animationWeights,
 			eventsRefreshSec: conf.eventsRefreshSec,
 			physics: conf.physics,
+			font: conf.font,
 			confineToScreen: conf.confineToScreen,
 			workStatusTexts: conf.workStatusTexts,
 			whisperModel: conf.whisperModel,
@@ -121,7 +122,17 @@ function flattenConfigPets(merged) {
 }
 
 //#endregion
-//#region src/shared/balance.ts
+//#region src/shared/balance/tone.ts
+const QUOTA_WARN_PERCENT = 70;
+const QUOTA_CRIT_PERCENT = 90;
+function quotaTone(percent) {
+	if (percent >= QUOTA_CRIT_PERCENT) return "crit";
+	if (percent >= QUOTA_WARN_PERCENT) return "warn";
+	return "ok";
+}
+
+//#endregion
+//#region src/shared/balance/parse.ts
 /**
 * 可选数字：缺省 → undefined；出现但非法 → null（调用方据此整拍跳过——不把 NaN/字符串送进展示层）。
 */
@@ -170,35 +181,137 @@ function toBalanceState(raw) {
 			monthlyResetsAt: typeof d.monthlyResetsAt === "string" ? d.monthlyResetsAt : void 0
 		};
 	}
-	if (r.shape === "money") return {
-		provider,
-		shape: "money",
-		ok: true,
-		currency: typeof d.currency === "string" ? d.currency : void 0,
-		total: typeof d.total === "string" ? d.total : void 0,
-		granted: typeof d.granted === "string" ? d.granted : void 0,
-		toppedUp: typeof d.toppedUp === "string" ? d.toppedUp : void 0,
-		fullBalance: typeof d.fullBalance === "string" ? d.fullBalance : void 0,
-		tier: d.tier === "peak" || d.tier === "idle" ? d.tier : void 0
-	};
+	if (r.shape === "money") {
+		const raw$1 = Array.isArray(d.wallets) ? d.wallets : [];
+		const wallets = [];
+		for (const item of raw$1) {
+			if (!item || typeof item !== "object") continue;
+			const w = item;
+			if (typeof w.currency !== "string" || w.currency.length === 0) continue;
+			if (typeof w.total !== "string" || w.total.length === 0) continue;
+			wallets.push({
+				currency: w.currency,
+				total: w.total,
+				granted: typeof w.granted === "string" && w.granted.length > 0 ? w.granted : "0.00",
+				toppedUp: typeof w.toppedUp === "string" && w.toppedUp.length > 0 ? w.toppedUp : "0.00",
+				fullBalance: typeof w.fullBalance === "string" && w.fullBalance.length > 0 ? w.fullBalance : void 0
+			});
+		}
+		if (wallets.length === 0) return null;
+		return {
+			provider,
+			shape: "money",
+			ok: true,
+			wallets,
+			tier: d.tier === "peak" || d.tier === "idle" ? d.tier : void 0
+		};
+	}
+	if (r.shape === "points") {
+		if (typeof d.unit !== "string" || d.unit.length === 0) return null;
+		if (typeof d.total !== "string" || d.total.length === 0) return null;
+		return {
+			provider,
+			shape: "points",
+			ok: true,
+			points: {
+				unit: d.unit,
+				total: d.total,
+				full: typeof d.full === "string" && d.full.length > 0 ? d.full : void 0
+			}
+		};
+	}
 	return null;
 }
-function balancePercent(v) {
-	if (v.shape === "money") {
-		const total = Number(v.total);
-		const full = Number(v.fullBalance);
-		if (!Number.isFinite(total)) return void 0;
-		if (!Number.isFinite(full) || full <= 0) return void 0;
-		const remaining = Math.max(0, total) / full * 100;
-		return Math.max(0, Math.min(100, 100 - remaining));
+
+//#endregion
+//#region src/shared/balance/handlers/money.ts
+/**
+* money：各币种按**自己的基准**（`fullBalance`）算「剩余比例」，再相加折算成已用百分比。
+* 没有基准的币种跳过（不参与折算，不替它猜一个）；一个带基准的都没有 → undefined（不播档位）。
+*/
+function moneyPercent(v) {
+	let remaining = 0;
+	let based = 0;
+	for (const w of v.wallets ?? []) {
+		const total = Number(w.total);
+		const full = Number(w.fullBalance);
+		if (!Number.isFinite(total) || !Number.isFinite(full) || full <= 0) continue;
+		remaining += total / full;
+		based++;
 	}
-	return Math.max(v.rolling ?? 0, v.weekly ?? 0, v.monthly ?? 0);
+	if (based === 0) return void 0;
+	return Math.max(0, Math.min(100, 100 - remaining * 100));
 }
-function balanceEventIndex(p) {
-	if (p === 100) return 5;
-	const i = Math.floor(p / 20);
-	return i < 5 ? i : 4;
+/**
+* money：一行「余额（峰/谷）¥x.xx」。
+*
+* 只显示 `total !== 0` 的币种（**负数要显示**——透支是真的欠钱；正好 0 的不占地方），
+* CNY 优先，用符号拼、`/` 分隔；全都为 0 时兜底显示主币种 ¥0.00（否则气泡会空一行）。
+* 档位装饰（峰/谷）只有提供该计价规则的服务商才有；没有就不加括号那一段。
+*/
+function moneyRows(v) {
+	const visible = (v.wallets ?? []).filter((w) => Number(w.total) !== 0).sort((a, b) => (a.currency === "CNY" ? 0 : 1) - (b.currency === "CNY" ? 0 : 1));
+	const amount = visible.length > 0 ? visible.map((w) => (w.currency === "USD" ? "$" : "¥") + w.total).join("/") : "¥0.00";
+	if (!v.tier) return [{
+		role: "label",
+		text: "余额 " + amount
+	}];
+	return [
+		{
+			role: "label",
+			text: "余额（"
+		},
+		{
+			role: "tier",
+			tier: v.tier,
+			text: v.tier === "peak" ? "峰" : "谷"
+		},
+		{
+			role: "label",
+			text: "）" + amount
+		}
+	];
 }
+const moneyHandler = {
+	percent: moneyPercent,
+	rows: moneyRows
+};
+
+//#endregion
+//#region src/shared/balance/handlers/points.ts
+/**
+* points：与 money 同一套「按基准折算」的数学，数据来自 `points` 而非 `wallets`。
+* 没有基准 / 基准非法 → undefined（不播档位，不替服务商猜一个）。
+*/
+function pointsPercent(v) {
+	const total = Number(v.points?.total);
+	const full = Number(v.points?.full);
+	if (!Number.isFinite(total) || !Number.isFinite(full) || full <= 0) return void 0;
+	return Math.max(0, Math.min(100, 100 - total / full * 100));
+}
+/**
+* points：一行「余额 800 积分」。
+* 单位是数据带出的后缀，**绝不套货币符号**（`currency` 那套 $/¥ 判断只属于 money）。
+* 0 也照常显示：0 积分是真实读数。
+*/
+function pointsRows(v) {
+	const p = v.points;
+	if (!p) return [{
+		role: "label",
+		text: "积分数据不可用"
+	}];
+	return [{
+		role: "label",
+		text: "余额 " + p.total + " " + p.unit
+	}];
+}
+const pointsHandler = {
+	percent: pointsPercent,
+	rows: pointsRows
+};
+
+//#endregion
+//#region src/shared/balance/handlers/windows.ts
 const WINDOW_LABELS = {
 	weekly: "周",
 	monthly: "月"
@@ -218,7 +331,7 @@ function windowQuotas(v) {
 	};
 }
 function urgentWindow(v) {
-	if (v.shape === "money") return void 0;
+	if (v.shape !== "windows") return void 0;
 	const quotas = windowQuotas(v);
 	const resets = {
 		rolling: v.rollingResetsAt,
@@ -265,6 +378,86 @@ function resetInText(iso) {
 	if (hoursF >= 96) return (Math.round(hoursF / 24 * 10) / 10).toFixed(1) + " 天";
 	return Math.max(.1, Math.round(hoursF * 10) / 10).toFixed(1) + " 小时";
 }
+/** windows：三窗口取最大（只有月窗口时就是它自己） */
+function windowsPercent(v) {
+	return Math.max(v.rolling ?? 0, v.weekly ?? 0, v.monthly ?? 0);
+}
+/** windows：两行 —— 最紧迫窗口的「已用 N%」+ 重置倒计时 */
+function windowsRows(v) {
+	const w = urgentWindow(v);
+	if (!w) return [{
+		role: "label",
+		text: "额度数据不可用"
+	}];
+	const reset = resetInText(w.resetsAt);
+	return [{
+		role: "label",
+		text: w.label + "额度已用 " + Math.round(w.percent) + "%"
+	}, {
+		role: "sub",
+		text: reset ? reset + "重置" : "已重置"
+	}];
+}
+/**
+* windows：展开态每个存在窗口一行 —— 窗口名 + 进度条 + 已用百分比 + 重置倒计时。
+* 只列**存在**的窗口：`rolling` / `weekly` 缺省 = 该服务商没有这个窗口，不补 0、不画空条。
+*/
+function windowsDetail(v) {
+	const resets = {
+		rolling: v.rollingResetsAt,
+		weekly: v.weeklyResetsAt,
+		monthly: v.monthlyResetsAt
+	};
+	const rows = [];
+	for (const w of [
+		"rolling",
+		"weekly",
+		"monthly"
+	]) {
+		const percent = v[w];
+		if (percent === void 0) continue;
+		const reset = resetInText(resets[w]);
+		const usedText = Math.round(percent) + "%";
+		const resetText = reset === "" ? "已重置" : reset + "重置";
+		rows.push({
+			role: "quota",
+			text: windowLabel(v, w) + " " + usedText + " " + resetText,
+			label: windowLabel(v, w),
+			percent,
+			tone: quotaTone(percent),
+			usedText,
+			resetText
+		});
+	}
+	return rows.length > 0 ? rows : windowsRows(v);
+}
+const windowsHandler = {
+	percent: windowsPercent,
+	rows: windowsRows,
+	detail: windowsDetail
+};
+
+//#endregion
+//#region src/shared/balance/handlers/index.ts
+const HANDLERS = {
+	windows: windowsHandler,
+	money: moneyHandler,
+	points: pointsHandler
+};
+
+//#endregion
+//#region src/shared/balance/percent.ts
+function balancePercent(v) {
+	return HANDLERS[v.shape].percent(v);
+}
+function balanceEventIndex(p) {
+	if (p === 100) return 5;
+	const i = Math.floor(p / 20);
+	return i < 5 ? i : 4;
+}
+
+//#endregion
+//#region src/shared/balance/view.ts
 /** 不可用状态的气泡行（显式说明原因，绝不伪造数字）：
 *  - unsupported：服务商未登记查询接口（配置事实，不是故障）→ 报出 provider id，便于自查"当前到底是谁"
 *  - credential-missing：缺凭证 → 次要行放 host 报的凭证名（不含 message 时不留空行）
@@ -290,52 +483,20 @@ function unavailableRows(state) {
 		role: "sub",
 		text: state.message ?? ""
 	}];
-	return rows.filter((r) => r.text !== "");
+	return rows.filter((r) => r.role !== "quota" && r.text !== "");
 }
 function balanceBubbleView(state) {
-	if (state.ok) {
-		if (state.shape !== "money") {
-			const w = urgentWindow(state);
-			if (w) {
-				const reset = resetInText(w.resetsAt);
-				const rows = [{
-					role: "label",
-					text: w.label + "额度已用 " + Math.round(w.percent) + "%"
-				}, {
-					role: "sub",
-					text: reset ? reset + "重置" : "已重置"
-				}];
-				return rows;
-			}
-			return [{
-				role: "label",
-				text: "额度数据不可用"
-			}];
-		}
-		const symbol = state.currency === "USD" ? "$" : "¥";
-		const amount = symbol + (state.total ?? "-");
-		if (!state.tier) return [{
-			role: "label",
-			text: "余额 " + amount
-		}];
-		return [
-			{
-				role: "label",
-				text: "余额（"
-			},
-			{
-				role: "tier",
-				tier: state.tier,
-				text: state.tier === "peak" ? "峰" : "谷"
-			},
-			{
-				role: "label",
-				text: "）" + amount
-			}
-		];
-	}
-	return unavailableRows(state);
+	if (!state.ok) return unavailableRows(state);
+	return HANDLERS[state.shape].rows(state);
 }
+function balanceDetailView(state) {
+	if (!state.ok) return unavailableRows(state);
+	const handler = HANDLERS[state.shape];
+	return handler.detail ? handler.detail(state) : handler.rows(state);
+}
+
+//#endregion
+//#region src/shared/balance/notice.ts
 function decideBalanceNotice(state, lastKey, explicit) {
 	if (state.ok) return {
 		show: false,
@@ -388,9 +549,10 @@ function normLeaf(value) {
 		data: leaf$1.data ?? null
 	};
 }
-async function fetchState(baseUrl = "/dsh-pet-7340/state") {
+async function fetchState(baseUrl = "/dsh-pet-7340/state", wait) {
 	try {
-		const res = await fetch(baseUrl, { cache: "no-store" });
+		const url = wait ? `${baseUrl}?since=${wait.since}&timeout=${wait.timeoutMs}` : baseUrl;
+		const res = await fetch(url, { cache: "no-store" });
 		if (!res.ok) return null;
 		const raw = await res.json().catch(() => null);
 		if (!raw || typeof raw !== "object") return null;
@@ -412,6 +574,7 @@ async function fetchState(baseUrl = "/dsh-pet-7340/state") {
 			pets[petId] = leaves;
 		}
 		return {
+			counter: typeof raw.counter === "number" && Number.isFinite(raw.counter) ? raw.counter : void 0,
 			sections,
 			pets
 		};
@@ -453,10 +616,15 @@ function readBalance(leaf$1) {
 function readSay(leaf$1) {
 	if (!leaf$1.data || typeof leaf$1.data !== "object") return null;
 	const d = leaf$1.data;
+	if (d.clear === true) return { kind: "clear" };
 	if (typeof d.text !== "string" || !d.text) return null;
 	return {
+		kind: "say",
 		text: d.text,
-		image: typeof d.image === "string" ? d.image : void 0
+		image: typeof d.image === "string" ? d.image : void 0,
+		url: typeof d.url === "string" ? d.url : void 0,
+		duration: typeof d.duration === "number" && Number.isFinite(d.duration) && d.duration >= 0 ? d.duration : void 0,
+		anim: typeof d.anim === "boolean" ? d.anim : void 0
 	};
 }
 function readWorkStatus(leaf$1) {
@@ -465,8 +633,58 @@ function readWorkStatus(leaf$1) {
 function readAnim(leaf$1) {
 	if (!leaf$1.data || typeof leaf$1.data !== "object") return null;
 	const d = leaf$1.data;
-	if (typeof d.name !== "string" || !d.name) return null;
-	return { name: d.name };
+	const name = typeof d.name === "string" && d.name ? d.name : void 0;
+	const url = typeof d.url === "string" && d.url ? d.url : void 0;
+	if (name === void 0 && url === void 0) return null;
+	return {
+		name,
+		url,
+		playbackId: typeof d.playbackId === "string" && d.playbackId ? d.playbackId : void 0,
+		facing: d.facing === "left" || d.facing === "right" ? d.facing : void 0
+	};
+}
+function readLock(leaf$1) {
+	if (!leaf$1.data || typeof leaf$1.data !== "object") return null;
+	const d = leaf$1.data;
+	if (d.locked === false) return { locked: false };
+	if (d.locked !== true) return null;
+	if (typeof d.expiresAt !== "number" || !Number.isFinite(d.expiresAt)) return null;
+	return {
+		locked: true,
+		expiresAt: d.expiresAt
+	};
+}
+function readPosition(leaf$1) {
+	if (!leaf$1.data || typeof leaf$1.data !== "object") return null;
+	const d = leaf$1.data;
+	if (typeof d.x !== "number" || !Number.isFinite(d.x)) return null;
+	if (typeof d.y !== "number" || !Number.isFinite(d.y)) return null;
+	if (d.mode !== "instant" && d.mode !== "spring" && d.mode !== "line") return null;
+	if (d.mode === "line") {
+		if (typeof d.duration !== "number" || !Number.isFinite(d.duration) || d.duration < 0) return null;
+		return {
+			x: d.x,
+			y: d.y,
+			mode: "line",
+			duration: d.duration
+		};
+	}
+	return {
+		x: d.x,
+		y: d.y,
+		mode: d.mode,
+		duration: 0
+	};
+}
+function readThrow(leaf$1) {
+	if (!leaf$1.data || typeof leaf$1.data !== "object") return null;
+	const d = leaf$1.data;
+	if (typeof d.angle !== "number" || !Number.isFinite(d.angle)) return null;
+	if (typeof d.power !== "number" || !Number.isFinite(d.power) || d.power <= 0) return null;
+	return {
+		angle: d.angle,
+		power: d.power
+	};
 }
 async function postAction(baseUrl, body) {
 	try {
@@ -505,13 +723,7 @@ function memeImageUrl(name, base = "/dsh-pet-7340", assetRoot = "") {
 }
 const MEME_IMG_CLASS = "pet-bub-img";
 const MEME_BUBBLE_CLASS = "has-img";
-const MEME_BUBBLE_CSS = [
-	".pet-bub-img{display:block;width:calc(var(--dsh-pet-size,var(--pet-size,462px))*0.34);height:auto;",
-	"border-radius:calc(var(--dsh-pet-size,var(--pet-size,462px))*0.026);",
-	"margin:0 auto calc(var(--dsh-pet-size,var(--pet-size,462px))*0.017);object-fit:cover;",
-	"pointer-events:none;user-select:none}",
-	".pet-bubble.has-img,.dsh-pet-bubble.has-img{min-width:0}"
-].join("");
+const MEME_BUBBLE_CSS = [".pet-bub-img{--m:var(--f,calc(var(--dsh-pet-size,var(--pet-size,462px))*0.0455));display:block;width:calc(var(--m)*7.4725);max-width:100%;height:auto;border-radius:calc(var(--m)*0.5714);margin:0 auto calc(var(--m)*0.3736);object-fit:cover;pointer-events:none;user-select:none}", ".pet-bubble.has-img,.dsh-pet-bubble.has-img{min-width:0}"].join("");
 /** 只注入一次（两端共用；页面已有同一标记则跳过） */
 let memeCssInjected = false;
 function injectMemeBubbleCss() {
@@ -528,23 +740,48 @@ function injectMemeBubbleCss() {
 //#endregion
 //#region src/client/bubble.ts
 /** 气泡内联样式：白色半透明圆润泡 + 底部小尾巴指向宠物；字体用上首软糖体（本地打包，稳定）。
-* 所有尺寸基于 `--dsh-pet-size`（宠物宽度 px）等比缩放——宠物放大/缩小，气泡跟随。
-* 系数按默认 462px 设计：21px 字号 → ×0.0455、120px 最小宽 → 0.26、230px 最大宽 → 0.5 等。 */
+* 尺寸分两类锚点：
+*  - 气泡**盒子**（宽上下限/内边距/圆角/尾巴/阴影/行间距/角标）锚在字号 `--f` 上（em 语义）：
+*    字号调大盒子同步变大，文字永远装得下——不再出现「字长大了、框没长」把文字顶出白底；
+*  - 气泡**位置**（bottom 偏移）仍锚在 `--dsh-pet-size`，保证气泡始终贴在宠物头顶同一点。
+* 系数 = 原系数 ÷ 0.0455（原字号系数），故默认 462px 宠物 / 21px 字号下与改造前逐像素一致：
+* ×0.0455 → 1em、最小宽 0.26 → 5.7143、最大宽 0.5 → 10.989 等。
+* 字号：正文取 --dsh-pet-font-bubble（两端按该宠物尺寸算好注入，见 shared/fonts.ts 的 resolveFontPx）；
+* 气泡内其余层级按「相对正文的比例」派生——故统一先定义局部变量 --f = 正文最终字号，
+* 子元素经自定义属性继承取用；变量未注入时 --f 回退到原表达式，行为与改造前逐像素一致。
+* 换行：正文不锁 nowrap，折行只在内容真的超过宽度上限时才发生（见下一条）。
+* 宽度为什么必须写 width:max-content：气泡是 left:50% 的绝对定位盒，它的「可用宽度」只有包含块的一半
+* （= 宠物宽度的一半），shrink-to-fit 会先被这道墙卡死——max-width 调多大都不生效，字号一大就折行/顶出。
+* 写 width:max-content 后盒子先按内容取宽，再由 max-width 收口（= min(字号口径上限, 包含块 100%)），
+* 「字变大 → 框变宽」才真正生效，且永不超过宠物本身宽度（桌面窗口只比宠物大一圈，超了会被裁）。
+* 断词用 break-word 而非 anywhere：只在整词放不下时才断，不会把 85% / ¥12.34 这类数字拆到两行。 */
 const bubbleCss = [
 	"@font-face{font-family:\"ShangshouSoftCandy\";src:url(\"/dsh-pet-7340/font/上首软糖体.ttf\") format(\"truetype\");font-display:swap;font-weight:400}",
-	".dsh-pet-bubble{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(100% - var(--dsh-pet-size)*0.108);min-width:calc(var(--dsh-pet-size)*0.26);max-width:calc(var(--dsh-pet-size)*0.5);padding:calc(var(--dsh-pet-size)*0.022) calc(var(--dsh-pet-size)*0.030);border-radius:calc(var(--dsh-pet-size)*0.035);background:rgba(255,255,255,.92);color:#2b2b2b;font-family:\"ShangshouSoftCandy\",\"Yuanti SC\",\"YouYuan\",\"幼圆\",\"Comic Sans MS\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;font-size:calc(var(--dsh-pet-size)*0.0455);line-height:1.6;z-index:3;pointer-events:none;box-shadow:0 calc(var(--dsh-pet-size)*0.009) calc(var(--dsh-pet-size)*0.035) rgba(0,0,0,.14),0 1px 3px rgba(0,0,0,.08);backdrop-filter:blur(6px);opacity:0;transition:opacity .25s ease;white-space:nowrap}",
-	".dsh-pet-bubble::after{content:\"\";position:absolute;left:50%;bottom:calc(var(--dsh-pet-size)*-0.017);transform:translateX(-50%);border:calc(var(--dsh-pet-size)*0.017) solid transparent;border-top-color:rgba(255,255,255,.92);border-bottom:none}",
+	".dsh-pet-bubble{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(100% - var(--dsh-pet-size)*0.108);width:max-content;min-width:calc(var(--f)*5.7143);max-width:min(calc(var(--f)*16),100%);box-sizing:content-box;padding:calc(var(--f)*0.4835) calc(var(--f)*0.6593);border-radius:calc(var(--f)*0.7692);background:rgba(255,255,255,.92);--f0:var(--dsh-pet-font-bubble,calc(var(--dsh-pet-size)*0.0455));--f:var(--f0);color:#2b2b2b;font-family:var(--dsh-pet-font-family,\"ShangshouSoftCandy\",\"Yuanti SC\",\"YouYuan\",\"幼圆\",\"Comic Sans MS\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);font-size:var(--f);line-height:1.6;z-index:3;pointer-events:none;box-shadow:0 calc(var(--f)*0.1978) calc(var(--f)*0.7692) rgba(0,0,0,.14),0 1px 3px rgba(0,0,0,.08);backdrop-filter:blur(6px);opacity:0;transition:opacity .25s ease;white-space:normal;overflow-wrap:break-word}",
+	".dsh-pet-bubble::after{content:\"\";position:absolute;left:50%;bottom:calc(var(--f)*-0.3736);transform:translateX(-50%);border:calc(var(--f)*0.3736) solid transparent;border-top-color:rgba(255,255,255,.92);border-bottom:none}",
 	".dsh-pet-bubble.is-on{opacity:1}",
-	".dsh-pet-bubble.dsh-pet-whisper{font-size:calc(var(--dsh-pet-size)*0.034);min-width:calc(var(--dsh-pet-size)*0.10);max-width:calc(var(--dsh-pet-size)*0.5);white-space:normal;overflow-wrap:anywhere}",
-	".dsh-pet-bubble .pet-bub-title{font-size:calc(var(--dsh-pet-size)*0.035);color:rgba(43,43,43,.6);margin-bottom:calc(var(--dsh-pet-size)*0.009)}",
-	".dsh-pet-bubble .pet-bub-row{display:flex;justify-content:space-between;gap:calc(var(--dsh-pet-size)*0.030)}",
-	".dsh-pet-bubble .pet-bub-sub{font-size:calc(var(--dsh-pet-size)*0.035);color:rgba(43,43,43,.6)}",
+	".dsh-pet-bubble.dsh-pet-whisper{font-size:calc(var(--f)*0.7473);min-width:calc(var(--f)*2.1978);max-width:min(calc(var(--f)*10.989),100%)}",
+	".dsh-pet-bubble .pet-bub-title{font-size:calc(var(--f)*0.7692);color:rgba(43,43,43,.6);margin-bottom:calc(var(--f)*0.1978)}",
+	".dsh-pet-bubble .pet-bub-row{display:flex;justify-content:space-between;gap:calc(var(--f)*0.6593);flex-wrap:wrap}",
+	".dsh-pet-bubble .pet-bub-row>span{white-space:nowrap}",
+	".dsh-pet-bubble .pet-bub-sub{font-size:calc(var(--f)*0.7692);color:rgba(43,43,43,.6)}",
 	".dsh-pet-bubble .pet-bub-val{font-variant-numeric:tabular-nums;font-weight:650;color:#1f1f1f}",
-	".dsh-pet-bubble .pet-bub-err{color:#d94f3d;font-size:calc(var(--dsh-pet-size)*0.035)}",
-	".dsh-pet-bubble .pet-bub-tag{margin-left:calc(var(--dsh-pet-size)*0.013);font-size:calc(var(--dsh-pet-size)*0.022);color:rgba(43,43,43,.55);border:1px solid rgba(43,43,43,.25);border-radius:calc(var(--dsh-pet-size)*0.013);padding:0 calc(var(--dsh-pet-size)*0.009);vertical-align:1px}",
+	".dsh-pet-bubble .pet-bub-err{color:#d94f3d;font-size:calc(var(--f)*0.7692)}",
+	".dsh-pet-bubble .pet-bub-tag{margin-left:calc(var(--f)*0.2857);font-size:calc(var(--f)*0.4835);color:rgba(43,43,43,.55);border:1px solid rgba(43,43,43,.25);border-radius:calc(var(--f)*0.2857);padding:0 calc(var(--f)*0.1978);vertical-align:1px}",
 	".dsh-pet-bubble .pet-bub-tier{font-weight:700}",
 	".dsh-pet-bubble .pet-bub-tier-peak{color:#e53935}",
-	".dsh-pet-bubble .pet-bub-tier-idle{color:#2e9e4f}"
+	".dsh-pet-bubble .pet-bub-tier-idle{color:#2e9e4f}",
+	".dsh-pet-bubble.is-clickable{pointer-events:auto;cursor:pointer}",
+	".dsh-pet-bubble.is-expanded{--f:calc(var(--f0)*0.6);width:min(calc(var(--f)*21),100%);max-width:100%}",
+	".dsh-pet-bubble.is-on.is-fading{opacity:0}",
+	".dsh-pet-bubble .pet-bub-quota{display:flex;align-items:center;gap:calc(var(--f)*0.4);margin:calc(var(--f)*0.13) 0}",
+	".dsh-pet-bubble .pet-bub-quota-label{flex:none;min-width:calc(var(--f)*1.9);font-size:calc(var(--f)*0.7692);color:rgba(43,43,43,.6)}",
+	".dsh-pet-bubble .pet-bub-quota-bar{flex:1 1 auto;height:calc(var(--f)*0.5);border-radius:calc(var(--f)*0.25);background:rgba(43,43,43,.12);overflow:hidden}",
+	".dsh-pet-bubble .pet-bub-quota-fill{display:block;height:100%;border-radius:inherit;background:#2e9e4f}",
+	".dsh-pet-bubble .pet-bub-quota-fill.pet-bub-quota-warn{background:#e8952f}",
+	".dsh-pet-bubble .pet-bub-quota-fill.pet-bub-quota-crit{background:#e53935}",
+	".dsh-pet-bubble .pet-bub-quota-used{flex:none;min-width:calc(var(--f)*2.2);text-align:right;font-variant-numeric:tabular-nums;font-weight:650;color:#1f1f1f}",
+	".dsh-pet-bubble .pet-bub-quota-reset{flex:none;min-width:calc(var(--f)*2.6);text-align:right;font-size:calc(var(--f)*0.7692);color:rgba(43,43,43,.6)}"
 ].join("\n");
 /** 只注入一次 */
 function injectBubbleCss() {
@@ -561,6 +798,7 @@ function rowsToNodes(h, rows) {
 	if (rows.some((r) => r.role === "tier")) return h("div", {
 		className: "pet-bub-row",
 		children: rows.map((r, i) => {
+			if (r.role === "quota") return null;
 			if (r.role === "tier") return h("span", {
 				key: i,
 				className: "pet-bub-tier pet-bub-tier-" + r.tier,
@@ -573,6 +811,35 @@ function rowsToNodes(h, rows) {
 		})
 	});
 	return rows.map((r, i) => {
+		if (r.role === "quota") return h("div", {
+			key: i,
+			className: "pet-bub-quota",
+			children: [
+				h("span", {
+					key: "label",
+					className: "pet-bub-quota-label",
+					children: r.label
+				}),
+				h("span", {
+					key: "bar",
+					className: "pet-bub-quota-bar",
+					children: h("i", {
+						className: "pet-bub-quota-fill pet-bub-quota-" + r.tone,
+						style: { width: Math.max(0, Math.min(100, r.percent)) + "%" }
+					})
+				}),
+				h("span", {
+					key: "used",
+					className: "pet-bub-quota-used",
+					children: r.usedText
+				}),
+				h("span", {
+					key: "reset",
+					className: "pet-bub-quota-reset",
+					children: r.resetText
+				})
+			]
+		});
 		if (r.role === "error") return h("div", {
 			key: i,
 			className: "pet-bub-err",
@@ -590,14 +857,33 @@ function rowsToNodes(h, rows) {
 		});
 	});
 }
+/** 展开/收起时换内容的等待时长（ms）：与 .dsh-pet-bubble 的 opacity 过渡同为 .25s，
+*  淡出走完后才换内容，否则内容会在半透明时被替换 = 看得见的硬切 */
+const BALANCE_FADE_MS = 250;
 function makeBalanceBubble(rt) {
-	const { h } = rt;
+	const { h, useState, useEffect } = rt;
 	injectBubbleCss();
-	return function BalanceBubble({ state, on }) {
-		const rows = balanceBubbleView(state);
+	return function BalanceBubble({ state, on, expanded, onToggle }) {
+		const [full, setFull] = useState(false);
+		const [fading, setFading] = useState(false);
+		useEffect(() => {
+			if (expanded === full) return;
+			setFading(true);
+			const timer = window.setTimeout(() => {
+				setFull(expanded);
+				setFading(false);
+			}, BALANCE_FADE_MS);
+			return () => window.clearTimeout(timer);
+		}, [expanded, full]);
+		const rows = full ? balanceDetailView(state) : balanceBubbleView(state);
+		const clickable = state.ok && state.shape === "windows";
 		const wrap = state.ok ? "" : " dsh-pet-whisper";
 		return h("div", {
-			className: "dsh-pet-bubble" + wrap + (on ? " is-on" : ""),
+			className: "dsh-pet-bubble" + wrap + (on ? " is-on" : "") + (clickable ? " is-clickable" : "") + (full ? " is-expanded" : "") + (fading ? " is-fading" : ""),
+			onClick: clickable ? (e) => {
+				e.stopPropagation();
+				onToggle();
+			} : void 0,
 			children: rowsToNodes(h, rows)
 		});
 	};
@@ -606,20 +892,22 @@ function makeWhisperBubble(rt) {
 	const { h } = rt;
 	injectBubbleCss();
 	injectMemeBubbleCss();
-	return function WhisperBubble({ text, image, assetRoot, on }) {
+	return function WhisperBubble({ text, image, url, assetRoot, on }) {
 		const rows = whisperBubbleView({
 			ok: true,
 			text,
 			ts: 0
 		});
 		const key = String(image ?? "").trim();
+		const href = String(url ?? "").trim();
+		const src = href || (key ? memeImageUrl(key, "/dsh-pet-7340", assetRoot) : "");
 		return h("div", {
-			className: "dsh-pet-bubble dsh-pet-whisper" + (key ? " " + MEME_BUBBLE_CLASS : "") + (on ? " is-on" : ""),
-			children: key ? [h("img", {
+			className: "dsh-pet-bubble dsh-pet-whisper" + (src ? " " + MEME_BUBBLE_CLASS : "") + (on ? " is-on" : ""),
+			children: src ? [h("img", {
 				key: "img",
 				className: MEME_IMG_CLASS,
-				src: memeImageUrl(key, "/dsh-pet-7340", assetRoot),
-				alt: key
+				src,
+				alt: key || href
 			}), rowsToNodes(h, rows)] : rowsToNodes(h, rows)
 		});
 	};
@@ -636,6 +924,7 @@ const HIT_BOX = {
 	y1: 335
 };
 const DRAG_THRESHOLD = 5;
+const SLINGSHOT_DOUBLE_MS = 200;
 const PET_REF_WIDTH = 462;
 const ANIMATION_EXT = ".webm";
 
@@ -656,7 +945,7 @@ const SCORE_POPUP_CSS = [
 	".dsh-pet-score{position:fixed;z-index:2147483002;min-width:120px;text-align:center;",
 	"background:rgba(255,255,255,.97);border:1px solid rgba(255,179,0,.35);border-radius:12px;",
 	"box-shadow:0 10px 32px rgba(0,0,0,.22);padding:8px 16px 9px;user-select:none;pointer-events:auto;",
-	"font-family:'ShangshouSoftCandy','Yuanti SC','YouYuan','幼圆','Comic Sans MS','PingFang SC','Microsoft YaHei',sans-serif;}",
+	"font-family:var(--dsh-pet-font-family,'ShangshouSoftCandy','Yuanti SC','YouYuan','幼圆','Comic Sans MS','PingFang SC','Microsoft YaHei',sans-serif);}",
 	".dsh-pet-score.is-in{animation:dshPetScorePop .28s ease}",
 	".dsh-pet-score-val{font-size:22px;line-height:1.25;font-weight:700;color:#ff8f00;font-variant-numeric:tabular-nums}",
 	".dsh-pet-score-sub{font-size:11px;line-height:1.4;color:rgba(43,43,43,.6);margin-top:2px;white-space:nowrap}",
@@ -799,6 +1088,74 @@ function mountScorePopup(opts) {
 
 //#endregion
 //#region src/shared/menu.ts
+const displayMenuBranch = () => ({
+	label: "显示位置",
+	children: [
+		{
+			label: "仅网页",
+			action: "set-display",
+			display: "web"
+		},
+		{
+			label: "仅桌面",
+			action: "set-display",
+			display: "desktop"
+		},
+		{
+			label: "两者",
+			action: "set-display",
+			display: "both"
+		},
+		{
+			label: "都不",
+			action: "set-display",
+			display: "none"
+		}
+	]
+});
+const MORE_MENU_LABEL = "更多";
+function readMenuItems(data) {
+	if (!data || typeof data !== "object") return [];
+	const items = data.items;
+	if (!Array.isArray(items)) return [];
+	const out = [];
+	for (const item of items) {
+		if (!item || typeof item !== "object") continue;
+		const owner = item.owner;
+		const label = item.label;
+		if (typeof owner === "string" && owner !== "" && typeof label === "string" && label !== "") out.push({
+			owner,
+			label
+		});
+	}
+	return out;
+}
+function buildMoreBranch(items) {
+	const groups = new Map();
+	for (const item of items) {
+		const list = groups.get(item.owner);
+		if (list) list.push(item.label);
+		else groups.set(item.owner, [item.label]);
+	}
+	const children = [];
+	for (const [owner, labels] of groups) if (labels.length === 1) children.push({
+		label: labels[0],
+		action: "third-party",
+		owner
+	});
+	else children.push({
+		label: owner,
+		children: labels.map((label) => ({
+			label,
+			action: "third-party",
+			owner
+		}))
+	});
+	return children.length > 0 ? {
+		label: MORE_MENU_LABEL,
+		children
+	} : null;
+}
 /** 事件名 → 分类标签（无映射时用事件名本身） */
 const EVENT_LABELS = {
 	balance: "余额档位",
@@ -851,7 +1208,7 @@ const MENU_CSS = [
 	".dsh-pet-menu{position:fixed;left:0;top:0;z-index:2147483000;color:#2b2b2b;font-size:13px;line-height:1.5;",
 	"font-family:'Microsoft YaHei UI','Segoe UI','PingFang SC',sans-serif;user-select:none;pointer-events:auto}",
 	".dsh-pet-menu,.dsh-pet-menu *{box-sizing:border-box}",
-	".dsh-pet-menu-column{position:absolute;min-width:150px;max-width:240px;padding:4px;",
+	".dsh-pet-menu-column{position:absolute;min-width:150px;max-width:300px;padding:4px;",
 	"background:rgba(255,255,255,.98);border:1px solid rgba(0,0,0,.12);border-radius:8px;",
 	"box-shadow:0 8px 28px rgba(0,0,0,.2);max-height:min(62vh,460px);overflow-y:auto;",
 	"scrollbar-width:thin;scrollbar-color:rgba(0,0,0,.22) transparent}",
@@ -866,6 +1223,7 @@ const MENU_CSS = [
 	"gap:14px;padding:5px 12px;border-radius:6px;white-space:nowrap;cursor:default}",
 	".dsh-pet-menu-item:hover{background:rgba(43,99,255,.14)}",
 	".dsh-pet-menu-item>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis}",
+	".dsh-pet-menu-hint{color:#9aa0a6;font-size:12px;flex:none;white-space:nowrap}",
 	".dsh-pet-menu-arrow{color:#9aa0a6;font-size:12px;flex:none}"
 ].join("");
 function isBranchNode(n) {
@@ -943,6 +1301,12 @@ function mountContextMenu(opts) {
 				const label = document.createElement("span");
 				label.textContent = node.label;
 				item.appendChild(label);
+				if (node.hint) {
+					const hint = document.createElement("span");
+					hint.className = "dsh-pet-menu-hint";
+					hint.textContent = node.hint;
+					item.appendChild(hint);
+				}
 				item.addEventListener("click", (e) => {
 					e.preventDefault();
 					e.stopPropagation();
@@ -1004,6 +1368,41 @@ function mountContextMenu(opts) {
 }
 
 //#endregion
+//#region src/shared/tooltip.ts
+const TOOLTIP_CLASS = "pet-tooltip";
+const TOOLTIP_GAP_RATIO = .022;
+function tooltipPlacement(cursor, tip, bounds, gap) {
+	const clamp = (v, lo, hi) => hi < lo ? lo : Math.min(Math.max(v, lo), hi);
+	const rightMax = bounds.x + bounds.w;
+	const bottomMax = bounds.y + bounds.h;
+	let x = cursor.x + gap;
+	if (x + tip.w > rightMax) x = cursor.x - gap - tip.w;
+	x = clamp(x, bounds.x, rightMax - tip.w);
+	let y = cursor.y + gap;
+	if (y + tip.h > bottomMax) y = cursor.y - gap - tip.h;
+	y = clamp(y, bounds.y, bottomMax - tip.h);
+	return {
+		x,
+		y
+	};
+}
+const TOOLTIP_CSS = [
+	".pet-tooltip{",
+	"position:fixed;left:0;top:0;",
+	"max-width:calc(var(--dsh-pet-size,var(--pet-size,462px))*0.8);",
+	"padding:calc(var(--dsh-pet-size,var(--pet-size,462px))*0.010) calc(var(--dsh-pet-size,var(--pet-size,462px))*0.021);",
+	"border-radius:calc(var(--dsh-pet-size,var(--pet-size,462px))*0.016);",
+	"background:rgba(255,255,255,.96);color:#1f1f1f;",
+	"border:1px solid rgba(0,0,0,.12);",
+	"font-family:var(--dsh-pet-font-family,\"ShangshouSoftCandy\",\"Yuanti SC\",\"YouYuan\",\"幼圆\",\"Comic Sans MS\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);",
+	"font-size:var(--dsh-pet-font-tip,calc(var(--dsh-pet-size,var(--pet-size,462px))*0.026));line-height:1.4;",
+	"white-space:nowrap;overflow:hidden;text-overflow:ellipsis;",
+	"box-shadow:0 calc(var(--dsh-pet-size,var(--pet-size,462px))*0.004) calc(var(--dsh-pet-size,var(--pet-size,462px))*0.013) rgba(0,0,0,.18);",
+	"opacity:0;transition:opacity .12s ease;pointer-events:none;z-index:2}",
+	".pet-tooltip.is-on{opacity:1}"
+].join("");
+
+//#endregion
 //#region src/shared/chat.ts
 const SEND_TIMEOUT_MS = 6e4;
 async function sendChat(baseUrl, text) {
@@ -1027,7 +1426,7 @@ const CHAT_CSS = [
 	".dsh-pet-chat{position:fixed;z-index:2147483001;width:160px;max-width:80vw;",
 	"background:rgba(255,255,255,.98);border:1px solid rgba(0,0,0,.12);border-radius:10px;",
 	"box-shadow:0 10px 32px rgba(0,0,0,.22);color:#2b2b2b;font-size:14px;line-height:1.5;",
-	"font-family:'ShangshouSoftCandy','Yuanti SC','YouYuan','幼圆','Comic Sans MS','PingFang SC','Microsoft YaHei',sans-serif;",
+	"font-family:var(--dsh-pet-font-family,'ShangshouSoftCandy','Yuanti SC','YouYuan','幼圆','Comic Sans MS','PingFang SC','Microsoft YaHei',sans-serif);",
 	"user-select:none}",
 	".dsh-pet-chat *{box-sizing:border-box}",
 	".dsh-pet-chat-input{display:block;width:100%;border:none;outline:none;background:transparent;",
@@ -1053,9 +1452,9 @@ function injectChatCss() {
 }
 function mountChatDialog(opts) {
 	injectChatCss();
-	const { petId, x, y, onSent, onClose, clamp } = opts;
+	const { petId, surface, x, y, onSent, onClose, clamp } = opts;
 	const baseUrl = opts.baseUrl ?? "/dsh-pet-7340/chat";
-	const withPet = baseUrl + "?pet=" + encodeURIComponent(petId);
+	const withPet = baseUrl + "?pet=" + encodeURIComponent(petId) + "&surface=" + surface;
 	const c = clamp && Number.isFinite(clamp.x + clamp.y + clamp.w + clamp.h) ? clamp : {
 		x: 0,
 		y: 0,
@@ -1152,6 +1551,95 @@ function mountChatDialog(opts) {
 }
 
 //#endregion
+//#region src/client/pose.ts
+/** petId → 取当前实况的函数（PetCard 挂载时注册、卸载时摘除） */
+const readers$1 = new Map();
+function registerPose(petId, read) {
+	readers$1.set(petId, read);
+	return () => {
+		if (readers$1.get(petId) === read) readers$1.delete(petId);
+	};
+}
+function readPose(petId) {
+	if (typeof petId !== "string" || petId === "") return null;
+	const read = readers$1.get(petId);
+	return read === void 0 ? null : read();
+}
+
+//#endregion
+//#region src/client/progress.ts
+/** petId → 取当前进度的函数（PetCard 挂载时注册、卸载时摘除） */
+const readers = new Map();
+function registerProgress(petId, read) {
+	readers.set(petId, read);
+	return () => {
+		if (readers.get(petId) === read) readers.delete(petId);
+	};
+}
+function readProgress(petId) {
+	if (typeof petId !== "string" || petId === "") return null;
+	const read = readers.get(petId);
+	return read === void 0 ? null : read();
+}
+
+//#endregion
+//#region src/shared/fonts.ts
+const FONT_PRESETS = [
+	{
+		id: "candy",
+		stack: "\"ShangshouSoftCandy\",\"Yuanti SC\",\"YouYuan\",\"幼圆\",\"Comic Sans MS\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif"
+	},
+	{
+		id: "yahei",
+		stack: "\"Microsoft YaHei\",\"PingFang SC\",sans-serif"
+	},
+	{
+		id: "youyuan",
+		stack: "\"YouYuan\",\"Yuanti SC\",sans-serif"
+	},
+	{
+		id: "kaiti",
+		stack: "\"KaiTi\",\"STKaiti\",serif"
+	},
+	{
+		id: "simsun",
+		stack: "\"SimSun\",\"Songti SC\",serif"
+	},
+	{
+		id: "comic",
+		stack: "\"Comic Sans MS\",\"Comic Sans\",cursive"
+	},
+	{
+		id: "system",
+		stack: "system-ui,sans-serif"
+	}
+];
+const FONT_SIZE_MIN = 4;
+const FONT_SIZE_MAX = 200;
+const DEFAULT_FONT = {
+	family: "candy",
+	size: 21,
+	followPet: true
+};
+function fontStackOf(id) {
+	return (FONT_PRESETS.find((p) => p.id === id) ?? FONT_PRESETS[0]).stack;
+}
+const FONT_REF_SIZE = 462;
+const BUBBLE_FONT_BASE_PX = .0455 * FONT_REF_SIZE;
+const TIP_FONT_BASE_PX = .026 * FONT_REF_SIZE;
+function resolveFontPx(font, size) {
+	const own = Number(font?.size);
+	const ratio = Number.isFinite(own) && own > 0 ? own / DEFAULT_FONT.size : 1;
+	const w = Number(size);
+	const follow = font?.followPet !== false;
+	const scale = follow && Number.isFinite(w) && w > 0 ? w / FONT_REF_SIZE : 1;
+	return {
+		bubble: BUBBLE_FONT_BASE_PX * ratio * scale,
+		tip: TIP_FONT_BASE_PX * ratio * scale
+	};
+}
+
+//#endregion
 //#region src/shared/physics.ts
 const SPRING_K = 200;
 const SPRING_C = 30;
@@ -1219,6 +1707,35 @@ const springStep = (v, x, target, dt, power = DEFAULT_THROW_POWER) => v + ((targ
 const softClampSpeed = (speed) => {
 	if (speed <= 0) return 0;
 	return MAX_THROW_SPEED * (1 - Math.exp(-speed / MAX_THROW_SPEED));
+};
+const THROW_SPEED_ANCHOR = 1200;
+const throwVelocity = (angleDeg, power) => {
+	const speed = softClampSpeed(power * THROW_SPEED_ANCHOR);
+	const rad = angleDeg * Math.PI / 180;
+	return {
+		vx: Math.cos(rad) * speed,
+		vy: -Math.sin(rad) * speed
+	};
+};
+const SLINGSHOT_REF_RATIO = .6;
+const slingshotRefDist = (size) => size > 0 ? size * SLINGSHOT_REF_RATIO : 0;
+const slingshotPower = (dist, size) => {
+	const ref = slingshotRefDist(size);
+	if (!(ref > 0) || !(dist > 0) || !Number.isFinite(dist)) return 0;
+	return dist / ref;
+};
+const pullAngle = (pullX, pullY) => Math.atan2(pullY, -pullX) * 180 / Math.PI;
+const slingshotVelocity = (angleDeg, power, throwPower = DEFAULT_THROW_POWER) => {
+	const speed = THROW_SPEED_ANCHOR * Math.max(0, power) * Math.max(0, throwPower);
+	if (speed === 0) return {
+		vx: 0,
+		vy: 0
+	};
+	const rad = angleDeg * Math.PI / 180;
+	return {
+		vx: Math.cos(rad) * speed,
+		vy: -Math.sin(rad) * speed
+	};
 };
 const estimateReleaseVelocity = (trail, now, physics = DEFAULT_PHYSICS) => {
 	if (trail.length === 0) return null;
@@ -1308,6 +1825,13 @@ const throwStep = (s, dtRaw, b, physics = DEFAULT_PHYSICS) => {
 		bounced,
 		atRest
 	};
+};
+const SUBSTEP_PX = 8;
+const SUBSTEP_MAX = 64;
+const throwSubsteps = (vx, vy, dt) => {
+	const travel = Math.hypot(vx, vy) * Math.min(Math.max(dt, 0), MAX_STEP_DT);
+	if (!(travel > SUBSTEP_PX)) return 1;
+	return Math.min(SUBSTEP_MAX, Math.ceil(travel / SUBSTEP_PX));
 };
 const PET_BOUNCE_E = .995;
 const bodyPixelBox = (o) => {
@@ -1447,9 +1971,26 @@ const NOTIFY_ICONS = {
 };
 /** 当前生效的总开关（运行中可被 reloadNotifications 更新——设置页保存后即时生效，无需刷新） */
 let notifyEnabled = true;
+/** 当前生效的会话跳转器（app.ts 注入；旧版 DSH 没有 uiWorkspace 时为 undefined） */
+let sessionNavigator;
+function wireNotificationClick(n, sessionId) {
+	n.onclick = () => {
+		n.close();
+		if (sessionId !== void 0) try {
+			sessionNavigator?.openSession(sessionId);
+		} catch {}
+		window.focus();
+		if (!/electron/i.test(navigator.userAgent)) return;
+		const frame = document.createElement("iframe");
+		frame.style.display = "none";
+		frame.src = "dsh://open";
+		document.body.append(frame);
+		setTimeout(() => frame.remove(), 1e3);
+	};
+}
 /** 发一条系统通知；总开关关闭 / 环境不支持 / 未授权 / 聚焦本页 时静默跳过。
 * 日志（【弹窗】类型：内容）在门之后记录——只有真正发出通知时才记，被门拦下的触发不产生日志。 */
-function toast(title, body, icon) {
+function toast(title, body, icon, sessionId) {
 	if (!notifyEnabled) return;
 	if (isPageActive()) return;
 	if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
@@ -1459,17 +2000,15 @@ function toast(title, body, icon) {
 		if (body) opts.body = truncate(body);
 		if (icon) opts.icon = icon;
 		const n = new Notification(title, opts);
-		n.onclick = () => {
-			window.focus();
-			n.close();
-		};
+		wireNotificationClick(n, sessionId);
 	} catch {}
 }
-/** 帧 → toast 并发出（映射来自 shared；未知帧静默跳过） */
+/** 帧 → toast 并发出（映射来自 shared；未知帧静默跳过）。
+* 帧里的 sessionId 一并透传：点击时据此跳到那条会话。 */
 function toastFrame(frame) {
 	const t = frameToToast(frame);
 	if (!t) return;
-	toast(t.title, t.body, PIC(t.icon));
+	toast(t.title, t.body, PIC(t.icon), typeof frame.sessionId === "string" ? frame.sessionId : void 0);
 }
 async function requestNotificationPermission() {
 	if (typeof Notification === "undefined") return {
@@ -1519,7 +2058,8 @@ async function reloadNotifications() {
 function notifyFromFrame(frame) {
 	toastFrame(frame);
 }
-function initNotify() {
+function initNotify(navigator$1) {
+	sessionNavigator = navigator$1;
 	readNotificationsEnabled().then((enabled) => {
 		notifyEnabled = enabled;
 		if (typeof Notification !== "undefined" && enabled && Notification.permission === "default") requestNotificationPermission();
@@ -1570,7 +2110,7 @@ const SETTINGS_CSS = [
 	".dsh-pet-mp__name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}",
 	".dsh-pet-mp__check{flex:none;margin-left:auto}",
 	".dsh-pet-mp__status{padding:8px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}",
-	".dsh-pet-cfg{display:flex;flex-direction:column;gap:12px;color:var(--dsw-alias-label-primary);font-size:13px;line-height:20px}",
+	".dsh-pet-cfg{container-type:inline-size;display:flex;flex-direction:column;gap:12px;color:var(--dsw-alias-label-primary);font-size:13px;line-height:20px}",
 	".dsh-pet-cfg__title{display:flex;align-items:center;gap:6px;margin:0;font-size:16px;font-weight:500;line-height:24px}",
 	".dsh-pet-cfg__card{display:flex;flex-direction:column;gap:10px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px}",
 	".dsh-pet-cfg__cardHead{display:flex;align-items:center;gap:6px;min-height:20px}",
@@ -1578,19 +2118,25 @@ const SETTINGS_CSS = [
 	".dsh-pet-cfg__grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 16px;align-items:end}",
 	".dsh-pet-cfg__grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;align-items:end}",
 	".dsh-pet-cfg__grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px;align-items:end}",
+	"@container (max-width:600px){.dsh-pet-cfg__grid4{grid-template-columns:repeat(2,minmax(0,1fr))}}",
+	"@container (max-width:400px){.dsh-pet-cfg__grid2,.dsh-pet-cfg__grid3,.dsh-pet-cfg__grid4{grid-template-columns:minmax(0,1fr)}}",
 	".dsh-pet-cfg__field{display:flex;flex-direction:column;gap:4px;min-width:0}",
 	".dsh-pet-cfg__flabel{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--dsw-alias-label-secondary)}",
 	".dsh-pet-cfg__inp{box-sizing:border-box;width:100%;min-height:28px;padding:4px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;outline:none}",
 	".dsh-pet-cfg__inp:focus{border-color:var(--dsw-alias-state-business-primary)}",
 	".dsh-pet-cfg__inp:disabled{color:var(--dsw-alias-label-tertiary);cursor:default}",
+	".dsh-pet-cfg__persona{display:flex;flex-direction:column;gap:2px;min-width:0}",
+	".dsh-pet-cfg__area{min-height:66px;resize:vertical;line-height:18px}",
+	".dsh-pet-cfg__count{font-size:11px;color:var(--dsw-alias-label-tertiary);text-align:right}",
 	".dsh-pet-cfg__toggle{display:flex;align-items:center;gap:6px;min-width:0;font-size:13px;color:var(--dsw-alias-label-primary)}",
 	".dsh-pet-cfg__toggle>label{display:inline-flex;align-items:center;gap:6px;cursor:pointer;min-width:0}",
-	".dsh-pet-cfg__toggle>label>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+	".dsh-pet-cfg__toggle>label>span{overflow-wrap:anywhere}",
 	".dsh-pet-cfg__toggle input[type=checkbox]{flex:none;width:16px;height:16px;margin:0;accent-color:var(--dsw-alias-state-business-primary);cursor:pointer}",
-	".dsh-pet-cfg__q{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;width:14px;height:14px;border:1px solid var(--dsw-alias-label-tertiary);border-radius:50%;color:var(--dsw-alias-label-tertiary);font-size:10px;font-style:normal;line-height:1;cursor:help;user-select:none}",
-	".dsh-pet-cfg__q::after{content:attr(data-tip);position:absolute;left:-4px;bottom:calc(100% + 8px);width:max-content;max-width:260px;padding:6px 10px;border-radius:8px;background:var(--dsw-alias-tooltip-bg);color:#fff;font-size:12px;font-style:normal;font-weight:400;line-height:18px;text-align:left;white-space:normal;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s ease;box-shadow:0 6px 20px rgba(0,0,0,.22);z-index:2147483000}",
-	".dsh-pet-cfg__q:hover::after{opacity:1;visibility:visible}",
-	".dsh-pet-cfg__q.is-end::after{left:auto;right:-4px}",
+	".dsh-pet-cfg [data-tip]{position:relative}",
+	".dsh-pet-cfg [data-tip]::after{display:none;content:attr(data-tip);position:absolute;left:-4px;bottom:calc(100% + 8px);width:max-content;max-width:260px;padding:6px 10px;border-radius:8px;background:var(--dsw-alias-tooltip-bg);color:#fff;font-size:12px;font-style:normal;font-weight:400;line-height:18px;text-align:left;white-space:normal;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s ease;box-shadow:0 6px 20px rgba(0,0,0,.22);z-index:2147483000}",
+	".dsh-pet-cfg [data-tip]:hover::after{display:block;opacity:1;visibility:visible}",
+	".dsh-pet-cfg [data-tip][data-tip-end]::after{left:auto;right:-4px}",
+	".dsh-pet-cfg__q{display:inline-flex;align-items:center;justify-content:center;flex:none;width:14px;height:14px;border:1px solid var(--dsw-alias-label-tertiary);border-radius:50%;color:var(--dsw-alias-label-tertiary);font-size:10px;font-style:normal;line-height:1;cursor:help;user-select:none}",
 	".dsh-pet-cfg__btn{border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);border-radius:8px;padding:4px 14px;font:inherit;font-size:12px;line-height:20px;cursor:pointer;white-space:nowrap}",
 	".dsh-pet-cfg__btn:hover:not(:disabled):not(.is-primary){background:var(--dsw-alias-interactive-bg-hover)}",
 	".dsh-pet-cfg__btn:disabled{opacity:.5;cursor:default}",
@@ -1651,10 +2197,13 @@ const zh = {
 	sizeHint: "高度自动 = 宽度 × 9/16。",
 	nameLabel: "名字",
 	nameHint: "显示名：鼠标悬浮宠物时弹出，也会加进 AI 人设（你的名字是 X）。可重复，留空按宠物 id 处理。",
+	personaLabel: "人设（可选）",
+	personaHint: "只影响这只宠物。留空 = 跟随所属条目的人设——输入框里的灰色文字就是那份内容。实际发给模型的 system = 这段 + 自动追加的「你的名字是“<名字>”」+ 当前时间背景，所以别在这里再写名字和日期。",
+	personaCount: "{n} 字",
 	balanceEnabled: "余额功能",
 	balanceEnabledHint: "启用后该宠物触发余额动画并显示余额气泡。",
 	whisperEnabled: "碎碎念",
-	whisperEnabledHint: "启用后该宠物按周期用 AI 生成一句话并播碎碎念动画（人设与周期在配置文件顶层）。",
+	whisperEnabledHint: "启用后该宠物按周期用 AI 生成一句话并播碎碎念动画（人设见下方「人设」框，留空跟随条目）。",
 	workStatusEnabled: "工作状态联动",
 	workStatusEnabledHint: "启用后该宠物跟随 DSH 工作状态：思考/工作中/等待确认/完成/出错时自动切对应动画并弹气泡（动画池在配置顶层，仅监听不调用模型）。",
 	fixedEnabled: "宠物固定",
@@ -1673,6 +2222,7 @@ const zh = {
 	marginX: "水平偏移",
 	marginY: "垂直偏移",
 	save: "保存",
+	saveHotkey: "Ctrl+S / Cmd+S",
 	sync: "同步",
 	confirmSync: "确定同步吗？将用项目内置的默认配置（完整字段 + 注释）覆盖用户配置，当前的自定义内容会丢失。",
 	corruptTitle: "用户配置已损坏，未保存",
@@ -1687,6 +2237,8 @@ const zh = {
 	memesDir: "表情包目录（可自定义/扩充配图）",
 	saved: "已保存，桌宠即时生效。",
 	loadError: "加载配置失败",
+	loading: "正在加载配置…",
+	retry: "重试",
 	invalid: "请检查输入：大小需为正数，边距可为任意数字。",
 	busy: "保存中…",
 	extraPetsHint: "另 {n} 只额外宠物由 pet/ 目录文件定义（<名>-config.json + <名>-animation/ + <名>-memes/），它们不在此列表——改文件后浏览器刷新页面、桌面端右键「重载配置」即可生效。",
@@ -1696,8 +2248,8 @@ const zh = {
 	whisperImageToggleHint: "碎碎念时从表情包池随机抽一张，连同那句话一起显示（图片映射在配置文件顶层 memes）。token：碎碎念本来就每次生成都要调一次模型，配图只是把抽中那张的名称+描述（约 100 字符 / ≈60 token）加进同一次请求，增量可忽略。",
 	chatImageToggle: "对话配图",
 	chatImageToggleHint: "对话时由 AI 按当前语境从表情包池挑一张配图（可不挑；图片映射在配置文件顶层 memes）。token：每条消息都要把整张清单附进请求，当前约 1.1k 字符（≈650 token，约碎碎念配图的 11 倍），并随图片数量线性增长；关掉则一个字符都不附。",
-	confineToggle: "抛掷锁定在当前屏幕",
-	confineToggleHint: "多屏用户：甩出去的宠物只在松手时所在那块屏幕内弹（屏缝当墙，不飞到隔壁屏）；关掉则照常跨屏飞行。只影响桌面模式——浏览器 overlay 本来就只在视口内弹。",
+	confineToggle: "锁定在当前屏幕",
+	confineToggleHint: "多屏用户：开了之后宠物只在当前所在那块屏幕内活动——甩出去的宠物只在松手时所在那块屏内弹（屏缝当墙，不飞到隔壁屏），自主漫游也只在当前所在那块屏内走（越出屏缝的那一步直接取消）。关掉则照常跨屏飞行 / 跨屏行走。只影响桌面模式——浏览器 overlay 本来就只在视口内活动。",
 	physicsTitle: "物理（拖拽抛掷手感）",
 	physicsHint: "全局默认，所有宠物共用（pet pack 可在自己种类文件里单独覆盖）；随「保存」写入用户配置（不做即时写入）。浏览器保存后即时生效，桌面端由保存重载宠物窗口后生效。",
 	"physics.gravity": "重力 gravity",
@@ -1713,6 +2265,22 @@ const zh = {
 	physicsPetCollision: "宠物互撞 petCollision",
 	physicsPetCollisionHint: "飞行中的宠物撞到别的宠物按动量守恒弹开（质量 ∝ 尺寸²）",
 	invalidPhysics: "请检查物理参数：重力 / 地面摩擦 ≥ 0，弹性 0~1，总力度 > 0。",
+	fontTitle: "外观与字体",
+	fontHint: "字体种类作用于现在用软糖体的全部文字：宠物气泡、悬浮提示、对话窗、得分弹窗；字号只作用于宠物气泡与悬浮提示（对话窗与得分弹窗的字号不变）。全局默认，所有宠物共用（pet pack 可在自己种类文件里单独覆盖）；随「保存」写入用户配置，浏览器保存后即时生效，桌面端由保存重载宠物窗口后生效。",
+	fontFamilyLabel: "字体",
+	fontFamilyHint: "「软糖体（内置）」随插件提供；其余为系统字体，机器上没装时自动回退到字体栈里的下一个（不会空白或报错）。",
+	fontSizeLabel: "字号（px）",
+	fontSizeHint: "气泡正文字号；悬浮提示与气泡内的小字按既有比例派生。范围 4~200。",
+	fontFollowToggle: "字号随宠物大小缩放",
+	fontFollowToggleHint: "开启（默认）：宠物调大时字号等比放大，462 宽时正好是上面设定的字号；关闭：字号恒定，不随宠物大小变化。",
+	invalidFont: "请检查字体设置：字体需在下拉列表内，字号需为 4~200 的数字。",
+	"font.candy": "软糖体（内置）",
+	"font.yahei": "微软雅黑 / 苹方",
+	"font.youyuan": "幼圆",
+	"font.kaiti": "楷体",
+	"font.simsun": "宋体",
+	"font.comic": "漫画体",
+	"font.system": "系统默认",
 	modelTitle: "AI 模型与对话上下文",
 	modelHint: "碎碎念与对话各自用哪个模型，以及对话每次带多少历史进上下文。选「跟随当前对话」= 用你当前对话正在用的那个模型（默认）。全局默认：对所有宠物生效，pet pack 可在自己种类文件里单独覆盖。选项与 DSH 的模型选择器同源，由宿主实时提供。",
 	modelFollow: "跟随当前对话",
@@ -1781,10 +2349,13 @@ const en = {
 	sizeHint: "Height is automatic = width × 9/16.",
 	nameLabel: "Name",
 	nameHint: "Shown on hover and added to AI personas (\"your name is X\"). Duplicates allowed; empty falls back to the pet id.",
+	personaLabel: "Persona (optional)",
+	personaHint: "Applies to this pet only. Leave empty to follow the entry persona — the grey text inside the box is exactly that. The system prompt actually sent = this text + an appended 「your name is \"<name>\"」 line + the current time context, so do not repeat the name or the date here.",
+	personaCount: "{n} chars",
 	balanceEnabled: "Balance",
 	balanceEnabledHint: "When enabled, this pet plays balance animations and shows the balance bubble.",
 	whisperEnabled: "Whisper",
-	whisperEnabledHint: "When enabled, this pet periodically generates a line via AI and plays the whisper animation (persona & interval live in the top-level config).",
+	whisperEnabledHint: "When enabled, this pet periodically generates a line via AI and plays the whisper animation (persona = the field below; empty follows the entry).",
 	workStatusEnabled: "Work status",
 	workStatusEnabledHint: "When enabled, this pet follows DSH work state: thinking / working / waiting / done / error switch animations and show bubbles (pool in top-level config; listening only, no model calls).",
 	fixedEnabled: "Pin in place",
@@ -1803,6 +2374,7 @@ const en = {
 	marginX: "Horizontal offset",
 	marginY: "Vertical offset",
 	save: "Save",
+	saveHotkey: "Ctrl+S / Cmd+S",
 	sync: "Sync",
 	confirmSync: "Sync? This overwrites the user config with the bundled default config (all fields + comments); current customizations are lost.",
 	corruptTitle: "User config is corrupted — not saved",
@@ -1817,6 +2389,8 @@ const en = {
 	memesDir: "Meme images dir (add/customize images here)",
 	saved: "Saved — the pets updated instantly.",
 	loadError: "Failed to load config",
+	loading: "Loading config…",
+	retry: "Retry",
 	invalid: "Check your input: size must be positive; margins can be any number.",
 	busy: "Saving…",
 	extraPetsHint: "{n} extra pet(s) are file-defined in the pet/ directory (<name>-config.json + <name>-animation/ + <name>-memes/). They are not in this list — after editing the files, refresh the page (browser) or right-click a desktop pet → \"Reload config\".",
@@ -1826,8 +2400,8 @@ const en = {
 	whisperImageToggleHint: "Attach one random meme from the pool to each whisper line (image mapping lives in the top-level `memes` config field). Tokens: a whisper already calls the model every cycle, so the image only appends the name + description of that one meme (~100 chars / ~60 tokens) to the same request — negligible.",
 	chatImageToggle: "Chat images",
 	chatImageToggleHint: "Let the AI pick one meme from the pool that fits the current context (optional; mapping lives in the top-level `memes` config field). Tokens: every message carries the whole catalog — currently ~1.1k chars (~650 tokens, about 11x the whisper case) and growing with the number of images; turning this off appends nothing at all.",
-	confineToggle: "Lock throws to the current screen",
-	confineToggleHint: "Multi-monitor: a thrown pet bounces only inside the screen it was released on (screen seams act as walls, so it never flies to the neighbouring monitor); turn this off to let it cross screens as usual. Desktop only — the browser overlay always bounces inside the viewport anyway.",
+	confineToggle: "Lock to the current screen",
+	confineToggleHint: "Multi-monitor: when on, the pet stays inside the screen it is currently on — a thrown pet bounces only inside the screen it was released on (screen seams act as walls, so it never flies to the neighbouring monitor), and autonomous wandering only walks within the screen it is currently on (a step that would cross the seam is simply cancelled). Turn this off to let it cross screens as usual. Desktop only — the browser overlay always stays inside the viewport anyway.",
 	physicsTitle: "Physics (drag & throw feel)",
 	physicsHint: "Global default, shared by every pet (a pet pack may override it in its own kind file); written to the user config on \"Save\" (never written immediately). Applies instantly in the browser; on the desktop it applies once Save reloads the pet windows.",
 	"physics.gravity": "Gravity",
@@ -1843,6 +2417,22 @@ const en = {
 	physicsPetCollision: "Pet collisions",
 	physicsPetCollisionHint: "A flying pet bounces off the others with momentum conservation (mass ∝ size²)",
 	invalidPhysics: "Check the physics values: gravity / ground friction ≥ 0, bounciness 0–1, throw power > 0.",
+	fontTitle: "Appearance & font",
+	fontHint: "The family applies to every place that currently uses the candy font: pet bubble, hover tooltip, chat popup, score popup. The size applies only to the pet bubble and the hover tooltip (chat and score popups keep their own size). Global default, shared by every pet (a pet pack may override it in its own kind file); written to the user config on \"Save\" — instant in the browser, and on the desktop it applies once Save reloads the pet windows.",
+	fontFamilyLabel: "Font",
+	fontFamilyHint: "\"Candy (bundled)\" ships with the plugin; the others are system fonts. If a font is missing on this machine, it falls back to the next one in the stack (never blank, never an error).",
+	fontSizeLabel: "Font size (px)",
+	fontSizeHint: "Bubble body text size; the tooltip and the smaller lines inside the bubble scale proportionally. Range 4–200.",
+	fontFollowToggle: "Scale font with pet size",
+	fontFollowToggleHint: "On (default): the font grows with the pet — at 462 px width it is exactly the size above. Off: the size stays fixed regardless of pet size.",
+	invalidFont: "Check the font settings: the family must be in the list and the size must be a number between 4 and 200.",
+	"font.candy": "Candy (bundled)",
+	"font.yahei": "Microsoft YaHei / PingFang",
+	"font.youyuan": "YouYuan",
+	"font.kaiti": "KaiTi",
+	"font.simsun": "SimSun",
+	"font.comic": "Comic Sans MS",
+	"font.system": "System default",
 	modelTitle: "AI models & chat context",
 	modelHint: "Which model each of whisper and chat uses, and how much history every chat request carries. \"Follow current conversation\" uses the model your current conversation is on (default). Global default: applies to every pet, and a pet pack may override it in its own kind file. The options come from the same source as the DSH model picker, served live by the host.",
 	modelFollow: "Follow current conversation",
@@ -1886,7 +2476,7 @@ const en = {
 	uninstallCmd: "dsh plugin --profile {profile} remove dsh-pet"
 };
 function makePetConfigSection(rt) {
-	const { h, useState, useEffect, useRef, t } = rt;
+	const { h, useState, useEffect, useRef, useCallback, t } = rt;
 	injectSettingsCss();
 	const CORNERS = [
 		"top-left",
@@ -1907,39 +2497,49 @@ function makePetConfigSection(rt) {
 		}
 	};
 	/**
-	* 问号 + 悬浮说明（本页所有解释小字的唯一去处）。
+	* 悬浮说明（通用件，本页所有解释小字的唯一去处）：返回**展开到任意元素上**的属性，
+	* 带了它就悬浮出气泡（CSS 的 `[data-tip]::after`）。问号与保存按钮共用这一套。
+	*
+	* 为什么返回属性、而不是包一层 DOM 的组件：宿主常常在 flex 容器里（底部操作区、
+	* 卡片头），包一层会把 gap / 对齐 / 拉伸全打乱。展开属性则对布局零影响。
+	* 为什么走 data-tip + CSS 而不是行内样式：hover 与过渡只有 CSS 能表达。
+	*
+	* @param text 说明正文（已翻译）
+	* @param end 气泡右对齐（给栅格最右一列 / 贴右缘的元素用，免得气泡顶出设置页）
+	*/
+	const tip = (text, end = false) => end ? {
+		"data-tip": text,
+		"data-tip-end": ""
+	} : { "data-tip": text };
+	/**
+	* 问号说明入口：只是气泡的一个宿主外观（圆形 `?`），说明文字走 `tip()` 的同一套机制。
 	*
 	* 为什么用 `<i>` 而不是 `<button>`：它只是说明入口，点了不该有任何行为，也不该被
-	* Tab 当成操作项；真正的可交互入口是它旁边的输入框 / 开关。说明文字走 `data-tip`
-	* 属性，由 SETTINGS_CSS 的 `::after{content:attr(data-tip)}` 画成气泡——CSS 才能
-	* 表达 hover / 过渡，行内样式做不到。
-	*
-	* @param tip 说明正文（已翻译）
-	* @param end 是否右对齐气泡（给栅格最右一列用，免得气泡顶出设置页）
+	* Tab 当成操作项；真正的可交互入口是它旁边的输入框 / 开关。
 	*/
-	const q = (tip, end = false) => h("i", {
-		className: "dsh-pet-cfg__q" + (end ? " is-end" : ""),
-		"data-tip": tip,
-		"aria-label": tip,
+	const q = (text, end = false) => h("i", {
+		className: "dsh-pet-cfg__q",
+		...tip(text, end),
+		"aria-label": text,
 		role: "img",
 		children: "?"
 	});
 	/** 卡片头：标题 + 问号说明（+ 可选右侧动作，由调用方自行 append） */
-	const cardHead = (title, tip, end = false) => h("div", {
+	const cardHead = (title, tip$1, end = false) => h("div", {
 		className: "dsh-pet-cfg__cardHead",
 		children: [h("span", {
 			key: "t",
 			className: "dsh-pet-cfg__cardTitle",
 			children: title
-		}), tip ? q(tip, end) : null]
+		}), tip$1 ? q(tip$1, end) : null]
 	});
 	/** 一个字段：标签（+ 问号）在上、控件在下 */
-	const field = (label, control, tip, end = false) => h("div", {
+	const field = (label, control, tip$1, end = false) => h("div", {
 		className: "dsh-pet-cfg__field",
 		children: [h("span", {
 			key: "l",
 			className: "dsh-pet-cfg__flabel",
-			children: tip ? [label, q(tip, end)] : label
+			children: tip$1 ? [label, q(tip$1, end)] : label
 		}), control]
 	});
 	/**
@@ -2236,11 +2836,15 @@ function makePetConfigSection(rt) {
 			position: { ...p.position }
 		})));
 		const [selId, setSelId] = useState(initPets[0]?.id ?? "");
-		const [busy, setBusy] = useState(false);
+		const [saving, setBusy] = useState(false);
+		const [loadState, setLoadState] = useState("loading");
+		const [loadAttempt, setLoadAttempt] = useState(0);
+		const busy = saving || loadState !== "ready";
 		const [msg, setMsg] = useState({
 			kind: "",
 			text: ""
 		});
+		const rootRef = useRef(null);
 		const [dialog, setDialog] = useState(null);
 		const [paths, setPaths] = useState(null);
 		useEffect(() => {
@@ -2251,6 +2855,7 @@ function makePetConfigSection(rt) {
 		const [chatImage, setChatImage] = useState(false);
 		const [confineScreen, setConfineScreen] = useState(false);
 		const [physics, setPhysics] = useState({ ...DEFAULT_PHYSICS });
+		const [font, setFont] = useState({ ...DEFAULT_FONT });
 		const [whisperModel, setWhisperModel] = useState({
 			provider: "",
 			model: ""
@@ -2261,44 +2866,68 @@ function makePetConfigSection(rt) {
 		});
 		const [chatMemory, setChatMemory] = useState(5);
 		const [chatImageLimit, setChatImageLimit] = useState(10);
+		const [entryPrompt, setEntryPrompt] = useState("");
 		const [catalog, setCatalog] = useState(null);
 		const [catalogErr, setCatalogErr] = useState(false);
 		const [permMsg, setPermMsg] = useState({
 			kind: "",
 			text: ""
 		});
+		const applyConfig = useCallback((merged) => {
+			const m = merged.main;
+			if (!m || !Array.isArray(m.pets)) throw new Error("Invalid config response");
+			const loadedPets = m.pets;
+			setPets(loadedPets.map((p) => ({
+				...p,
+				position: { ...p.position }
+			})));
+			setEntryPrompt(typeof m.whisperPrompt === "string" ? m.whisperPrompt : "");
+			setSelId((id) => loadedPets.some((p) => p.id === id) ? id : loadedPets[0]?.id ?? "");
+			if (typeof m.notificationsEnabled === "boolean") setNotifyEnabled(m.notificationsEnabled);
+			if (typeof m.whisperImageEnabled === "boolean") setWhisperImage(m.whisperImageEnabled);
+			if (typeof m.chatImageEnabled === "boolean") setChatImage(m.chatImageEnabled);
+			if (typeof m.confineToScreen === "boolean") setConfineScreen(m.confineToScreen);
+			if (m.physics && typeof m.physics === "object") setPhysics({
+				...DEFAULT_PHYSICS,
+				...m.physics
+			});
+			if (m.font && typeof m.font === "object") setFont({
+				...DEFAULT_FONT,
+				...m.font
+			});
+			const wm = m.whisperModel;
+			if (wm && typeof wm.provider === "string" && typeof wm.model === "string") setWhisperModel({
+				provider: wm.provider,
+				model: wm.model
+			});
+			const cm = m.chatModel;
+			if (cm && typeof cm.provider === "string" && typeof cm.model === "string") setChatModel({
+				provider: cm.provider,
+				model: cm.model
+			});
+			const cmr = Number(m.chatMemoryRounds);
+			if (Number.isFinite(cmr) && cmr >= 0) setChatMemory(cmr);
+			const cil = Number(m.chatImageLimit);
+			if (Number.isFinite(cil) && cil >= 0) setChatImageLimit(cil);
+		}, []);
 		useEffect(() => {
 			let alive = true;
-			fetch("/dsh-pet-7340/config").then((r) => r.ok ? r.json() : null).then((d) => {
-				if (!alive || !d || !d.main) return;
-				const m = d.main;
-				if (typeof m.notificationsEnabled === "boolean") setNotifyEnabled(m.notificationsEnabled);
-				if (typeof m.whisperImageEnabled === "boolean") setWhisperImage(m.whisperImageEnabled);
-				if (typeof m.chatImageEnabled === "boolean") setChatImage(m.chatImageEnabled);
-				if (typeof m.confineToScreen === "boolean") setConfineScreen(m.confineToScreen);
-				if (m.physics && typeof m.physics === "object") setPhysics({
-					...DEFAULT_PHYSICS,
-					...m.physics
-				});
-				const wm = m.whisperModel;
-				if (wm && typeof wm.provider === "string" && typeof wm.model === "string") setWhisperModel({
-					provider: wm.provider,
-					model: wm.model
-				});
-				const cm = m.chatModel;
-				if (cm && typeof cm.provider === "string" && typeof cm.model === "string") setChatModel({
-					provider: cm.provider,
-					model: cm.model
-				});
-				const cmr = Number(m.chatMemoryRounds);
-				if (Number.isFinite(cmr) && cmr >= 0) setChatMemory(cmr);
-				const cil = Number(m.chatImageLimit);
-				if (Number.isFinite(cil) && cil >= 0) setChatImageLimit(cil);
-			}).catch(() => {});
+			const controller = new AbortController();
+			fetch("/dsh-pet-7340/config", { signal: controller.signal }).then((r) => {
+				if (!r.ok) throw new Error("HTTP " + r.status);
+				return r.json();
+			}).then((merged) => {
+				if (!alive) return;
+				applyConfig(merged);
+				setLoadState("ready");
+			}).catch(() => {
+				if (alive) setLoadState("error");
+			});
 			return () => {
 				alive = false;
+				controller.abort();
 			};
-		}, []);
+		}, [applyConfig, loadAttempt]);
 		useEffect(() => {
 			let alive = true;
 			fetch("/dsh-pet-7340/models").then((r) => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))).then((d) => {
@@ -2338,10 +2967,10 @@ function makePetConfigSection(rt) {
 				return;
 			}
 			try {
-				new Notification("测试通知", {
+				wireNotificationClick(new Notification("测试通知", {
 					body: "【dsh-pet】系统通知已就绪。",
 					icon: NOTIFY_ICONS.test
-				});
+				}));
 			} catch {}
 			setPermMsg({
 				kind: "ok",
@@ -2397,9 +3026,17 @@ function makePetConfigSection(rt) {
 				});
 				return false;
 			}
+			if (!FONT_PRESETS.some((p) => p.id === font.family) || !Number.isFinite(font.size) || font.size < FONT_SIZE_MIN || font.size > FONT_SIZE_MAX) {
+				setMsg({
+					kind: "err",
+					text: t("invalidFont")
+				});
+				return false;
+			}
 			return true;
 		};
 		const save = async (force = false) => {
+			if (busy) return;
 			const isOk = validated();
 			if (!isOk) return;
 			setBusy(true);
@@ -2418,7 +3055,8 @@ function makePetConfigSection(rt) {
 					whisperModel,
 					chatModel,
 					chatMemoryRounds: chatMemory,
-					chatImageLimit
+					chatImageLimit,
+					font
 				};
 				const res = await fetch("/dsh-pet-7340/config" + (force === true ? "?force=1" : ""), {
 					method: "PUT",
@@ -2449,6 +3087,22 @@ function makePetConfigSection(rt) {
 				setBusy(false);
 			}
 		};
+		const saveRef = useRef(() => {});
+		useEffect(() => {
+			saveRef.current = () => void save();
+		});
+		useEffect(() => {
+			const onKey = (e) => {
+				if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+				if (e.key.toLowerCase() !== "s") return;
+				const root = rootRef.current;
+				if (!root || !root.isConnected || root.getClientRects().length === 0) return;
+				e.preventDefault();
+				saveRef.current();
+			};
+			document.addEventListener("keydown", onKey);
+			return () => document.removeEventListener("keydown", onKey);
+		}, []);
 		const sync = () => setDialog({ kind: "sync" });
 		const doSync = async () => {
 			setBusy(true);
@@ -2460,13 +3114,9 @@ function makePetConfigSection(rt) {
 				const res = await fetch("/dsh-pet-7340/config", { method: "POST" });
 				if (!res.ok) throw new Error("HTTP " + res.status);
 				const merged = await res.json();
-				const defs = merged.main?.pets ?? [];
-				setPets(defs.map((p) => ({
-					...p,
-					position: { ...p.position }
-				})));
-				setSelId(defs[0]?.id ?? "");
+				applyConfig(merged);
 				petBridge.reload(merged);
+				reloadNotifications();
 				setMsg({
 					kind: "ok",
 					text: t("saved")
@@ -2551,6 +3201,7 @@ function makePetConfigSection(rt) {
 			}), t("modelFieldHint"), end);
 		};
 		return h("section", {
+			ref: rootRef,
 			className: "dsh-pet-cfg",
 			style: { maxWidth: "720px" },
 			children: [
@@ -2558,6 +3209,19 @@ function makePetConfigSection(rt) {
 					className: "dsh-pet-cfg__title",
 					children: [t("nav"), q(extraCount > 0 ? t("intro") + "\n" + t("extraPetsHint").replace("{n}", String(extraCount)) : t("intro"))]
 				}),
+				loadState !== "ready" ? h("div", {
+					role: loadState === "error" ? "alert" : "status",
+					className: "dsh-pet-cfg__actions",
+					children: [h("span", { children: t(loadState === "error" ? "loadError" : "loading") }), loadState === "error" ? h("button", {
+						type: "button",
+						className: "dsh-pet-cfg__btn",
+						onClick: () => {
+							setLoadState("loading");
+							setLoadAttempt((attempt) => attempt + 1);
+						},
+						children: t("retry")
+					}) : null]
+				}) : null,
 				h("div", {
 					className: "dsh-pet-cfg__tabs",
 					children: [
@@ -2595,14 +3259,38 @@ function makePetConfigSection(rt) {
 									children: t("petCardTitle")
 								}),
 								q(t("petCardHint")),
-								h("button", {
-									key: "rm",
-									type: "button",
-									onClick: removeSel,
-									disabled: busy,
-									className: "dsh-pet-cfg__btn is-danger is-sm",
-									style: { marginLeft: "auto" },
-									children: t("remove")
+								h("div", {
+									key: "acts",
+									style: {
+										marginLeft: "auto",
+										display: "flex",
+										alignItems: "center",
+										gap: "6px"
+									},
+									children: [
+										msg.text ? h("span", {
+											key: "msg",
+											className: "dsh-pet-cfg__msg" + (msg.kind === "err" ? " is-err" : ""),
+											children: msg.text
+										}) : null,
+										h("button", {
+											key: "sv",
+											type: "button",
+											onClick: () => void save(),
+											disabled: busy,
+											className: "dsh-pet-cfg__btn is-primary is-sm",
+											...tip(t("saveHotkey")),
+											children: t("save")
+										}),
+										h("button", {
+											key: "rm",
+											type: "button",
+											onClick: removeSel,
+											disabled: busy,
+											className: "dsh-pet-cfg__btn is-danger is-sm",
+											children: t("remove")
+										})
+									]
 								})
 							]
 						}),
@@ -2657,7 +3345,21 @@ function makePetConfigSection(rt) {
 								toggleCell("workStatusEnabled", !!cur.workStatusEnabled, busy, (v) => updateSel({ workStatusEnabled: v })),
 								toggleCell("fixedEnabled", !!cur.fixedEnabled, busy, (v) => updateSel({ fixedEnabled: v }), true)
 							]
-						})
+						}),
+						field(t("personaLabel"), h("div", {
+							className: "dsh-pet-cfg__persona",
+							children: [h("textarea", {
+								className: inputClass + " dsh-pet-cfg__area",
+								rows: 3,
+								value: String(cur.whisperPrompt ?? ""),
+								disabled: busy,
+								placeholder: entryPrompt,
+								onChange: (e) => updateSel({ whisperPrompt: e.target.value })
+							}), h("span", {
+								className: "dsh-pet-cfg__count",
+								children: t("personaCount").replace("{n}", String(String(cur.whisperPrompt ?? "").length))
+							})]
+						}), t("personaHint"))
 					]
 				}) : h("p", {
 					className: "dsh-pet-cfg__note",
@@ -2674,6 +3376,48 @@ function makePetConfigSection(rt) {
 							toggleCell("confineToggle", confineScreen, busy, setConfineScreen, true)
 						]
 					})]
+				}),
+				h("div", {
+					className: "dsh-pet-cfg__card",
+					children: [
+						cardHead(t("fontTitle"), t("fontHint")),
+						h("div", {
+							className: "dsh-pet-cfg__grid2",
+							children: [field(t("fontFamilyLabel"), h("select", {
+								className: inputClass,
+								value: font.family,
+								disabled: busy,
+								onChange: (e) => setFont((f) => ({
+									...f,
+									family: e.target.value
+								})),
+								children: FONT_PRESETS.map((p) => h("option", {
+									key: p.id,
+									value: p.id,
+									children: t("font." + p.id)
+								}))
+							}), t("fontFamilyHint")), field(t("fontSizeLabel"), h("input", {
+								type: "number",
+								className: inputClass,
+								step: "1",
+								min: String(FONT_SIZE_MIN),
+								max: String(FONT_SIZE_MAX),
+								value: String(font.size),
+								disabled: busy,
+								onChange: (e) => setFont((f) => ({
+									...f,
+									size: Number(e.target.value)
+								}))
+							}), t("fontSizeHint"), true)]
+						}),
+						h("div", {
+							className: "dsh-pet-cfg__grid2",
+							children: [toggleCell("fontFollowToggle", font.followPet, busy, (v) => setFont((f) => ({
+								...f,
+								followPet: v
+							})))]
+						})
+					]
 				}),
 				h("div", {
 					className: "dsh-pet-cfg__card",
@@ -2727,6 +3471,7 @@ function makePetConfigSection(rt) {
 							disabled: busy,
 							onClick: () => void save(),
 							className: "dsh-pet-cfg__btn is-primary",
+							...tip(t("saveHotkey")),
 							children: t("save")
 						}),
 						h("button", {
@@ -2903,12 +3648,35 @@ function makePetConfigSection(rt) {
 
 //#endregion
 //#region src/client/pet.ts
-const statePoller = { now: () => {} };
-/** 播放动画扩展名 = 共享常量（src/shared/constants.ts 的 ANIMATION_EXT，默认 .webm）。
-*  macOS Safari/WKWebView 需改共享常量/产物为 .mov（HEVC-with-Alpha）后自构建。 */
-const THUMB_EXT = ANIMATION_EXT;
+/** 本次会话已定论的动画扩展名（null = 尚未判断）。模块级：一次判断，整页复用。 */
+let resolvedExt = null;
+/** 是否该先要 mov：只有 macOS 上的 WebKit（Safari / WKWebView）需要 HEVC-with-Alpha。
+*  **不能用 canPlayType 判断**——Safari 能播 VP9 webm 却会丢弃 alpha（表现为黑底），
+*  「能解码」与「透明还在」是两件事，后者没有任何 Web API 可查询。 */
+const prefersMov = () => {
+	const ua = navigator.userAgent;
+	if (/Chrome|Chromium|Edg|OPR|Firefox|FxiOS/i.test(ua)) return false;
+	return /Mac/i.test(navigator.platform || ua);
+};
+/** 解析本次要用的扩展名：显式常量（用户按 README 改成 .mov）优先，否则按渲染端判断。
+*  宿主侧对缺失的 .mov 会退回同名 .webm（src/host/index.ts 的 thumb 分支），
+*  所以这里只管「要哪一种」，无需探测素材是否真的存在。 */
+const thumbExt = () => {
+	if (resolvedExt === null) {
+		const explicit = ANIMATION_EXT;
+		resolvedExt = explicit === ".mov" || prefersMov() ? ".mov" : ".webm";
+	}
+	return resolvedExt;
+};
 /** 余额气泡展示时长（ms）：定时自动消失，与动画生命周期解耦 */
 const BUBBLE_DURATION_MS = 10 * 1e3;
+/** /state 长轮询的挂起时长（ms）：宿主在"版本没变"时最多挂这么久。
+*  1s 是**前端自己定的下限**——空闲时请求率因此与改造前完全一致（1 req/s），
+*  而叶子一变宿主立刻返回，前端不必再等满一拍。 */
+const STATE_WAIT_MS = 1e3;
+/** 老宿主 / 请求失败时的轮询间隔（ms）。老宿主不认识 since/timeout，会**立刻**返回全量，
+*  不退避就是忙等；网络失败同理。 */
+const STATE_FALLBACK_MS = 1e3;
 /** 内联 CSS —— 注入一次（官方插件标准做法） */
 const css = [
 	".dsh-pet-root{position:fixed;z-index:40;pointer-events:none;user-select:none}",
@@ -2919,10 +3687,11 @@ const css = [
 	".dsh-pet-stage{position:relative;width:var(--dsh-pet-size,462px);height:calc(var(--dsh-pet-size,462px)*9/16);pointer-events:none}",
 	".dsh-pet-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;opacity:0;transition:opacity .18s ease;transform-origin:center}",
 	".dsh-pet-video.is-front{opacity:1}",
-	".dsh-pet-hit{position:absolute;pointer-events:auto;cursor:url(\"/dsh-pet-7340/pic/cursor-grab.png\") 16 16, grab;z-index:1}",
+	".dsh-pet-hit{position:absolute;pointer-events:auto;cursor:url(\"/dsh-pet-7340/pic/cursor-grab.png\") 16 16, grab;z-index:1;touch-action:none;-webkit-user-select:none;-webkit-touch-callout:none}",
 	".dsh-pet-hit.dragging{cursor:url(\"/dsh-pet-7340/pic/cursor-grabbing.png\") 16 16, grabbing}",
 	"@media (prefers-reduced-motion: reduce){.dsh-pet-video{transition:none}}",
-	MENU_CSS
+	MENU_CSS,
+	TOOLTIP_CSS
 ].join("\n");
 const cssTag = "dsh-pet/style.css";
 function injectCss$1() {
@@ -2937,13 +3706,18 @@ function injectCss$1() {
 function makePetUI(rt) {
 	const { h, useState, useEffect, useRef } = rt;
 	injectCss$1();
-	/** 余额气泡（哑组件：数据与显隐由 PetCard 传入） */
-	const BalanceBubble = makeBalanceBubble({ h });
+	/** 余额气泡（哑组件：数据与显隐由 PetCard 传入；展开态的两个 hook 由这里注入） */
+	const BalanceBubble = makeBalanceBubble({
+		h,
+		useState,
+		useEffect
+	});
 	/** 碎碎念气泡（哑组件：文本与显隐由 PetCard 传入） */
 	const WhisperBubble = makeWhisperBubble({ h });
 	/** 单个宠物实例（配置由容器 PetMulti 传入；碎碎念轮询/触发/气泡完全自理） */
-	function PetCard({ cfg, balance, balanceTick, balanceNoticeTick, workStatus, workStatusTick, say, sayTick, animCue, animCueTick, arena }) {
+	function PetCard({ cfg, balance, balanceTick, balanceNoticeTick, balanceManual, workStatus, workStatusTick, say, sayTick, animCue, animCueTick, posCue, posCueTick, throwCue, throwCueTick, lock, lockTick, menuItemsRef, arena }) {
 		const [size, setSize] = useState(cfg.size);
+		const fontPx = resolveFontPx(cfg.font, size);
 		const halfW = size / 2;
 		const halfH = size * 9 / 16 / 2;
 		const bottomPad = size * (9 / 16) * (CANVAS_H - FEET_Y) / CANVAS_H;
@@ -2953,6 +3727,8 @@ function makePetUI(rt) {
 		const [once, setOnce] = useState(true);
 		const [facing, setFacing] = useState("left");
 		const [dragging, setDragging] = useState(false);
+		const [tipOn, setTipOn] = useState(false);
+		const tipRef = useRef(null);
 		const [customPos, setCustomPos] = useState(null);
 		const [corner, setCorner] = useState(cfg.position.corner);
 		const [margin, setMargin] = useState({
@@ -2960,11 +3736,14 @@ function makePetUI(rt) {
 			y: cfg.position.marginY
 		});
 		const [bubbleOn, setBubbleOn] = useState(false);
+		const [balanceExpanded, setBalanceExpanded] = useState(false);
 		const bubbleTimerRef = useRef(null);
 		const [whisperBubbleOn, setWhisperBubbleOn] = useState(false);
 		const whisperBubbleTimerRef = useRef(null);
 		const [whisperText, setWhisperText] = useState(null);
 		const [whisperImage, setWhisperImage] = useState(void 0);
+		/** 配图的 url 形态（第三方自带地址；与 whisperImage 二选一，见 triggerWhisper） */
+		const [whisperUrl, setWhisperUrl] = useState(void 0);
 		const [workBubbleOn, setWorkBubbleOn] = useState(false);
 		const workBubbleTimerRef = useRef(null);
 		const [workText, setWorkText] = useState(null);
@@ -2990,14 +3769,28 @@ function makePetUI(rt) {
 		const videoBRef = useRef(null);
 		const frontRef = useRef(0);
 		const pendingRef = useRef(null);
+		/** 「这一段直接播这个地址」的一次性交接位（POST /anim 的 url 形态，issue #122 第 1 条）。
+		*  为什么用 ref 而不是 state：它只在**设置它的那一拍**有效——switchTo 一进来就取走并清空，
+		*  之后任何一次普通换源都不会误用上一个地址（换成 state 的话，"清空"本身会再触发一次 effect）。 */
+		const cueUrlRef = useRef(null);
+		const [cuePlayback, setCuePlayback] = useState(null);
+		/** 当前正在播的第三方点播编号（null = 自播动画，不上报）；播完 / 失败 / 被打断后清空 */
+		const playingPlaybackRef = useRef(null);
 		const genRef = useRef(0);
+		const frozenRef = useRef(lock?.locked === true && lock.expiresAt > Date.now());
+		/** 解冻定时器：宿主不会到点推送"锁没了"，这里按叶子里的 expiresAt 自己解除 */
+		const lockTimerRef = useRef(null);
 		const dragRef = useRef({
 			active: false,
 			dragging: false,
 			sx: 0,
 			sy: 0,
 			offX: 0,
-			offY: 0
+			offY: 0,
+			lpTimer: null,
+			sling: false,
+			anchorX: 0,
+			anchorY: 0
 		});
 		const justDraggedRef = useRef(false);
 		const dragTrailRef = useRef([]);
@@ -3013,6 +3806,7 @@ function makePetUI(rt) {
 		const throwTokenRef = useRef(0);
 		const throwStateRef = useRef(null);
 		const pressScoreFiredRef = useRef(false);
+		const lastPressAtRef = useRef(0);
 		const squashRef = useRef(null);
 		const squashTokenRef = useRef(0);
 		const pendingSquashRef = useRef(false);
@@ -3026,7 +3820,25 @@ function makePetUI(rt) {
 		});
 		const mountedRef = useRef(false);
 		const inflightRef = useRef([]);
-		const switchTo = (next, nextOnce) => {
+		/**
+		* 播放回执上报（issue #122 第 3 项）：把这一段点播的**真实**状态告诉 host。
+		*
+		* 只对第三方点播（带 playbackId）上报；自播动画（随机链 / 点击 / 拖拽 / 碎碎念 / 余额…）不报。
+		* 为什么必须有这一层：host 只知道"受理了"，不知道播没播完——动画在浏览器里播，只有这里知道真相。
+		* 失败静默（postAction 从不抛）+ 一条 warn：回执是附加能力，绝不能因为它把播放本身搞挂。
+		*/
+		const reportPlayback = (playbackId, status, reason) => {
+			postAction("/dsh-pet-7340/playback/" + encodeURIComponent(playbackId) + "/report", reason === void 0 ? { status } : {
+				status,
+				reason
+			}).then((ok) => {
+				if (!ok) console.warn("[dsh-pet] 播放回执未送达 pet=" + cfg.id + " id=" + playbackId + " status=" + status);
+			});
+		};
+		const switchTo = (next, nextOnce, cuePlaybackId) => {
+			if (cuePlaybackId !== null) setCuePlayback(null);
+			const cueUrl = cueUrlRef.current;
+			cueUrlRef.current = null;
 			if (!next) return;
 			const pending = pendingRef.current;
 			if (pending && pending.anim === next && pending.once === nextOnce) {
@@ -3034,6 +3846,10 @@ function makePetUI(rt) {
 					pendingSquashRef.current = false;
 					const front = frontRef.current === 0 ? videoARef : videoBRef;
 					if (front.current) startSquash(front.current);
+				}
+				if (cuePlaybackId !== null) {
+					playingPlaybackRef.current = cuePlaybackId;
+					reportPlayback(cuePlaybackId, "playing");
 				}
 				return;
 			}
@@ -3048,12 +3864,13 @@ function makePetUI(rt) {
 			if (!el) return;
 			const inEvents = isEventAnim(petAnims.events, next);
 			if (inEvents) console.log("[dsh-pet] " + new Date().toTimeString().slice(0, 8) + " pet=" + cfg.id + " switch " + next + " once=" + nextOnce);
-			const assetUrl = "/dsh-pet-7340/thumb/" + encodeURIComponent(cfg.assetRoot ?? cfg.id) + "/" + encodeURIComponent(next) + THUMB_EXT;
+			const assetUrl = cueUrl ?? "/dsh-pet-7340/thumb/" + encodeURIComponent(cfg.assetRoot ?? cfg.id) + "/" + encodeURIComponent(next) + thumbExt();
 			el.loop = !nextOnce;
 			el.muted = true;
 			el.autoplay = true;
 			el.playsInline = true;
 			el.onended = nextOnce ? handleEnded : null;
+			el.onerror = cuePlaybackId === null ? null : () => reportPlayback(cuePlaybackId, "failed", "decode-error");
 			const targetIsB = frontRef.current === 0;
 			const ac = new AbortController();
 			inflightRef.current.push(ac);
@@ -3084,6 +3901,10 @@ function makePetUI(rt) {
 				if (!mountedRef.current) return;
 				if (pendingRef.current?.gen !== gen) return;
 				pendingRef.current = null;
+				if (cuePlaybackId !== null) {
+					if (playingPlaybackRef.current === cuePlaybackId) playingPlaybackRef.current = null;
+					reportPlayback(cuePlaybackId, "failed", "asset-load");
+				}
 				console.warn("[dsh-pet] 素材加载失败 pet=" + cfg.id + " anim=" + next + "：" + (err instanceof Error ? err.message : String(err)) + "（已释放本次切换）");
 			});
 			const onReady = () => {
@@ -3094,12 +3915,22 @@ function makePetUI(rt) {
 				if (old.current && old.current !== el) {
 					old.current.classList.remove("is-front");
 					old.current.onended = null;
+					old.current.onerror = null;
 					old.current.pause();
+					const outgoing = playingPlaybackRef.current;
+					if (outgoing !== null && outgoing !== cuePlaybackId) reportPlayback(outgoing, "cancelled", "superseded");
 				}
 				frontRef.current = frontRef.current === 0 ? 1 : 0;
 				pendingRef.current = null;
+				playingPlaybackRef.current = cuePlaybackId;
 				el.style.transform = facingRef.current === "right" ? "scaleX(-1)" : "";
-				el.play().catch(() => {});
+				el.play().then(() => {
+					if (cuePlaybackId !== null) reportPlayback(cuePlaybackId, "playing");
+				}).catch(() => {
+					if (cuePlaybackId === null) return;
+					if (playingPlaybackRef.current === cuePlaybackId) playingPlaybackRef.current = null;
+					reportPlayback(cuePlaybackId, "failed", "play-rejected");
+				});
 				if (pendingSquashRef.current) {
 					pendingSquashRef.current = false;
 					startSquash(el);
@@ -3109,18 +3940,48 @@ function makePetUI(rt) {
 			el.addEventListener("loadeddata", onReady);
 		};
 		useEffect(() => {
-			switchTo(anim, once);
+			switchTo(anim, once, cuePlayback);
 		}, [
 			anim,
 			once,
-			seq
+			seq,
+			cuePlayback
 		]);
 		useEffect(() => {
 			mountedRef.current = true;
+			const unregisterPose = registerPose(cfg.id, () => ({
+				x: currentCenterX() / window.innerWidth,
+				y: currentCenterY() / window.innerHeight,
+				facing: facingRef.current
+			}));
+			const unregisterProgress = registerProgress(cfg.id, () => {
+				const el = frontRef.current === 0 ? videoARef.current : videoBRef.current;
+				const playbackId = playingPlaybackRef.current;
+				const anim$1 = animRef.current;
+				if (el === null) return {
+					playbackId,
+					anim: anim$1,
+					currentTime: 0,
+					duration: 0,
+					paused: true,
+					buffering: false
+				};
+				const duration = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 0;
+				return {
+					playbackId,
+					anim: anim$1,
+					currentTime: el.currentTime,
+					duration,
+					paused: el.paused,
+					buffering: el.readyState < 3 || el.seeking
+				};
+			});
 			const bu = blobUrlRef.current;
 			const inflight = inflightRef.current;
 			return () => {
 				mountedRef.current = false;
+				unregisterPose();
+				unregisterProgress();
 				for (const c of inflight) c.abort();
 				inflight.length = 0;
 				stopMove();
@@ -3147,11 +4008,19 @@ function makePetUI(rt) {
 		}, []);
 		const prevTickRef = useRef(0);
 		useEffect(() => {
-			if (!cfg.balanceEnabled) return;
 			if (balanceTick === 0 || balanceTick === prevTickRef.current) return;
 			prevTickRef.current = balanceTick;
+			if (frozenRef.current && !balanceManual) return;
 			if (!balance || !balance.ok) return;
+			if (!cfg.balanceEnabled && !balanceManual) return;
 			const p = balancePercent(balance);
+			if (balanceManual || p !== void 0) {
+				setBalanceExpanded(false);
+				setBubbleOn(true);
+				if (bubbleTimerRef.current !== null) window.clearTimeout(bubbleTimerRef.current);
+				bubbleTimerRef.current = window.setTimeout(() => setBubbleOn(false), BUBBLE_DURATION_MS);
+			}
+			if (!cfg.balanceEnabled) return;
 			if (p === void 0) return;
 			const pool = petAnims.events?.balance;
 			if (!pool || pool.length === 0) {
@@ -3167,17 +4036,15 @@ function makePetUI(rt) {
 			const name = pickSlot(slot, animRef.current);
 			console.log("[dsh-pet] " + new Date().toTimeString().slice(0, 8) + " balance pet=" + cfg.id + " p=" + p.toFixed(1) + "% -> [档" + idx + "] " + name);
 			stopMove();
-			setBubbleOn(true);
-			if (bubbleTimerRef.current !== null) window.clearTimeout(bubbleTimerRef.current);
-			bubbleTimerRef.current = window.setTimeout(() => setBubbleOn(false), BUBBLE_DURATION_MS);
 			setOnce(true);
 			setAnim(name);
 		}, [balanceTick]);
 		const prevNoticeRef = useRef(0);
 		useEffect(() => {
-			if (!cfg.balanceEnabled) return;
+			if (!cfg.balanceEnabled && !balanceManual) return;
 			if (balanceNoticeTick === 0 || balanceNoticeTick === prevNoticeRef.current) return;
 			prevNoticeRef.current = balanceNoticeTick;
+			if (frozenRef.current && !balanceManual) return;
 			if (!balance || balance.ok) return;
 			setBubbleOn(true);
 			if (bubbleTimerRef.current !== null) window.clearTimeout(bubbleTimerRef.current);
@@ -3189,6 +4056,7 @@ function makePetUI(rt) {
 			if (!cfg.workStatusEnabled) return;
 			if (workStatusTick === 0 || workStatusTick === prevWorkTickRef.current) return;
 			prevWorkTickRef.current = workStatusTick;
+			if (frozenRef.current) return;
 			if (!workStatus || workStatus.state === null) {
 				console.log("[dsh-pet] " + new Date().toTimeString().slice(0, 8) + " pet=" + cfg.id + " " + (prevWorkStateRef.current ?? "null") + "->null    播完即停（回待机，收起气泡）");
 				prevWorkStateRef.current = null;
@@ -3238,33 +4106,81 @@ function makePetUI(rt) {
 		useEffect(() => {
 			if (!say || say.seq === prevSaySeqRef.current) return;
 			prevSaySeqRef.current = say.seq;
-			triggerWhisper(say.text, say.image);
+			if (say.kind === "clear") {
+				clearWhisperBubble();
+				return;
+			}
+			triggerWhisper(say.text, say.image, say.url, say.duration, say.anim);
 		}, [sayTick]);
 		const prevAnimSeqRef = useRef(0);
 		useEffect(() => {
 			if (!animCue || animCue.seq === prevAnimSeqRef.current) return;
 			prevAnimSeqRef.current = animCue.seq;
+			const explicitFacing = animCue.facing !== void 0;
+			if (animCue.facing !== void 0) {
+				setFacing(animCue.facing);
+				facingRef.current = animCue.facing;
+			}
+			if (animCue.url !== void 0) {
+				stopMove();
+				cueUrlRef.current = animCue.url;
+				setOnce(true);
+				setSeq((s) => s + 1);
+				setAnim(animCue.url);
+				setCuePlayback(animCue.playbackId ?? null);
+				return;
+			}
+			if (animCue.name === void 0) return;
 			handleMenuAction({
 				label: animCue.name,
 				anim: animCue.name
-			});
+			}, animCue.playbackId, explicitFacing);
 		}, [animCueTick]);
-		const triggerWhisper = (text, image) => {
-			const pool = petAnims.events?.whisper;
-			if (!pool || pool.length === 0) {
-				console.error("[dsh-pet] 配置缺少 animations.events.whisper，无法播放碎碎念动画");
-				return;
+		const prevPosSeqRef = useRef(0);
+		useEffect(() => {
+			if (!posCue || posCue.seq === prevPosSeqRef.current) return;
+			prevPosSeqRef.current = posCue.seq;
+			applyPositionCue(posCue.x, posCue.y, posCue.mode, posCue.duration);
+		}, [posCueTick]);
+		const prevThrowSeqRef = useRef(0);
+		useEffect(() => {
+			if (!throwCue || throwCue.seq === prevThrowSeqRef.current) return;
+			prevThrowSeqRef.current = throwCue.seq;
+			applyThrowCue(throwCue.angle, throwCue.power);
+		}, [throwCueTick]);
+		/** 收起说话气泡（`POST /bubble/clear` 的落点）。
+		*  **只动气泡**：正在播的动画、余额气泡、工作状态气泡都不碰——气泡与动作是两把锁、
+		*  分别释放（issue #122 第 5 条）。顺带清掉文本/配图，免得残留内容在下次渲染时闪一下。 */
+		const clearWhisperBubble = () => {
+			if (whisperBubbleTimerRef.current !== null) window.clearTimeout(whisperBubbleTimerRef.current);
+			whisperBubbleTimerRef.current = null;
+			setWhisperBubbleOn(false);
+			setWhisperText(null);
+			setWhisperImage(void 0);
+		};
+		const triggerWhisper = (text, image, url, duration, anim$1) => {
+			let name = null;
+			if (anim$1 !== false) {
+				const pool = petAnims.events?.whisper;
+				if (!pool || pool.length === 0) {
+					console.error("[dsh-pet] 配置缺少 animations.events.whisper，无法播放碎碎念动画");
+					return;
+				}
+				name = pickSlot(pick(pool, animRef.current), animRef.current);
 			}
-			const name = pickSlot(pick(pool, animRef.current), animRef.current);
-			console.log("[dsh-pet] " + new Date().toTimeString().slice(0, 8) + " whisper pet=" + cfg.id + " -> [" + name + "] 「" + text + "」");
-			stopMove();
+			console.log("[dsh-pet] " + new Date().toTimeString().slice(0, 8) + " whisper pet=" + cfg.id + (name === null ? " （不联动动画）" : " -> [" + name + "]") + " 「" + text + "」");
+			if (name !== null) {
+				stopMove();
+				setOnce(true);
+				setAnim(name);
+			}
+			if (duration === 0) return;
 			setWhisperText(text);
 			setWhisperImage(image);
+			setWhisperUrl(url);
 			setWhisperBubbleOn(true);
 			if (whisperBubbleTimerRef.current !== null) window.clearTimeout(whisperBubbleTimerRef.current);
-			whisperBubbleTimerRef.current = window.setTimeout(() => setWhisperBubbleOn(false), BUBBLE_DURATION_MS);
-			setOnce(true);
-			setAnim(name);
+			whisperBubbleTimerRef.current = window.setTimeout(() => setWhisperBubbleOn(false), duration ?? BUBBLE_DURATION_MS);
 		};
 		useEffect(() => {
 			const onResize = () => setCustomPos((prev) => prev ? { ...prev } : prev);
@@ -3272,6 +4188,7 @@ function makePetUI(rt) {
 			return () => window.removeEventListener("resize", onResize);
 		}, []);
 		const pickNext = () => {
+			if (frozenRef.current) return;
 			const animations = petAnims;
 			const animationWeights = petWeights;
 			const roll = Math.random();
@@ -3308,6 +4225,7 @@ function makePetUI(rt) {
 			setSeq((s) => s + 1);
 		};
 		const resumeWorkStatusAnim = () => {
+			if (frozenRef.current) return false;
 			const ws = workStatusRef.current;
 			if (!ws || !ws.state || ws.state === "success" || ws.state === "error") return false;
 			const pool = petAnims.events?.workStatus;
@@ -3324,8 +4242,14 @@ function makePetUI(rt) {
 		const handleEnded = (e) => {
 			const evEl = e && e.currentTarget;
 			if (evEl && !evEl.classList.contains("is-front")) return;
+			const donePlayback = playingPlaybackRef.current;
+			if (donePlayback !== null) {
+				playingPlaybackRef.current = null;
+				reportPlayback(donePlayback, "ended");
+			}
 			const animations = petAnims;
 			if (dragRef.current.active) return;
+			if (frozenRef.current) return;
 			const isEvent = isEventAnim(animations.events, animRef.current);
 			const wsNow = workStatusRef.current;
 			if (isEvent && wsNow && wsNow.state && wsNow.state !== "success" && wsNow.state !== "error") {
@@ -3432,7 +4356,7 @@ function makePetUI(rt) {
 			const chosen = preferredName ? actions.find((a) => a.name === preferredName) ?? null : actions[Math.floor(Math.random() * actions.length)];
 			if (!chosen) return false;
 			const mp = Object.assign({}, moves.default, chosen.params || {});
-			const dir = facingRef.current === "right" !== petAnims.turn.includes(animRef.current) ? 1 : -1;
+			const dir = facingRef.current === "right" ? 1 : -1;
 			const W = window.innerWidth;
 			const distScale = size / PET_REF_WIDTH;
 			const plan = planMove({
@@ -3465,6 +4389,7 @@ function makePetUI(rt) {
 				cancelAnimationFrame(moveRef.current);
 				moveRef.current = null;
 			}
+			stopPosFollow();
 		};
 		/** 停止弹簧跟随（不碰 dragState：指针捕获期间由 pointerdown/up 独立管理） */
 		const stopDragFollow = () => {
@@ -3550,7 +4475,9 @@ function makePetUI(rt) {
 				const dt = (now - last) / 1e3;
 				last = now;
 				const fallingVy = state.vy;
-				const res = throwStep(state, dt, bounds, cfg.physics);
+				const substeps = throwSubsteps(state.vx, state.vy, dt);
+				let res = throwStep(state, dt / substeps, bounds, cfg.physics);
+				for (let i = 1; i < substeps && !res.atRest; i++) res = throwStep(res, dt / substeps, bounds, cfg.physics);
 				state = {
 					x: res.x,
 					y: res.y,
@@ -3633,6 +4560,122 @@ function makePetUI(rt) {
 		/** 被撞回调（宠物间碰撞）：被其它飞行中宠物撞到 → 停当前动作，从落点以新初速抛出去（全复用现有物理） */
 		const startThrowLatestRef = useRef(() => {});
 		startThrowLatestRef.current = startThrow;
+		/** 位置指令的跟随 rAF（spring 与 line 共用同一个句柄）。与拖拽跟手分开：拖拽没有终点
+		*  （指针一直喂目标），这条有终点，收敛/到点后必须自己收掉，否则 rAF 永远转下去。 */
+		const posFollowRef = useRef(null);
+		const posFollowTokenRef = useRef(0);
+		const stopPosFollow = () => {
+			posFollowTokenRef.current++;
+			if (posFollowRef.current !== null) {
+				cancelAnimationFrame(posFollowRef.current);
+				posFollowRef.current = null;
+			}
+		};
+		/**
+		* 执行一条位置指令：把宠物**中心**挪到归一化坐标 (rx, ry)。
+		* `mode` 三选一——`instant` 一帧到位并提交 customPos；`spring` 走拖拽那套过阻尼弹簧；
+		* `line` 在 `duration` 毫秒里**直线**走完（`duration <= 0` 等同 instant）。
+		* 用户正按着宠物（`active` 含点击与拖拽）时**整拍丢弃**——手指底下的东西不该跑；
+		* 这与动画链的守卫同一语义（见 handleEnded）。丢弃是静默的：接口早已回过 ok。
+		*/
+		const applyPositionCue = (rx, ry, mode, duration) => {
+			if (dragRef.current.active) return;
+			stopThrow();
+			stopMove();
+			const px = rx * window.innerWidth - halfW;
+			const py = ry * window.innerHeight - halfH;
+			const rootEl = rootRef.current;
+			if (!rootEl || mode === "instant" || mode === "line" && duration <= 0) {
+				boxPxRef.current = {
+					x: px,
+					y: py
+				};
+				setCustomPos({
+					rx,
+					ry
+				});
+				return;
+			}
+			const token = ++posFollowTokenRef.current;
+			/** 落笔：写 ref + 四个 style（弹簧与直线两条路共用；原先是各写一遍） */
+			const paint = (x, y) => {
+				boxPxRef.current = {
+					x,
+					y
+				};
+				rootEl.style.left = x + "px";
+				rootEl.style.top = y + "px";
+				rootEl.style.right = "auto";
+				rootEl.style.bottom = "auto";
+			};
+			if (mode === "line") {
+				const from = boxPxRef.current ?? {
+					x: px,
+					y: py
+				};
+				const t0 = performance.now();
+				const step$1 = () => {
+					if (posFollowTokenRef.current !== token) return;
+					const p = Math.min((performance.now() - t0) / duration, 1);
+					if (p >= 1) {
+						paint(px, py);
+						posFollowRef.current = null;
+						setCustomPos({
+							rx,
+							ry
+						});
+						return;
+					}
+					paint(from.x + (px - from.x) * p, from.y + (py - from.y) * p);
+					posFollowRef.current = requestAnimationFrame(step$1);
+				};
+				posFollowRef.current = requestAnimationFrame(step$1);
+				return;
+			}
+			let last = performance.now();
+			const vel = {
+				vx: 0,
+				vy: 0
+			};
+			const step = () => {
+				if (posFollowTokenRef.current !== token) return;
+				const now = performance.now();
+				const dt = Math.min((now - last) / 1e3, 1 / 30);
+				last = now;
+				let x = boxPxRef.current?.x ?? px;
+				let y = boxPxRef.current?.y ?? py;
+				vel.vx = springStep(vel.vx, x, px, dt, cfg.physics.throwPower);
+				vel.vy = springStep(vel.vy, y, py, dt, cfg.physics.throwPower);
+				x += vel.vx * dt;
+				y += vel.vy * dt;
+				paint(x, y);
+				if (Math.abs(px - x) < .5 && Math.abs(py - y) < .5 && Math.abs(vel.vx) < 1 && Math.abs(vel.vy) < 1) {
+					paint(px, py);
+					posFollowRef.current = null;
+					setCustomPos({
+						rx,
+						ry
+					});
+					return;
+				}
+				posFollowRef.current = requestAnimationFrame(step);
+			};
+			posFollowRef.current = requestAnimationFrame(step);
+		};
+		/**
+		* 执行一条抛掷指令：角度（度，`0` = 正右，逆时针为正）+ 力度倍率 → 初速度，交给 startThrow。
+		* 下游（重力 / 反弹 / 地面摩擦 / 落地 Q 弹 / 宠物间碰撞 / 落定提交位置）全是**既有行为**，
+		* 本接口不引入任何新物理。不设死区：接口是明确命令，power 再小也照抛。
+		*/
+		const applyThrowCue = (angleDeg, power) => {
+			if (dragRef.current.active) return;
+			const { vx, vy } = throwVelocity(angleDeg, power);
+			const box = boxPxRef.current ?? {
+				x: currentCenterX() - halfW,
+				y: currentCenterY() - halfH
+			};
+			startThrow(box.x, box.y, vx, vy);
+		};
 		const onPetHit = (vx, vy) => {
 			stopMove();
 			stopDragFollow();
@@ -3716,8 +4759,83 @@ function makePetUI(rt) {
 		};
 		const facingRef = useRef(facing);
 		facingRef.current = facing;
+		/** 把提示框摆到光标右下（右边/下边装不下自动翻边并夹回视口内）。
+		*  直接写 DOM style 而不走 React 状态：鼠标每动一下都更新状态会让整个 PetCard 重渲染，
+		*  代价远大于这一次样式写入（root 的位置也是这么直接写的）。
+		*  bounds 用视口——提示是 position:fixed，坐标就是 clientX/clientY 这一套。 */
+		const placeTip = (clientX, clientY) => {
+			const tipEl = tipRef.current;
+			if (!tipEl) return;
+			const viewport = document.documentElement;
+			const p = tooltipPlacement({
+				x: clientX,
+				y: clientY
+			}, {
+				w: tipEl.offsetWidth,
+				h: tipEl.offsetHeight
+			}, {
+				x: 0,
+				y: 0,
+				w: viewport.clientWidth,
+				h: viewport.clientHeight
+			}, size * TOOLTIP_GAP_RATIO);
+			tipEl.style.left = p.x + "px";
+			tipEl.style.top = p.y + "px";
+		};
+		/** 冻结 / 解冻的**实际动作**（只在真的翻转时做事：挂载那一次不动作，否则平白补播一段 idle） */
+		const applyFreeze = (next) => {
+			if (frozenRef.current === next) return;
+			frozenRef.current = next;
+			const el = frontRef.current === 0 ? videoARef.current : videoBRef.current;
+			const stamp = "[dsh-pet] " + new Date().toTimeString().slice(0, 8) + " pet=" + cfg.id;
+			if (next) {
+				stopMove();
+				el?.pause();
+				const interrupted = playingPlaybackRef.current;
+				if (interrupted !== null) {
+					playingPlaybackRef.current = null;
+					reportPlayback(interrupted, "cancelled", "frozen");
+				}
+				console.log(stamp + " 占用锁生效：冻结（随机链停 + 当前动画暂停）");
+				return;
+			}
+			console.log(stamp + " 占用锁解除：恢复");
+			if (resumeWorkStatusAnim()) return;
+			if (petAnims.idle.length) {
+				setAnim(pick(petAnims.idle, animRef.current));
+				setOnce(true);
+				setSeq((s) => s + 1);
+			}
+		};
+		useEffect(() => {
+			if (lockTimerRef.current !== null) {
+				window.clearTimeout(lockTimerRef.current);
+				lockTimerRef.current = null;
+			}
+			const expiresAt = lock?.locked === true ? lock.expiresAt : 0;
+			applyFreeze(expiresAt > Date.now());
+			if (expiresAt <= Date.now()) return;
+			lockTimerRef.current = window.setTimeout(() => {
+				lockTimerRef.current = null;
+				applyFreeze(false);
+			}, Math.max(0, expiresAt - Date.now()));
+			return () => {
+				if (lockTimerRef.current !== null) {
+					window.clearTimeout(lockTimerRef.current);
+					lockTimerRef.current = null;
+				}
+			};
+		}, [lockTick, lock]);
 		const handlePointerDown = (e) => {
 			if (e.button !== 0) return;
+			if (frozenRef.current) {
+				if (lockTimerRef.current !== null) {
+					window.clearTimeout(lockTimerRef.current);
+					lockTimerRef.current = null;
+				}
+				applyFreeze(false);
+				postAction("/dsh-pet-7340/lock/release?pet=" + encodeURIComponent(cfg.id), { force: true });
+			}
 			const grabState = throwStateRef.current;
 			console.log("[dsh-pet] " + new Date().toTimeString().slice(0, 8) + " pet=" + cfg.id + " grab vx=" + (grabState ? Math.round(grabState.vx) : 0) + " vy=" + (grabState ? Math.round(grabState.vy) : 0) + " |v|=" + (grabState ? Math.round(Math.hypot(grabState.vx, grabState.vy)) : 0));
 			pressScoreFiredRef.current = false;
@@ -3743,6 +4861,7 @@ function makePetUI(rt) {
 			dragTrailRef.current = [];
 			e.currentTarget.classList.add("dragging");
 			e.currentTarget.setPointerCapture(e.pointerId);
+			setTipOn(false);
 			const rootEl = rootRef.current;
 			let offX = 0;
 			let offY = 0;
@@ -3755,20 +4874,56 @@ function makePetUI(rt) {
 					y: rr.top
 				};
 			}
+			const pressNow = performance.now();
+			const sling = pressNow - lastPressAtRef.current < SLINGSHOT_DOUBLE_MS;
+			lastPressAtRef.current = sling ? 0 : pressNow;
+			const anchor = boxPxRef.current;
 			dragRef.current = {
 				active: true,
 				dragging: false,
 				sx: e.clientX,
 				sy: e.clientY,
 				offX,
-				offY
+				offY,
+				lpTimer: null,
+				sling,
+				anchorX: anchor ? anchor.x + halfW : e.clientX,
+				anchorY: anchor ? anchor.y + halfH : e.clientY
 			};
+			if (e.pointerType !== "mouse" && e.pointerType !== "pen") {
+				const lpEl = e.currentTarget;
+				const lpId = e.pointerId;
+				const lpX = e.clientX;
+				const lpY = e.clientY;
+				dragRef.current.lpTimer = setTimeout(() => {
+					dragRef.current.lpTimer = null;
+					const dl = dragRef.current;
+					if (!dl.active || dl.dragging) return;
+					dl.active = false;
+					pressScoreFiredRef.current = true;
+					if (lpEl.hasPointerCapture(lpId)) lpEl.releasePointerCapture(lpId);
+					console.log("[dsh-pet] " + new Date().toTimeString().slice(0, 8) + " pet=" + cfg.id + " -> [TOUCH-MENU]");
+					lpEl.dispatchEvent(new MouseEvent("contextmenu", {
+						bubbles: true,
+						cancelable: true,
+						view: window,
+						clientX: lpX,
+						clientY: lpY,
+						button: 2
+					}));
+				}, 500);
+			}
 		};
 		const handlePointerMove = (e) => {
+			if (tipOn) placeTip(e.clientX, e.clientY);
 			const d = dragRef.current;
 			if (!d.active) return;
 			const dx = e.clientX - d.sx;
 			const dy = e.clientY - d.sy;
+			if (d.lpTimer && Math.hypot(dx, dy) > 8) {
+				clearTimeout(d.lpTimer);
+				d.lpTimer = null;
+			}
 			if (!d.dragging) {
 				if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
 				d.dragging = true;
@@ -3797,6 +4952,10 @@ function makePetUI(rt) {
 		};
 		const handlePointerUp = (e) => {
 			const d = dragRef.current;
+			if (d.lpTimer) {
+				clearTimeout(d.lpTimer);
+				d.lpTimer = null;
+			}
 			const wasDragging = d.dragging;
 			d.active = false;
 			d.dragging = false;
@@ -3817,15 +4976,31 @@ function makePetUI(rt) {
 				const bx = boxPxRef.current;
 				const px = bx ? bx.x : e.clientX - d.offX - halfW;
 				const py = bx ? bx.y : e.clientY - d.offY - halfH;
-				const vel = estimateReleaseVelocity(dragTrailRef.current, performance.now(), cfg.physics);
-				dragTrailRef.current = [];
-				if (vel) {
-					console.log("[dsh-pet] " + new Date().toTimeString().slice(0, 8) + " pet=" + cfg.id + " release vx=" + Math.round(vel.vx) + " vy=" + Math.round(vel.vy) + " |v|=" + Math.round(Math.hypot(vel.vx, vel.vy)));
-					startThrow(px, py, vel.vx, vel.vy);
-				} else setCustomPos({
-					rx: (px + halfW) / window.innerWidth,
-					ry: (py + halfH) / window.innerHeight
-				});
+				if (d.sling) {
+					const pullX = px + halfW - d.anchorX;
+					const pullY = py + halfH - d.anchorY;
+					const dist = Math.hypot(pullX, pullY);
+					const power = slingshotPower(dist, size);
+					const v = slingshotVelocity(pullAngle(pullX, pullY), power, cfg.physics.throwPower);
+					dragTrailRef.current = [];
+					console.log("[dsh-pet] " + new Date().toTimeString().slice(0, 8) + " pet=" + cfg.id + " sling dist=" + Math.round(dist) + " power=" + power.toFixed(2) + " vx=" + Math.round(v.vx) + " vy=" + Math.round(v.vy));
+					startThrow(px, py, v.vx, v.vy);
+				} else {
+					const vel = estimateReleaseVelocity(dragTrailRef.current, performance.now(), cfg.physics);
+					dragTrailRef.current = [];
+					if (vel) {
+						console.log("[dsh-pet] " + new Date().toTimeString().slice(0, 8) + " pet=" + cfg.id + " release vx=" + Math.round(vel.vx) + " vy=" + Math.round(vel.vy) + " |v|=" + Math.round(Math.hypot(vel.vx, vel.vy)));
+						startThrow(px, py, vel.vx, vel.vy);
+					} else setCustomPos({
+						rx: (px + halfW) / window.innerWidth,
+						ry: (py + halfH) / window.innerHeight
+					});
+				}
+			}
+			const hitRect = e.currentTarget.getBoundingClientRect();
+			if (e.clientX >= hitRect.left && e.clientX <= hitRect.right && e.clientY >= hitRect.top && e.clientY <= hitRect.bottom) {
+				placeTip(e.clientX, e.clientY);
+				setTipOn(true);
 			}
 		};
 		const handleClick = () => {
@@ -3847,12 +5022,29 @@ function makePetUI(rt) {
 			setSeq((s) => s + 1);
 			setAnim(name);
 		};
-		const handleMenuAction = (leaf$1) => {
+		/** `keepFacing` = 调用方已**显式指定**朝向（POST /anim 的 facing）：跳过下面"文字类动画
+		*  点播前强制朝左"那条镜像修正——显式值优先。右键菜单点播不传（保持原语义）。 */
+		const handleMenuAction = (leaf$1, playbackId, keepFacing = false) => {
+			if (leaf$1.action === "third-party") {
+				const owner = leaf$1.owner ?? "";
+				if (owner !== "") postAction("/dsh-pet-7340/menu/click", {
+					owner,
+					label: leaf$1.label,
+					pet: cfg.id
+				}).catch((e) => console.warn("[dsh-pet] 第三方菜单点击上报失败", e));
+				return;
+			}
+			if (leaf$1.action === "show-balance") {
+				console.info("[dsh-pet] 菜单查看余额 pet=" + cfg.id);
+				postAction("/dsh-pet-7340/balance").then((ok) => {
+					if (!ok) console.warn("[dsh-pet] 余额刷新动作未成功 pet=" + cfg.id);
+				}).catch((e) => console.warn("[dsh-pet] 余额刷新异常", e));
+				return;
+			}
 			if (leaf$1.action === "whisper") {
 				console.info("[dsh-pet] 菜单触发碎碎念 pet=" + cfg.id);
-				postAction("/dsh-pet-7340/whisper?pet=" + encodeURIComponent(cfg.id)).then((ok) => {
+				postAction("/dsh-pet-7340/whisper?pet=" + encodeURIComponent(cfg.id) + "&surface=web").then((ok) => {
 					if (!ok) console.warn("[dsh-pet] 碎碎念手动触发失败 pet=" + cfg.id);
-					statePoller.now();
 				}).catch((e) => console.warn("[dsh-pet] 碎碎念手动触发异常", e));
 				return;
 			}
@@ -3862,16 +5054,35 @@ function makePetUI(rt) {
 				chatRef.current = mountChatDialog({
 					petId: cfg.id,
 					baseUrl: "/dsh-pet-7340/chat",
+					surface: "web",
 					x: hitRect ? hitRect.right + 6 : window.innerWidth - 256,
 					y: hitRect ? hitRect.top + 6 : 8,
 					onSent: () => {
 						console.info("[dsh-pet] 对话已发送 pet=" + cfg.id);
-						statePoller.now();
 					},
 					onClose: () => {
 						chatRef.current = null;
 					}
 				});
+				return;
+			}
+			if (leaf$1.action === "set-display") {
+				const display = leaf$1.display;
+				if (!display) return;
+				console.info("[dsh-pet] 菜单切换显示位置 pet=" + cfg.id + " display=" + display);
+				fetch("/dsh-pet-7340/pet-display", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						id: cfg.id,
+						display
+					})
+				}).then(async (r) => {
+					if (!r.ok) throw new Error("pet-display HTTP " + r.status);
+					const body = await r.json();
+					if (body.ok === false) throw new Error("pet-display 被拒：" + String(body.reason ?? ""));
+					petBridge.reload(body);
+				}).catch((e) => console.warn("[dsh-pet] 显示位置切换失败", e));
 				return;
 			}
 			if (leaf$1.action === "home") {
@@ -3881,21 +5092,29 @@ function makePetUI(rt) {
 				return;
 			}
 			if (!leaf$1.anim) return;
-			if (isNoMirrorAnimation(petAnims.categories, leaf$1.anim) && facingRef.current === "right") setFacing("left");
+			const cuePlaybackId = playbackId ?? null;
+			if (!keepFacing && isNoMirrorAnimation(petAnims.categories, leaf$1.anim) && facingRef.current === "right") setFacing("left");
 			if (petAnims.moves.actions.some((a) => a.name === leaf$1.anim)) {
 				if (tryMove(leaf$1.anim) === false) {
 					stopMove();
 					setOnce(true);
 					setAnim(leaf$1.anim);
-				}
+					setCuePlayback(cuePlaybackId);
+				} else if (cuePlaybackId !== null) reportPlayback(cuePlaybackId, "failed", "busy");
 				return;
 			}
 			stopMove();
 			setOnce(true);
 			setAnim(leaf$1.anim);
+			setCuePlayback(cuePlaybackId);
 		};
 		const handleContextMenu = (e) => {
-			const tree = [
+			const more = buildMoreBranch(menuItemsRef.current);
+			const tools = [
+				{
+					label: "查看余额",
+					action: "show-balance"
+				},
 				{
 					label: "碎碎念",
 					action: "whisper"
@@ -3908,7 +5127,12 @@ function makePetUI(rt) {
 					label: "回到初始位置",
 					action: "home"
 				},
-				...buildMenuTree(petAnims)
+				displayMenuBranch()
+			];
+			const tree = [
+				...tools,
+				...buildMenuTree(petAnims),
+				...more ? [more] : []
 			];
 			if (!tree.length) return;
 			e.preventDefault();
@@ -3940,6 +5164,13 @@ function makePetUI(rt) {
 				bottom: "auto"
 			};
 		})() : {};
+		/** 点余额气泡：切换展开/收起，并把 10s 计时器重置一次
+		*  （不重置的话，第 8 秒才点开就只剩 2 秒，"看完整信息"这个目的就落空了） */
+		const toggleBalanceDetail = () => {
+			setBalanceExpanded((v) => !v);
+			if (bubbleTimerRef.current !== null) window.clearTimeout(bubbleTimerRef.current);
+			bubbleTimerRef.current = window.setTimeout(() => setBubbleOn(false), BUBBLE_DURATION_MS);
+		};
 		const workTerminal = workStatus?.state === "success" || workStatus?.state === "error";
 		const bubbleNode = (() => {
 			if (workTerminal && workBubbleOn && workText && cfg.workStatusEnabled) return h(WhisperBubble, {
@@ -3949,12 +5180,15 @@ function makePetUI(rt) {
 			if (whisperBubbleOn && whisperText) return h(WhisperBubble, {
 				text: whisperText,
 				image: whisperImage,
+				url: whisperUrl,
 				assetRoot: cfg.assetRoot,
 				on: whisperBubbleOn
 			});
-			if (bubbleOn && balance && cfg.balanceEnabled) return h(BalanceBubble, {
+			if (bubbleOn && balance && (cfg.balanceEnabled || balanceManual)) return h(BalanceBubble, {
 				state: balance,
-				on: bubbleOn
+				on: bubbleOn,
+				expanded: balanceExpanded,
+				onToggle: toggleBalanceDetail
 			});
 			if (workBubbleOn && workText && cfg.workStatusEnabled) return h(WhisperBubble, {
 				text: workText,
@@ -3965,8 +5199,7 @@ function makePetUI(rt) {
 		const commonVideoProps = {
 			muted: true,
 			playsInline: true,
-			autoPlay: true,
-			title: cfg.name
+			autoPlay: true
 		};
 		const hitProps = {
 			className: "dsh-pet-hit",
@@ -3981,8 +5214,13 @@ function makePetUI(rt) {
 			onPointerMove: handlePointerMove,
 			onPointerUp: handlePointerUp,
 			onPointerCancel: handlePointerUp,
+			onPointerEnter: (e) => {
+				placeTip(e.clientX, e.clientY);
+				setTipOn(true);
+			},
+			onPointerLeave: () => setTipOn(false),
 			onContextMenu: handleContextMenu,
-			title: cfg.name
+			"aria-label": cfg.name
 		};
 		return h("div", {
 			ref: rootRef,
@@ -3992,24 +5230,35 @@ function makePetUI(rt) {
 			style: Object.assign({
 				"--dsh-pet-size": size + "px",
 				"--dsh-pet-mx": margin.x + "px",
-				"--dsh-pet-my": margin.y + "px"
+				"--dsh-pet-my": margin.y + "px",
+				"--dsh-pet-font-bubble": fontPx.bubble + "px",
+				"--dsh-pet-font-tip": fontPx.tip + "px"
 			}, rootStyle),
-			children: [bubbleNode, h("div", {
-				ref: stageRef,
-				className: "dsh-pet-stage",
-				style: stageStyle,
-				children: [
-					h("video", Object.assign({}, commonVideoProps, {
-						ref: videoARef,
-						className: "dsh-pet-video is-front"
-					})),
-					h("video", Object.assign({}, commonVideoProps, {
-						ref: videoBRef,
-						className: "dsh-pet-video"
-					})),
-					h("div", hitProps)
-				]
-			})]
+			children: [
+				bubbleNode,
+				h("div", {
+					ref: stageRef,
+					className: "dsh-pet-stage",
+					style: stageStyle,
+					children: [
+						h("video", Object.assign({}, commonVideoProps, {
+							ref: videoARef,
+							className: "dsh-pet-video is-front"
+						})),
+						h("video", Object.assign({}, commonVideoProps, {
+							ref: videoBRef,
+							className: "dsh-pet-video"
+						})),
+						h("div", hitProps)
+					]
+				}),
+				h("div", {
+					ref: tipRef,
+					className: TOOLTIP_CLASS + (tipOn ? " is-on" : ""),
+					"aria-hidden": "true",
+					children: cfg.name
+				})
+			]
 		});
 	}
 	/** 多开容器：一次拉取成品配置 → 拍平 → 渲染多个 PetCard */
@@ -4020,10 +5269,12 @@ function makePetUI(rt) {
 		const [balance, setBalance] = useState(null);
 		const [balanceTick, setBalanceTick] = useState(0);
 		const [balanceNoticeTick, setBalanceNoticeTick] = useState(0);
+		const [balanceManual, setBalanceManual] = useState(false);
 		const noticeKeyRef = useRef(null);
 		const applyBalanceRef = useRef(() => {});
 		applyBalanceRef.current = (state, explicit) => {
 			setBalance(state);
+			setBalanceManual(explicit);
 			if (state.ok) {
 				setBalanceTick((t) => t + 1);
 				return;
@@ -4035,6 +5286,11 @@ function makePetUI(rt) {
 		};
 		const [workStatus, setWorkStatus] = useState(null);
 		const [workStatusTick, setWorkStatusTick] = useState(0);
+		useEffect(() => {
+			const family = pets[0]?.font?.family;
+			if (family === void 0) return;
+			document.documentElement.style.setProperty("--dsh-pet-font-family", fontStackOf(family));
+		}, [pets]);
 		useEffect(() => {
 			let alive = true;
 			/** 唯一填充点：host 成品聚合 → 渲染列表。初始加载与设置页保存/同步后重载都走这里——
@@ -4050,7 +5306,7 @@ function makePetUI(rt) {
 			};
 			/** 拉成品聚合：host readAllConfig 的输出（字段填满、绝对正确），客户端零校验零兜底 */
 			const loadMerged = async () => {
-				const r = await fetch("/dsh-pet-7340/config");
+				const r = await fetch("/dsh-pet-7340/config", { cache: "no-store" });
 				if (!r.ok) throw new Error("config HTTP " + r.status);
 				return await r.json();
 			};
@@ -4085,61 +5341,114 @@ function makePetUI(rt) {
 		const sayRef = useRef({});
 		const [animCueTick, setAnimCueTick] = useState(0);
 		const animCueRef = useRef({});
+		const [posCueTick, setPosCueTick] = useState(0);
+		const posCueRef = useRef({});
+		const [throwCueTick, setThrowCueTick] = useState(0);
+		const throwCueRef = useRef({});
+		const [lockTick, setLockTick] = useState(0);
+		const lockRef = useRef({});
+		const menuItemsRef = useRef([]);
 		useEffect(() => {
 			if (!ready) return;
 			let alive = true;
 			let baseline = null;
-			const poll = async () => {
-				try {
-					const s = await fetchState();
-					if (!alive || !s) return;
-					if (baseline === null) {
-						baseline = flattenCounters(s);
-						return;
-					}
-					for (const { path, leaf: leaf$1 } of takeChanged(s, baseline)) {
-						if (leaf$1.data === null) continue;
-						if (path === "sections.balance") {
-							const hit = readBalance(leaf$1);
-							if (hit) applyBalanceRef.current(hit.state, hit.manual);
-						} else if (path === "sections.workStatus") {
-							const snap = readWorkStatus(leaf$1);
-							if (snap) {
-								setWorkStatus(snap);
-								setWorkStatusTick((t) => t + 1);
-							}
-						} else if (path === "sections.notify") notifyFromFrame(leaf$1.data);
-						else if (path.startsWith("pets.") && path.endsWith(".say")) {
-							const petId = path.slice(5, -4);
-							const said = readSay(leaf$1);
-							if (said) {
-								sayRef.current[petId] = {
-									...said,
-									seq: (sayRef.current[petId]?.seq ?? 0) + 1
-								};
-								setSayTick((t) => t + 1);
-							}
-						} else if (path.startsWith("pets.") && path.endsWith(".anim")) {
-							const petId = path.slice(5, -5);
-							const hit = readAnim(leaf$1);
-							if (hit) {
-								animCueRef.current[petId] = {
-									name: hit.name,
-									seq: (animCueRef.current[petId]?.seq ?? 0) + 1
-								};
-								setAnimCueTick((t) => t + 1);
-							}
+			let since;
+			let longPoll = true;
+			/** 应用一份 S：首拉只记基线，之后按 counter 变化逐个分发 */
+			const applyState = (s) => {
+				if (baseline === null) {
+					baseline = flattenCounters(s);
+					menuItemsRef.current = readMenuItems(s.sections.menu?.data);
+					return;
+				}
+				for (const { path, leaf: leaf$1 } of takeChanged(s, baseline)) {
+					if (leaf$1.data === null) continue;
+					if (path === "sections.config") petBridge.reload();
+					else if (path === "sections.balance") {
+						const hit = readBalance(leaf$1);
+						if (hit) applyBalanceRef.current(hit.state, hit.manual);
+					} else if (path === "sections.workStatus") {
+						const snap = readWorkStatus(leaf$1);
+						if (snap) {
+							setWorkStatus(snap);
+							setWorkStatusTick((t) => t + 1);
+						}
+					} else if (path === "sections.notify") notifyFromFrame(leaf$1.data);
+					else if (path === "sections.menu") menuItemsRef.current = readMenuItems(leaf$1.data);
+					else if (path.startsWith("pets.") && path.endsWith(".say")) {
+						const petId = path.slice(5, -4);
+						const said = readSay(leaf$1);
+						if (said) {
+							sayRef.current[petId] = {
+								...said,
+								seq: (sayRef.current[petId]?.seq ?? 0) + 1
+							};
+							setSayTick((t) => t + 1);
+						}
+					} else if (path.startsWith("pets.") && path.endsWith(".anim")) {
+						const petId = path.slice(5, -5);
+						const hit = readAnim(leaf$1);
+						if (hit) {
+							animCueRef.current[petId] = {
+								name: hit.name,
+								url: hit.url,
+								playbackId: hit.playbackId,
+								facing: hit.facing,
+								seq: (animCueRef.current[petId]?.seq ?? 0) + 1
+							};
+							setAnimCueTick((t) => t + 1);
+						}
+					} else if (path.startsWith("pets.") && path.endsWith(".position")) {
+						const petId = path.slice(5, -9);
+						const hit = readPosition(leaf$1);
+						if (hit) {
+							posCueRef.current[petId] = {
+								...hit,
+								seq: (posCueRef.current[petId]?.seq ?? 0) + 1
+							};
+							setPosCueTick((t) => t + 1);
+						}
+					} else if (path.startsWith("pets.") && path.endsWith(".throw")) {
+						const petId = path.slice(5, -6);
+						const hit = readThrow(leaf$1);
+						if (hit) {
+							throwCueRef.current[petId] = {
+								...hit,
+								seq: (throwCueRef.current[petId]?.seq ?? 0) + 1
+							};
+							setThrowCueTick((t) => t + 1);
+						}
+					} else if (path.startsWith("pets.") && path.endsWith(".lock")) {
+						const petId = path.slice(5, -5);
+						const hit = readLock(leaf$1);
+						if (hit) {
+							lockRef.current[petId] = hit;
+							setLockTick((t) => t + 1);
 						}
 					}
-				} catch {}
+				}
 			};
-			statePoller.now = () => void poll();
-			poll();
-			const timer = window.setInterval(() => void poll(), 1e3);
+			const loop = async () => {
+				while (alive) {
+					let s = null;
+					try {
+						s = await fetchState(void 0, longPoll && since !== void 0 ? {
+							since,
+							timeoutMs: STATE_WAIT_MS
+						} : void 0);
+					} catch {}
+					if (!alive) return;
+					if (s) {
+						longPoll = typeof s.counter === "number";
+						if (longPoll) since = s.counter;
+						applyState(s);
+					}
+					if (!s || !longPoll) await new Promise((r) => setTimeout(r, STATE_FALLBACK_MS));
+				}
+			};
+			loop();
 			return () => {
 				alive = false;
-				statePoller.now = () => {};
-				window.clearInterval(timer);
 			};
 		}, [ready]);
 		return ready ? visiblePets.map((p) => h(PetCard, {
@@ -4148,12 +5457,20 @@ function makePetUI(rt) {
 			balance,
 			balanceTick,
 			balanceNoticeTick,
+			balanceManual,
 			workStatus,
 			workStatusTick,
 			say: sayRef.current[p.id],
 			sayTick,
 			animCue: animCueRef.current[p.id],
 			animCueTick,
+			posCue: posCueRef.current[p.id],
+			posCueTick,
+			throwCue: throwCueRef.current[p.id],
+			throwCueTick,
+			lock: lockRef.current[p.id],
+			lockTick,
+			menuItemsRef,
 			arena: arenaRef
 		})) : null;
 	}
@@ -4357,7 +5674,7 @@ function makeFactory() {
 	return (require) => {
 		const module = { exports: {} };
 		const react = require("react");
-		const { useEffect, useRef, useState } = react;
+		const { useEffect, useRef, useState, useCallback } = react;
 		const { jsx: h } = require("react/jsx-runtime");
 		let primitives;
 		try {
@@ -4403,7 +5720,11 @@ function makeFactory() {
 				en
 			}), "dsh-pet: dictionaries");
 			const t = ctx.locale.bind(NS);
-			ctx.effect(() => initNotify(), "dsh-pet: notifications");
+			ctx.provide("petApi7340", {
+				pose: readPose,
+				progress: readProgress
+			});
+			ctx.effect(() => initNotify({ openSession: (sessionId) => ctx.get?.("uiWorkspace")?.openSession?.(sessionId) }), "dsh-pet: notifications");
 			ctx.effect(() => {
 				const commandUi = ctx.get?.("commandUi");
 				if (!commandUi || typeof commandUi.decorate !== "function") {
@@ -4472,6 +5793,7 @@ function makeFactory() {
 				useState,
 				useEffect,
 				useRef,
+				useCallback,
 				t
 			});
 			ctx.slots.inject("settings.section", function* () {

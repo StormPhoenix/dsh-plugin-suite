@@ -4,7 +4,11 @@
 
 上游项目：[PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)。MIT 声明见 [LICENSE](LICENSE)。本仓库不含上游 Git 历史。
 
-运行代码、素材与附带源码来自已安装的 `dsh-pet@0.3.6-fix.3`，复制后仅迁移目录，字节未改。子路径 `plugins/pet/` 下的 `lib`、`runtime`、`assets`、`src`、`scripts/ensure-electron.mjs` 为复制原文件，摘要见 [SNAPSHOT.json](SNAPSHOT.json)。图标、动画、字体和图片沿用原包，公开发布前应核实素材再分发条件；预览 GIF 保留在仓库但不影响安装。
+`plugins/pet/` 同步自上游 tag `v0.3.8`（commit `593b9b0785f883630243ef6213542f4603ef69ad`），不是已安装包快照：`lib`、`runtime`、`assets`、`src`、`scripts` 与构建配置（`tsconfig*.json`、`tsdown.config.mjs`、eslint/prettier 配置）取自该 commit 的工作树，`lib` 与 `runtime/electron-helper/shared-core.js` 由 `node scripts/prepare.js` 构建，产物与源码同源。摘要见 [SNAPSHOT.json](SNAPSHOT.json)。
+
+本地修改只有一类行为定制：`runtime/electron-helper/sprite.js` 的 `click` 监听加 `detail < 2` 守卫，并新增 `dblclick → onOpenDsh()`，复用上游 `pet:open-site` 的 `dsh://open` 分支实现「双击桌宠唤起 DSH Desktop」。同步到 `v0.3.8` 时已删除此前的 Windows 原生激活链（`desktop-activation.js`、`windows-activation.js`、`src/host/window-activation.ts` 与 `/dsh-pet-7340/activate-desktop` 路由）。`package.json`（本地安装口径：private、无发布脚本、无 `koffi`）、`cordis.patch.yml`、`locale/*.json`、`README.md` 属手改清单项。
+
+图标、动画、字体和图片沿用上游，公开发布前应核实素材再分发条件；预览 GIF 保留在仓库但不影响安装。重建方式见 [plugins/pet/README.md](plugins/pet/README.md)。
 
 ## Memory
 

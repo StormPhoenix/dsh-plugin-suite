@@ -2,7 +2,8 @@
  * 第三方投喂（`POST /dsh-pet-7340/broadcast`，issue #76）的决策层单测。
  *
  * 为什么测这一层而不是只测 HTTP：本功能的契约就是这几条校验规则（文本非空、宠物存在、
- * 配图必须在包内表情包池内）。路由层在源码形态下读不到包内 assets（PACKAGE_ROOT 解析成
+ * 配图给名称时必须在包内表情包池内、给 url 时必须是 http/https 完整地址、两种形态不得同时给）。
+ * 路由层在源码形态下读不到包内 assets（PACKAGE_ROOT 解析成
  * <pkg>/src），覆盖不到这些分支——所以规则抽到 ./broadcast 里单测，路由只剩搬运。
  *
  * 用 Node 内置 test runner（node:test），不引入任何 npm 依赖。
@@ -13,7 +14,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { decideBroadcast, normalizeBroadcastText } from './broadcast.ts';
+import {
+  decideBroadcast,
+  decideBubbleClear,
+  normalizeBroadcastAnim,
+  normalizeBroadcastDuration,
+  normalizeBroadcastText,
+} from './broadcast.ts';
 
 /** 池里真实存在的两张图 */
 const IN_POOL = '可爱';
@@ -31,9 +38,11 @@ const decide = (over: Partial<Parameters<typeof decideBroadcast>[0]> = {}) =>
   decideBroadcast({
     cfg,
     requested: 'main',
-    active: '',
     text: '主人，该喝水了',
     image: undefined,
+    url: undefined,
+    duration: 10000,
+    anim: true,
     memeDirs: () => [memesDir],
     ...over,
   });
@@ -108,16 +117,12 @@ describe('decideBroadcast —— 宠物选择', () => {
     assert.equal(d.ok === true && d.petId, 'test1');
   });
 
-  test('不指定 pet → 落到当前桌宠（active）', () => {
-    const d = decide({ requested: '', active: 'test1' });
-    assert.equal(d.ok, true);
-    assert.equal(d.ok === true && d.petId, 'test1');
-  });
-
-  test('不指定且没有当前桌宠 → 兜底 main（不静默丢弃）', () => {
-    const d = decide({ requested: '', active: '' });
-    assert.equal(d.ok, true);
-    assert.equal(d.ok === true && d.petId, 'main');
+  test('不指定 pet → pet-required（缺省链已删除：绝不退到"当前桌宠"/列表第一只）', () => {
+    for (const empty of ['', '   ']) {
+      const d = decide({ requested: empty });
+      assert.equal(d.ok, false);
+      assert.equal(d.ok === false && d.reason, 'pet-required');
+    }
   });
 
   test('指定不存在的宠物 → unknown-pet（显式失败，不静默写进一个没人看的叶子）', () => {
@@ -209,5 +214,140 @@ describe('decideBroadcast —— 配图只认该桌宠条目的表情包池', ()
     assert.equal(decide({ cfg: two, memeDirs: dirs, requested: 'pack1', image: IN_POOL }).ok, false);
     assert.equal(decide({ cfg: two, memeDirs: dirs, requested: 'pack1', image: '自家图' }).ok, true);
     assert.equal(decide({ cfg: two, memeDirs: dirs, requested: 'main', image: IN_POOL }).ok, true);
+  });
+});
+
+describe('normalizeBroadcastDuration —— 气泡时长（issue #122 第 5 条）', () => {
+  test('缺省 / null → 10s（老调用方的行为一个字不变）', () => {
+    assert.equal(normalizeBroadcastDuration(undefined), 10000);
+    assert.equal(normalizeBroadcastDuration(null), 10000);
+  });
+
+  test('合法值原样透出；`0` 是合法值（字面意思：不显示）；不设上限', () => {
+    assert.equal(normalizeBroadcastDuration(0), 0);
+    assert.equal(normalizeBroadcastDuration(1), 1);
+    assert.equal(normalizeBroadcastDuration(3000), 3000);
+    assert.equal(normalizeBroadcastDuration(999999999), 999999999);
+  });
+
+  test('负数 / 非有限数 / 非数字 → null（路由据此回 bad-request）', () => {
+    for (const v of [-1, -0.5, NaN, Infinity, -Infinity, '3000', {}, [], true]) {
+      assert.equal(normalizeBroadcastDuration(v), null, `${JSON.stringify(v)} 应判非法`);
+    }
+  });
+});
+
+describe('normalizeBroadcastAnim —— 动画联动开关（只有严格 false 才关闭）', () => {
+  test('只有严格 false 才关闭', () => {
+    assert.equal(normalizeBroadcastAnim(false), false);
+  });
+
+  test('其余一律按"要联动"：缺省、true、字符串 "false"、0、null 都算开', () => {
+    for (const v of [undefined, null, true, 'false', 0, 1, {}]) {
+      assert.equal(normalizeBroadcastAnim(v), true, `${JSON.stringify(v)} 应按联动处理`);
+    }
+  });
+});
+
+describe('decideBroadcast —— 新参数原样进入结论（写进叶子的是解析后的生效值）', () => {
+  test('缺省解析成显式值：10s + 联动', () => {
+    const d = decide();
+    assert.equal(d.ok, true);
+    assert.equal(d.ok === true && d.duration, 10000);
+    assert.equal(d.ok === true && d.anim, true);
+  });
+
+  test('调用方给的值原样带出（含 duration=0 与 anim=false）', () => {
+    const d = decide({ duration: 0, anim: false });
+    assert.equal(d.ok, true);
+    assert.equal(d.ok === true && d.duration, 0);
+    assert.equal(d.ok === true && d.anim, false);
+  });
+
+  test('失败分支不带这两个字段（调用方不会误以为生效了）', () => {
+    const d = decide({ text: '', duration: 0, anim: false });
+    assert.equal(d.ok, false);
+    assert.equal(d.ok === false && 'duration' in d, false);
+  });
+});
+
+describe('decideBubbleClear —— 清空气泡（只有"清哪只宠物"会失败）', () => {
+  test('指定存在的宠物 → 通过', () => {
+    const d = decideBubbleClear({ cfg, requested: 'test1' });
+    assert.equal(d.ok, true);
+    assert.equal(d.ok === true && d.petId, 'test1');
+  });
+
+  test('pet 缺省 → pet-required（与 /broadcast 同一条口径）', () => {
+    const d = decideBubbleClear({ cfg, requested: '' });
+    assert.equal(d.ok, false);
+    assert.equal(d.ok === false && d.reason, 'pet-required');
+  });
+
+  test('不存在的宠物 → unknown-pet（显式失败，不去写一个没人看的叶子）', () => {
+    const d = decideBubbleClear({ cfg, requested: 'ghost' });
+    assert.equal(d.ok, false);
+    assert.equal(d.ok === false && d.reason, 'unknown-pet');
+    assert.match(d.ok === false ? d.message : '', /ghost/);
+  });
+
+  test('没有"气泡不存在"这种失败：空状态下也是 ok（幂等）', () => {
+    // 决策层看不到气泡当前显隐，本来就不该为它造一个失败分支
+    assert.equal(decideBubbleClear({ cfg, requested: 'main' }).ok, true);
+  });
+});
+
+describe('decideBroadcast —— 配图的 url 形态（第三方自带素材，issue #122 第 1 条）', () => {
+  const URL_OK = 'https://cdn.example.com/拒绝换壁纸.png';
+
+  test('给 url → 通过，且**不查表情包池**：图在第三方手里，池里当然没有', () => {
+    const d = decide({ url: URL_OK });
+    assert.equal(d.ok, true);
+    assert.equal(d.ok === true && d.url, URL_OK);
+    assert.equal(d.ok === true && d.image, undefined, 'url 形态不应同时给出 image');
+  });
+
+  test('url 前后空白 → trim 后判定', () => {
+    const d = decide({ url: '  ' + URL_OK + '  ' });
+    assert.equal(d.ok === true && d.url, URL_OK);
+  });
+
+  test('同源相对地址不行——必须是完整 URL', () => {
+    const d = decide({ url: '/dsh-pet-wallpaper/asset/x.png' });
+    assert.equal(d.ok, false);
+    assert.equal(d.ok === false && d.reason, 'bad-request');
+  });
+
+  test('只放行 http / https：其余 scheme 一律 bad-request', () => {
+    for (const url of ['file:///C:/secret.png', 'ftp://example.com/x.png', 'javascript:alert(1)']) {
+      const d = decide({ url });
+      assert.equal(d.ok, false, `${url} 不应通过`);
+      assert.equal(d.ok === false && d.reason, 'bad-request');
+    }
+  });
+
+  test('image 与 url 同时给 → bad-request（两种形态二选一，不替调用方猜）', () => {
+    const d = decide({ image: IN_POOL, url: URL_OK });
+    assert.equal(d.ok, false);
+    assert.equal(d.ok === false && d.reason, 'bad-request');
+  });
+
+  test('url 形态下不产生 unknown-image（那道校验只属于名称形态）', () => {
+    // 地址里带的文件名根本不在池里：名称形态必然 unknown-image，url 形态照旧通过
+    const d = decide({ url: 'https://cdn.example.com/池里没有这张.png' });
+    assert.equal(d.ok, true);
+  });
+
+  test('纯文本路径不受影响：image / url 都不给 → 照旧通过且不带配图字段', () => {
+    const d = decide({ image: undefined, url: undefined });
+    assert.equal(d.ok, true);
+    assert.equal(d.ok === true && 'image' in d, false);
+    assert.equal(d.ok === true && 'url' in d, false);
+  });
+
+  test('url 形态下文本与宠物校验照旧', () => {
+    assert.equal(decide({ text: '', url: URL_OK }).ok, false);
+    const d = decide({ url: URL_OK, requested: 'ghost' });
+    assert.equal(d.ok === false && d.reason, 'unknown-pet');
   });
 });

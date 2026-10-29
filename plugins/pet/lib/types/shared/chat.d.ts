@@ -1,4 +1,5 @@
-/** POST /dsh-pet-7340/chat?pet=<id> {text}：只回是否受理（回复走 /state 的 pets.<id>.say） */
+/** POST /dsh-pet-7340/chat?pet=<id> {text}：回执为 `{ok,text,image?}`；本类型只声明消费方
+ *  用到的 `ok`（正文展示一律走 /state 的 pets.<id>.say） */
 export type ChatSendState = {
     ok: true;
 } | {
@@ -33,6 +34,9 @@ export declare function mountChatDialog(opts: {
     petId: string;
     /** 端点基址：浏览器默认相对 /dsh-pet-7340/chat；桌面传绝对 URL（file:// 页面需绝对） */
     baseUrl?: string;
+    /** 这个弹窗开在**哪一端**：`POST /chat` 的 `?surface=` 是必填的（宿主据此把"必然不可能"提前
+     *  拒掉，见 src/host/surface.ts）。弹窗只可能开在网页或桌面，所以这里只有两个取值。 */
+    surface: 'web' | 'desktop';
     x: number;
     y: number;
     /** 发送成功后调用（弹窗此时已关闭）：调用方叫醒一拍 /state 让回复 0 延迟出现。

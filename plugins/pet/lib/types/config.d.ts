@@ -1,3 +1,4 @@
+export declare const PET_DISPLAY_SET: ReadonlySet<string>;
 /** id 禁用的字符（Windows 文件名保留符 + 控制字符，防配置值逃逸文件路径）。
  *  同时被 thumb 路由的 petId 校验复用：那里同样是"标识符不得当路径片段"。 */
 export declare const ID_FORBIDDEN: RegExp;
@@ -46,6 +47,21 @@ export interface ConfigPaths {
  */
 export declare function migrateUserConfig(paths: ConfigPaths, log?: (message: string) => void): boolean;
 /**
+ * 按条目 key（= 文件名前缀 = 素材根）定位**文件宠物**的实际文件与磁盘原对象。
+ *
+ * 用途：写路径（POST /pet-display）改某只文件宠物的 display 时，既要写回**它自己的**配置文件，
+ * 也要拿该文件的 existing 去做「透传保留」——否则文件里用户手改的 whisperPrompt / animations /
+ * memes 等非白名单字段会被 saveUserConfig 的白名单重建整份抹掉（与 main 层 readUserConfig
+ * 同一套语义，见其注释里的老 bug 说明）。
+ *
+ * 文件名可能是 `<前缀>-config.json` 或 `.jsonc`（与 scanPetFiles 同一套规则，不在这里重复写死
+ * 扩展名——写错扩展名就会新建一个空配置，用户那只宠物反而"没被改到"）。前缀不存在 → undefined。
+ */
+export declare function readPetConfigEntry(paths: ConfigPaths, entry: string): {
+    path: string;
+    raw: Record<string, unknown> | undefined;
+} | undefined;
+/**
  * 唯一读取函数：内置默认 + 用户主配置 + 文件宠物逐字段合并后的完成品聚合。
  * 返回 { main: {...}, test1: {...}, ... } —— 每个条目都是原文件结构且所有字段已填满，
  * 消费端直接读，不做任何校验/兜底。每次调用重新读文件：修改配置刷新/重启即生效。
@@ -54,7 +70,8 @@ export declare function readAllConfig(paths: ConfigPaths): Record<string, Record
 /** 拍平全部条目的 pets 为单列表（host 消费端用：桌面宠物列表 / 命令 / 当前桌宠解析） */
 export declare function flattenPetList(merged: Record<string, Record<string, unknown>>): Record<string, unknown>[];
 /** 在完成品聚合里按实例 id 定位宠物及其所属条目（host 内部消费索引）：
- *  条目 key 即素材根（assetRoot）；条目级字段（whisperPrompt/chatMemoryRounds/animations）随条目取。 */
+ *  条目 key 即素材根（assetRoot）；条目级字段（whisperPrompt/chatMemoryRounds/animations）随条目取
+ *  （唯一例外：whisperPrompt 可被实例覆盖——调用方要生效值请走 ./persona 的 petPersona，别直接读 conf）。 */
 export declare function findPetInstance(merged: Record<string, Record<string, unknown>>, petId: string): {
     entry: string;
     conf: Record<string, unknown>;
@@ -64,6 +81,8 @@ export declare function findPetInstance(merged: Record<string, Record<string, un
  * 保存用户层（PUT /config）：更新 main-config.jsonc，接受可编辑字段（pets + 全局开关：
  * notificationsEnabled / whisperImageEnabled / chatImageEnabled / confineToScreen + physics
  * + whisperModel / chatModel + chatMemoryRounds + chatImageLimit）。
+ * pets 内除 id/name/size/四个开关/display/position 外，还接可选的 `whisperPrompt`（实例级人设；
+ * 空串 = 删除覆盖，回落条目）。
  * 编辑语义：**非白名单顶层字段（whisperPrompt / eventsRefreshSec / memes 等）从
  * `existing`（当前磁盘上的用户文件原对象）原样透传保留**——
  * 用户手动编辑的精调配置不会被设置页保存抹掉（旧实现是纯白名单重建，会整体覆盖丢失）。

@@ -1,4 +1,3 @@
-import { createRequire } from "node:module";
 import { createReadStream, existsSync, fstatSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -8,8 +7,9 @@ import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
 import { BlockAssembler, ReasoningEffortId, createAssistantMessage, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { downloadArtifact } from "@electron/get";
-import extract from "@electron-internal/extract-zip";
+
 //#region src/host/balance/internal.ts
 /**
 * 余额查询的**内部工具**（host 侧）：网络策略 + 响应校验 + 金额处理。
@@ -33,7 +33,6 @@ async function fetchOnce(url, key) {
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
 	});
 }
-/** fetch + 重试；全败抛最后错误 */
 async function fetchWithRetry(url, key) {
 	let last;
 	for (let i = 0; i <= RETRIES; i++) try {
@@ -44,24 +43,20 @@ async function fetchWithRetry(url, key) {
 	}
 	throw last instanceof Error ? last : new Error(String(last));
 }
-/** 数字兜底校验：数值化失败或非有限数 → throw（数据异常显式报错，不静默当 0） */
 function num(value, what) {
 	const n = Number(value);
 	if (!Number.isFinite(n)) throw new Error("dsh-pet: 余额数据非法字段 " + what);
 	return n;
 }
-/** 字符串兜底校验：非空字符串，否则 throw */
 function str(value, what) {
 	if (typeof value !== "string" || value.length === 0) throw new Error("dsh-pet: 余额数据非法字段 " + what);
 	return value;
 }
-/** 宽松数值（数字或数字字符串）：缺失/空/非法 → undefined（可选字段用；必填字段走 num() 抛错） */
 function looseNum(value) {
 	if (value === void 0 || value === null || value === "") return void 0;
 	const n = Number(value);
 	return Number.isFinite(n) ? n : void 0;
 }
-/** 取对象：不是对象（含数组/null）→ undefined */
 function obj(value) {
 	return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
 }
@@ -73,11 +68,10 @@ function resetTime(value) {
 	if (typeof value === "string") return value.length > 0 ? value : void 0;
 	const n = looseNum(value);
 	if (n === void 0 || n <= 0) return void 0;
-	const ms = n < 0xe8d4a51000 ? n * 1e3 : n;
+	const ms = n < 1e12 ? n * 1e3 : n;
 	const d = new Date(ms);
 	return Number.isNaN(d.getTime()) ? void 0 : d.toISOString();
 }
-/** 一个限额窗口（`{used, cap, resetAt}`）→ 百分比 + 满额度 + 重置时间；形态不认识 → undefined（该窗口视为不存在） */
 function readWindow(value) {
 	const w = obj(value);
 	if (!w) return void 0;
@@ -90,48 +84,24 @@ function readWindow(value) {
 		resetsAt: resetTime(w.resetAt)
 	};
 }
-/** 查询串：只带出现过的参数（`orgId` 取不到时不硬塞空值） */
 function queryString(params) {
 	const pairs = Object.entries(params).filter(([, v]) => v !== void 0);
 	return pairs.length > 0 ? "?" + pairs.map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&") : "";
 }
-/**
-* 账号侧金额 → 两位小数字符串。
-*
-* 平台回传的是**保留服务端精度的原始串**（实测形如 `9.9902690000000000`，README 亦声明
-* 允许 `0E-16`、`5.0000000000000000` 这类写法），直接显示会变成 `¥9.9902690000000000`，
-* 与官方路由的 `¥8.79` 风格不一致 —— 故在这里收敛到两位小数。
-* 非法（非数字）仍抛错，绝不伪造 0。
-*/
 function money(value, what) {
 	const raw = str(value, what);
 	const n = Number(raw);
 	if (!Number.isFinite(n)) throw new Error("dsh-pet: 账号余额金额非法 " + what);
 	return n.toFixed(2);
 }
-/**
-* 两个金额串相加 → 两位小数。
-* 走整数分相加（先四舍五入到分），避免 0.1+0.2 这类二进制浮点误差在金额上显形。
-*/
 function sumMoney(a, b) {
 	return ((Math.round(Number(a) * 100) + Math.round(Number(b) * 100)) / 100).toFixed(2);
 }
+
 //#endregion
 //#region src/host/balance/providers/commandcode.ts
-/**
-* Command Code（provider id `commandcode`）—— 三窗口用量，走**控制面** `/alpha/*`。
-*
-* 用量在官方 CLI 使用的未文档化控制面上，与推理数据面的 `/provider`、`/provider/v1` 不是同一条
-* 路径：先 whoami 取 orgId，再依次取额度 / 订阅 / 当期消耗（**串行 4 次调用**）。
-*
-* 数据来源与口径（与官方 CLI 的 `/alpha` 路由一致）：
-* - `credits`：`monthlyCredits` + `purchasedCredits` + `freeCredits` = 剩余额度；
-* - `windowLimits`：`limited` 为真才有 5h（`fiveHour`）/ 周窗口，各 `{used, cap, resetAt}`；
-* - `usage/summary` 的 `totalCost` = 当期已消耗 → 月度百分比 = 消耗 /（消耗 + 剩余）；
-* - 订阅接口（可选）只提供月度重置时间（`currentPeriodEnd`）。
-*
-* 展示形态与 opencode 相同（`shape: 'windows'`），展示层因而共用同一套「取最紧迫窗口」逻辑。
-*/
+/** 控制面基址（`/alpha/*` 固定在根域名） */
+const API_BASE = "https://api.commandcode.ai";
 /** 滚动窗时长（展示名）：本服务商的 5h 窗口就是 `windowLimits.fiveHour` */
 const ROLLING_LABEL$1 = "5h";
 /** 抓一次 JSON（GET + Bearer），HTTP 非 2xx 抛错；`label` 是接口路径，只进错误信息（便于自查哪一个失败） */
@@ -140,12 +110,6 @@ async function fetchJson(url, key, label) {
 	if (!res.ok) throw new Error("commandcode " + label + " HTTP " + res.status);
 	return await res.json();
 }
-/**
-* 解析三个接口的响应 → 成功结果（纯函数：网络与凭证都在外面，测试直接喂真实报文）。
-*
-* 失败口径：**必填字段缺失/非法一律抛错**（调用方落成 `fetch-error`，绝不伪造 0 余额）；
-* 可选信息（不限额窗口、`cap` 为 0、占位重置时间、订阅缺失）一律省略。
-*/
 function parseCommandCode(creditsBody, subscriptionBody, summaryBody, provider) {
 	const root = obj(creditsBody);
 	const credits = obj(root?.credits);
@@ -157,13 +121,15 @@ function parseCommandCode(creditsBody, subscriptionBody, summaryBody, provider) 
 	];
 	if (creditFields.every((v) => looseNum(v) === void 0)) throw new Error("dsh-pet: commandcode credits 响应缺少额度字段");
 	const remaining = creditFields.reduce((sum, v) => sum + Math.max(0, looseNum(v) ?? 0), 0);
-	const spentRaw = obj(summaryBody)?.totalCost;
+	const summary = obj(summaryBody);
+	const spentRaw = summary?.totalCost;
 	if (spentRaw === void 0 || spentRaw === null) throw new Error("dsh-pet: commandcode usage 响应缺少 totalCost");
 	const spent = Math.max(0, num(spentRaw, "totalCost"));
 	const pool = spent + remaining;
 	const data = { monthly: pool > 0 ? spent / pool * 100 : 0 };
 	if (pool > 0) data.monthlyCapUsd = pool;
-	const periodEnd = obj(obj(subscriptionBody)?.data)?.currentPeriodEnd;
+	const subscription = obj(obj(subscriptionBody)?.data);
+	const periodEnd = subscription?.currentPeriodEnd;
 	if (typeof periodEnd === "string" && periodEnd.length > 0) data.monthlyResetsAt = periodEnd;
 	const limits = obj(root?.windowLimits) ?? obj(credits.windowLimits);
 	if (limits?.limited === true) {
@@ -189,40 +155,41 @@ function parseCommandCode(creditsBody, subscriptionBody, summaryBody, provider) 
 	};
 }
 const commandCode = {
-	ids: ["commandcode"],
+	id: "commandcode",
 	credential: {
 		mode: "ref",
 		ref: "COMMANDCODE_API_KEY"
 	},
 	async fetch({ key, provider }) {
-		const org = obj(obj(await fetchJson("https://api.commandcode.ai/alpha/whoami" + queryString({ limits: "1" }), key, "/alpha/whoami"))?.org);
+		const whoami = obj(await fetchJson(API_BASE + "/alpha/whoami" + queryString({ limits: "1" }), key, "/alpha/whoami"));
+		const org = obj(whoami?.org);
 		const orgId = typeof org?.id === "string" && org.id.length > 0 ? org.id : void 0;
-		const credits = await fetchJson("https://api.commandcode.ai/alpha/billing/credits" + queryString({ orgId }), key, "/alpha/billing/credits");
+		const credits = await fetchJson(API_BASE + "/alpha/billing/credits" + queryString({ orgId }), key, "/alpha/billing/credits");
 		let subscription;
 		try {
-			subscription = await fetchJson("https://api.commandcode.ai/alpha/billing/subscriptions" + queryString({ orgId }), key, "/alpha/billing/subscriptions");
+			subscription = await fetchJson(API_BASE + "/alpha/billing/subscriptions" + queryString({ orgId }), key, "/alpha/billing/subscriptions");
 		} catch {
 			subscription = void 0;
 		}
 		const periodStart = obj(obj(subscription)?.data)?.currentPeriodStart;
-		const summary = await fetchJson("https://api.commandcode.ai/alpha/usage/summary" + queryString({
+		const summary = await fetchJson(API_BASE + "/alpha/usage/summary" + queryString({
 			since: typeof periodStart === "string" ? periodStart : void 0,
 			orgId
 		}), key, "/alpha/usage/summary");
 		return parseCommandCode(credits, subscription, summary, provider);
 	}
 };
+
 //#endregion
 //#region src/host/balance/deepseek-common.ts
-/**
-* DeepSeek 峰谷计价档位（北京时间）：
-* - 高峰：工作日 9:00–12:00、14:00–18:00；其余为空闲（低谷）
-* - 周六/周日全天按低谷价计费（自 2026-08-23 起，周末不再区分峰谷）
-*
-* 在**取数时刻**算好后随数据带出（而不是展示时刻）：气泡只在刷新后显示 ≤10 秒（客户端 1s 轮询
-* 拉取），与显示时刻的偏差只有 1~2 秒。换来的是展示层完全不需要知道任何计价规则。
-*/
-function deepseekPricingTier(now = /* @__PURE__ */ new Date()) {
+const DEEPSEEK_FULL_BALANCE = {
+	CNY: "20",
+	USD: "5"
+};
+function deepseekFullBalance(currency) {
+	return DEEPSEEK_FULL_BALANCE[currency];
+}
+function deepseekPricingTier(now = new Date()) {
 	const parts = new Intl.DateTimeFormat("en-US", {
 		timeZone: "Asia/Shanghai",
 		weekday: "short",
@@ -235,72 +202,66 @@ function deepseekPricingTier(now = /* @__PURE__ */ new Date()) {
 	if (weekday === "Sat" || weekday === "Sun") return "idle";
 	return hour >= 9 && hour < 12 || hour >= 14 && hour < 18 ? "peak" : "idle";
 }
+
 //#endregion
 //#region src/host/balance/providers/deepseek-account.ts
-/**
-* DSH 账号路由（provider id `deepseek-account`）—— 免费额度 / 平台登录，账户金额。
-*
-* 这条路由**没有 API Key**（`credential.mode === 'none'`）：凭证是 DSH 账号服务持有的授权记录，
-* 因此不发任何 HTTP，只经调用方注入的 `resolveAccount`（= `ctx.deepseekAccount.getBalance`）取快照。
-*
-* 展示口径与 `deepseek-official` **完全一致**（同一个 shape）：气泡都是「余额（峰/谷）¥x.xx」，
-* 金额语义也对齐官方定义 —— `total` = 赠送 + 充值（`granted` + `toppedUp`）。差异只在取数。
-* 档位基准与峰谷档位取自 ./deepseek-common.ts（两条 deepseek 路由同一套口径）。
-*/
-/**
-* 账号余额快照 → 成功结果（纯函数，便于测试直接喂真实结构）。
-*
-* 失败口径：没有可用的充值钱包（未登录 / 查询失败 / 空数组）→ 抛错，由调用方落成 `fetch-error`；
-* 金额非法同理 —— **绝不伪造 0 余额**。
-*
-* 币种：钱包自带 `CNY`/`USD`，这里一并带出去，展示层据此选符号（CNY → ¥）。
-*/
 function parseAccountBalance(snapshot, provider) {
 	if (!snapshot) throw new Error("dsh-pet: 账号未登录（deepseek-account）");
 	if (snapshot.status !== "ready") throw new Error("dsh-pet: 账号余额查询失败");
 	const wallets = Array.isArray(snapshot.value) ? snapshot.value : [];
 	if (wallets.length === 0) throw new Error("dsh-pet: 账号没有充值钱包余额");
-	const first = obj(wallets[0]);
-	if (!first) throw new Error("dsh-pet: 账号钱包结构非法");
-	const currency = typeof first.currency === "string" && first.currency.length > 0 ? first.currency : "CNY";
-	const toppedUp = money(first.balance, "balance");
-	const bonus = (Array.isArray(snapshot.bonusWallets) ? snapshot.bonusWallets : []).map((w) => obj(w)).find((w) => w !== void 0 && w.currency === currency);
-	const granted = bonus ? money(bonus.balance, "bonus balance") : "0.00";
+	const candidates = wallets.map((w) => obj(w)).filter((w) => w !== void 0);
+	if (candidates.length === 0) throw new Error("dsh-pet: 账号钱包结构非法");
+	const toppedUpBy = new Map();
+	for (const w of candidates) {
+		const currency = typeof w.currency === "string" && w.currency.length > 0 ? w.currency : "CNY";
+		const amount = money(w.balance, "balance");
+		const prev = toppedUpBy.get(currency);
+		toppedUpBy.set(currency, prev === void 0 ? amount : sumMoney(prev, amount));
+	}
+	const grantedBy = new Map();
+	for (const raw of Array.isArray(snapshot.bonusWallets) ? snapshot.bonusWallets : []) {
+		const w = obj(raw);
+		if (!w || typeof w.currency !== "string" || w.currency.length === 0) continue;
+		const amount = money(w.balance, "bonus balance");
+		const prev = grantedBy.get(w.currency);
+		grantedBy.set(w.currency, prev === void 0 ? amount : sumMoney(prev, amount));
+	}
+	for (const currency of grantedBy.keys()) if (!toppedUpBy.has(currency)) toppedUpBy.set(currency, "0.00");
+	const walletsOut = [...toppedUpBy.entries()].map(([currency, toppedUp]) => {
+		const granted = grantedBy.get(currency) ?? "0.00";
+		const fullBalance = deepseekFullBalance(currency);
+		return {
+			currency,
+			total: sumMoney(granted, toppedUp),
+			granted,
+			toppedUp,
+			...fullBalance === void 0 ? {} : { fullBalance }
+		};
+	});
 	return {
 		ok: true,
 		provider,
 		shape: "money",
 		data: {
-			currency,
-			total: sumMoney(granted, toppedUp),
-			granted,
-			toppedUp,
-			fullBalance: "20",
+			wallets: walletsOut,
 			tier: deepseekPricingTier()
 		}
 	};
 }
 const deepseekAccount = {
-	ids: ["deepseek-account"],
+	id: "deepseek-account",
 	credential: { mode: "none" },
 	async fetch({ provider, resolveAccount }) {
 		if (!resolveAccount) throw new Error("dsh-pet: 缺少账号服务（" + provider + "）");
 		return parseAccountBalance(await resolveAccount(), provider);
 	}
 };
+
 //#endregion
 //#region src/host/balance/providers/deepseek-official.ts
-/**
-* DeepSeek 官方 API Key 路由（provider id `deepseek-official`）—— 账户金额。
-*
-* 接口：`GET https://api.deepseek.com/user/balance`（Bearer）。
-* 三个金额由接口原样透传（不自己按 `granted + topped_up` 重算 `total_balance`）—— 官方路由给的
-* 数字比本插件推算的可信。档位基准与峰谷档位取自 ./deepseek-common.ts（两条 deepseek 路由同一套口径）。
-*
-* 与账号路由（./deepseek-account.ts）**同 shape、同形**：展示层共用同一套气泡，差异只在取数。
-*/
 const deepseekOfficial = {
-	ids: ["deepseek-official"],
+	id: "deepseek-official",
 	credential: {
 		mode: "ref",
 		ref: "DEEPSEEK_API_KEY"
@@ -308,36 +269,35 @@ const deepseekOfficial = {
 	async fetch({ key, provider }) {
 		const res = await fetchWithRetry("https://api.deepseek.com/user/balance", key);
 		if (!res.ok) throw new Error("deepseek balance HTTP " + res.status);
-		const infos = (await res.json())?.balance_infos;
+		const body = await res.json();
+		const infos = body?.balance_infos;
 		if (!Array.isArray(infos) || infos.length === 0) throw new Error("dsh-pet: deepseek balance 响应缺少 balance_infos");
-		const first = infos[0];
+		const wallets = infos.map((raw) => {
+			const w = obj(raw) ?? {};
+			const currency = str(w.currency, "currency");
+			const fullBalance = deepseekFullBalance(currency);
+			return {
+				currency,
+				total: str(w.total_balance, "total_balance"),
+				granted: str(w.granted_balance, "granted_balance"),
+				toppedUp: str(w.topped_up_balance, "topped_up_balance"),
+				...fullBalance === void 0 ? {} : { fullBalance }
+			};
+		});
 		return {
 			ok: true,
 			provider,
 			shape: "money",
 			data: {
-				currency: str(first.currency, "currency"),
-				total: str(first.total_balance, "total_balance"),
-				granted: str(first.granted_balance, "granted_balance"),
-				toppedUp: str(first.topped_up_balance, "topped_up_balance"),
-				fullBalance: "20",
+				wallets,
 				tier: deepseekPricingTier()
 			}
 		};
 	}
 };
+
 //#endregion
 //#region src/host/balance/providers/opencode-go.ts
-/**
-* OpenCode Go（provider id `opencode-go`）—— 三窗口用量。
-*
-* 接口：`GET https://opencode.ai/zen/go/v1/usage`（Bearer），响应 `{ usage: { rolling, weekly, monthly } }`。
-* 该接口保证三个窗口都在，故三窗与三个重置时间全是必填（缺一个就说明响应形态变了 → 报错，不静默）。
-*
-* 满额度是**本服务商的业务常量**（接口不回报），跟着数据带出去；滚动窗是 5 小时。
-*
-* 注意 `opencode-go` 与 `opencode` 是两个 id：Zen 按量版（`opencode`）没有用量接口，不登记。
-*/
 /** 各窗口满额度金额（USD）。业务常量：12 = 5h（5 小时滚动窗口）、30 = 周、60 = 月 */
 const QUOTA_USD = {
 	rolling: 12,
@@ -346,65 +306,74 @@ const QUOTA_USD = {
 };
 /** 滚动窗时长（展示名）：本服务商是 5 小时 */
 const ROLLING_LABEL = "5h";
-//#endregion
-//#region src/host/balance/index.ts
-/**
-* 余额查询（host 半侧）：把「当前服务商」映射到对应的余额/用量接口并抓取。
-*
-* 设计：
-* - 数据源按「服务商 provider id」寻址（来源 = agentDefaultModel.currentSelection().provider）；
-* - 只登记**有查询接口**的服务商（公开文档化，或第一方 CLI 正在用的未文档化路由）；一个都没有的
-*   服务商不在此表 → 显式 `unsupported`，由上层决定不显示，绝不静默伪造 0 余额；
-* - **一个服务商 = 一个自包含文件**（见 ./providers/）：接口地址、业务常量、响应解析都在它自己那份，
-*   本文件只留注册表与统一的凭证/失败口径。加一个服务商 = 加一个 provider 文件 + 在下面加一行；
-* - key 由调用方经 DSH 官方 credentialRef 解析后注入（不直接读 .credentials.yaml）；
-* - 例外：DSH 账号路由（`deepseek-account`，免费额度 / 平台登录）**没有** API Key，它的凭证是
-*   账号服务持有的授权记录，由调用方经 `resolveAccount` 注入查询（同样不直接读凭证存储）；
-* - 失败口径统一：provider 只负责成功路径，任何失败一律 `throw`，这里统一落成 `fetch-error`。
-*/
-/** 已登记的服务商（登记口径见模块头：只收有接口的，其余 → `unsupported`） */
-const BALANCE_PROVIDERS = [
-	{
-		ids: ["opencode-go"],
-		credential: {
-			mode: "ref",
-			ref: "OPENCODE_GO_API_KEY"
-		},
-		async fetch({ key, provider }) {
-			const res = await fetchWithRetry("https://opencode.ai/zen/go/v1/usage", key);
-			if (!res.ok) throw new Error("opencode usage HTTP " + res.status);
-			const usage = (await res.json())?.usage;
-			if (!usage || typeof usage !== "object") throw new Error("dsh-pet: opencode usage 响应缺少 usage");
-			const u = usage;
-			const rolling = u.rolling, weekly = u.weekly, monthly = u.monthly;
-			if (!rolling || !weekly || !monthly) throw new Error("dsh-pet: opencode usage 响应缺少窗口");
-			return {
-				ok: true,
-				provider,
-				shape: "windows",
-				data: {
-					rolling: num(rolling.percent, "rolling.percent"),
-					weekly: num(weekly.percent, "weekly.percent"),
-					monthly: num(monthly.percent, "monthly.percent"),
-					rollingCapUsd: QUOTA_USD.rolling,
-					weeklyCapUsd: QUOTA_USD.weekly,
-					monthlyCapUsd: QUOTA_USD.monthly,
-					rollingLabel: ROLLING_LABEL,
-					rollingResetsAt: str(rolling.resetsAt, "rolling.resetsAt"),
-					weeklyResetsAt: str(weekly.resetsAt, "weekly.resetsAt"),
-					monthlyResetsAt: str(monthly.resetsAt, "monthly.resetsAt")
-				}
-			};
-		}
+const opencodeGo = {
+	id: "opencode-go",
+	credential: {
+		mode: "ref",
+		ref: "OPENCODE_GO_API_KEY"
 	},
+	async fetch({ key, provider }) {
+		const res = await fetchWithRetry("https://opencode.ai/zen/go/v1/usage", key);
+		if (!res.ok) throw new Error("opencode usage HTTP " + res.status);
+		const body = await res.json();
+		const usage = body?.usage;
+		if (!usage || typeof usage !== "object") throw new Error("dsh-pet: opencode usage 响应缺少 usage");
+		const u = usage;
+		const rolling = u.rolling, weekly = u.weekly, monthly = u.monthly;
+		if (!rolling || !weekly || !monthly) throw new Error("dsh-pet: opencode usage 响应缺少窗口");
+		return {
+			ok: true,
+			provider,
+			shape: "windows",
+			data: {
+				rolling: num(rolling.percent, "rolling.percent"),
+				weekly: num(weekly.percent, "weekly.percent"),
+				monthly: num(monthly.percent, "monthly.percent"),
+				rollingCapUsd: QUOTA_USD.rolling,
+				weeklyCapUsd: QUOTA_USD.weekly,
+				monthlyCapUsd: QUOTA_USD.monthly,
+				rollingLabel: ROLLING_LABEL,
+				rollingResetsAt: str(rolling.resetsAt, "rolling.resetsAt"),
+				weeklyResetsAt: str(weekly.resetsAt, "weekly.resetsAt"),
+				monthlyResetsAt: str(monthly.resetsAt, "monthly.resetsAt")
+			}
+		};
+	}
+};
+
+//#endregion
+//#region src/host/balance/registry.ts
+const BUILTIN_PROVIDERS = [
+	opencodeGo,
 	commandCode,
 	deepseekOfficial,
 	deepseekAccount
 ];
-/** provider id → 唯一匹配定义；未匹配返回 undefined（= 不支持查询） */
-function matchBalanceProvider(provider) {
-	return BALANCE_PROVIDERS.find((p) => p.ids.includes(provider));
+/** 第三方运行时注册：provider id → 定义。 */
+const external = new Map();
+function registerBalanceProvider(def) {
+	if (!def || typeof def !== "object") throw new TypeError("provider 定义必须是对象");
+	if (typeof def.id !== "string" || def.id.length === 0) throw new TypeError("id 必须是非空字符串");
+	if (typeof def.fetch !== "function") throw new TypeError("fetch 必须是函数");
+	if (BUILTIN_PROVIDERS.some((p) => p.id === def.id)) throw new Error("不能覆盖内置服务商: " + def.id);
+	if (external.has(def.id)) throw new Error("该服务商 id 已被注册: " + def.id);
+	external.set(def.id, def);
+	return () => {
+		if (external.get(def.id) === def) external.delete(def.id);
+	};
 }
+function listBalanceProviders() {
+	return {
+		builtin: BUILTIN_PROVIDERS.map((p) => p.id),
+		external: [...external.keys()]
+	};
+}
+function matchBalanceProvider(provider) {
+	return BUILTIN_PROVIDERS.find((p) => p.id === provider) ?? external.get(provider);
+}
+
+//#endregion
+//#region src/host/balance/index.ts
 /**
 * 失败结果（三种 reason 一个出口，避免各处手写字段）。
 * `message` 缺省时**不写这个键** —— 叶子的形状是对外契约，多一个 `undefined` 键会让
@@ -422,17 +391,18 @@ function failed(provider, reason, message) {
 		message
 	};
 }
-/**
-* 按当前服务商查询余额。
-* @param provider agentDefaultModel.currentSelection().provider
-* @param resolveKey 凭证解析：ref 名 → key（由调用方注入 ctx.credentials.resolve）
-* @param resolveAccount 账号余额查询（由调用方注入 ctx.deepseekAccount.getBalance）；
-*   只被 `deepseek-account` 用到。缺省时该路由报 `credential-missing`（账号服务不在场）
-* @returns 结构化结果：成功 / 不支持 / 缺凭证 / 抓取失败（失败带 message，绝不返回伪造数字）
-*/
+/** provider 取数抛错 → 统一的 `fetch-error` 结果（内置与第三方同一口径）。 */
+function fetchFailed(provider, e) {
+	return failed(provider, "fetch-error", e instanceof Error ? e.message : String(e));
+}
 async function queryBalance(provider, resolveKey, resolveAccount) {
 	const def = matchBalanceProvider(provider);
 	if (!def) return failed(provider, "unsupported");
+	if (!("credential" in def)) try {
+		return await def.fetch({ provider });
+	} catch (e) {
+		return fetchFailed(provider, e);
+	}
 	let key = "";
 	if (def.credential.mode === "ref") {
 		const resolved = await resolveKey(def.credential.ref);
@@ -446,29 +416,39 @@ async function queryBalance(provider, resolveKey, resolveAccount) {
 			resolveAccount
 		});
 	} catch (e) {
-		return failed(provider, "fetch-error", e instanceof Error ? e.message : String(e));
+		return fetchFailed(provider, e);
 	}
 }
+
+//#endregion
+//#region src/host/llm-call.ts
+const PET_CALL_IDENTITY = "dsh-pet";
+function noTextReason(finish) {
+	const { kind, failure } = finish ?? {};
+	if (kind === "aborted") return "生成已取消";
+	if (kind === "max-tokens") return "输出达到上限，未产出正文";
+	if (kind !== "error") return "模型未返回文本";
+	const { message, code } = failure ?? {};
+	if (typeof message === "string" && message.trim() !== "") return message;
+	if (typeof code === "string" && code.trim() !== "") return code;
+	return "未提供失败原因";
+}
+
 //#endregion
 //#region src/host/llm-reasoning.ts
-/**
-* 当前 provider/model 是否声明支持 reasoning effort（含 "off"）。
-* 能力缺失或查询失败一律保守返回 false（= 不传，等价于模型默认行为，避免请求失败）。
-*/
 async function supportsReasoningOff(ctx, provider, model) {
 	const llm = ctx.llm;
 	if (!llm || typeof llm.resolveModelInfo !== "function") return false;
 	try {
-		return (await llm.resolveModelInfo(provider, model))?.reasoning?.efforts?.some((e) => e.id === "off") ?? false;
+		const info = await llm.resolveModelInfo(provider, model);
+		return info?.reasoning?.efforts?.some((e) => e.id === "off") ?? false;
 	} catch {
 		return false;
 	}
 }
+
 //#endregion
 //#region src/host/model-selection.ts
-/** 读条目配置里的 whisperModel / chatModel：
-*  两个字段都非空 → 该选择；都为空（内置默认）→ undefined（= 跟随当前对话）；
-*  结构不对 / 只填一半（合并器已挡下，这里再防御一次）→ undefined。 */
 function configuredModel(conf, key) {
 	const raw = conf?.[key];
 	if (!raw || typeof raw !== "object") return void 0;
@@ -481,7 +461,6 @@ function configuredModel(conf, key) {
 		model
 	} : void 0;
 }
-/** 当前对话的模型（agentDefaultModel.currentSelection）；未配置 / 抛错 → undefined */
 function currentModel(ctx) {
 	try {
 		const sel = ctx.agentDefaultModel?.currentSelection();
@@ -490,11 +469,9 @@ function currentModel(ctx) {
 			model: sel.model
 		} : void 0;
 	} catch {
-		return;
+		return void 0;
 	}
 }
-/** 候选链：配置的模型优先，其次当前对话的模型；同一个选择只留一次。
-*  返回空数组 = 两个来源都拿不到（生成侧据此回「当前对话未配置模型」）。 */
 function modelCandidates(ctx, preferred) {
 	const out = [];
 	const push = (m) => {
@@ -506,32 +483,12 @@ function modelCandidates(ctx, preferred) {
 	push(currentModel(ctx));
 	return out;
 }
-/** 报错/日志用的选择标签：provider/model */
 function modelLabel(m) {
 	return m.provider + "/" + m.model;
 }
+
 //#endregion
 //#region src/host/whisper.ts
-/**
-* 碎碎念生成（host 半侧）：用 DSH 的 LLM 统一抽象层（ctx.llm）按条目配置的 whisperModel
-* （留空 = 当前对话用的 provider/model）生成一句话。与余额不同：不自己拼各服务商端点、不碰凭证——
-* ctx.llm 已接管适配器路由/模型解析/凭据，天然与对话页完全一致。
-*
-* 设计：
-* - provider/model：条目配置的 whisperModel 优先（留空 = 不指定），失败回落到
-*   agentDefaultModel.currentSelection()（当前对话的模型，与余额同源）重试一次——
-*   候选链见 model-selection.ts；
-* - system = 用户配置的 whisperPrompt（人设），user = 一个极简的"说句话"请求；
-* - 配图（可选）：开启 whisperImageEnabled 时，由调用方从表情包池随机抽一张传入，
-*   把该图描述注入 user 指令，让这句话配合画面说——随机而非让模型选：
-*   碎碎念本身没有上下文可选（人设固定、无用户输入），交模型"选"只能盲选且多了幻觉风险；
-* - reasoningEffort: 'off' —— 仅当模型声明支持 reasoning effort（含 "off"）时传，
-*   关闭深度思考：碎碎念只求随口一句，不开推理（省时省 token）。无 reasoning 元数据的
-*   模型（如 reasoningEfforts: false）显式传 off 会被 dsh-llm 判为 UNSUPPORTED_REASONING_EFFORT
-*   并折叠成空流（表现为"模型未返回文本"），因此这类模型省略该字段（语义等价于不传）；
-* - 流式收集 + BlockAssembler 拼装文本；生成失败显式返回结构化原因，不伪造文案；
-* - 短超时（LLM 冷启动/慢响应时快速放弃，不留挂起请求）。
-*/
 /** 单次生成超时（ms）：骈骈念不需要长输出，30s 足够 */
 const TIMEOUT_MS$1 = 3e4;
 /** 碎碎念指令：纯文本（原行为） */
@@ -543,15 +500,6 @@ const USER_TEXT = "随便说一句日常碎碎念，一句就好，20 字以内�
 function userTextWithMeme(meme) {
 	return "随便说一句日常碎碎念，一句就好，20 字以内。\n这次会配一张表情包一起显示，图的内容是：" + meme.name + "（" + meme.desc + "）。\n请让这句话和这张图的情绪/场景自然契合，像是配合画面说出来的；不要描述画面本身。";
 }
-/**
-* 用指定（或当前对话的）provider/model 生成一句碎碎念。
-* @param ctx 宿主上下文（注入 agentDefaultModel / llm）
-* @param system 人设提示词（whisperPrompt）
-* @param meme 配图（开启配图时传入；缺省 = 纯文本碎碎念）。生成成功时原样带回，
-*             客户端据此展示图片（host 不判断模型是否真的贴合）
-* @param preferred 条目配置单独指定的模型（whisperModel）；缺省 / 留空 = 只用当前对话的模型
-* @returns 生成的文本（+ 配图），或结构化失败（provider 缺失 / 生成错误）
-*/
 async function generateWhisper(ctx, system, meme, preferred) {
 	const candidates = modelCandidates(ctx, preferred);
 	if (candidates.length === 0) return {
@@ -568,7 +516,7 @@ async function generateWhisper(ctx, system, meme, preferred) {
 	let last = {
 		ok: false,
 		reason: "generate-error",
-		message: "模型未返回文本"
+		message: noTextReason(void 0)
 	};
 	for (const [i, sel] of candidates.entries()) {
 		const result = await generateWith$1(ctx, llm, sel, system, meme);
@@ -585,6 +533,7 @@ async function generateWith$1(ctx, llm, sel, system, meme) {
 	const options = {
 		provider: sel.provider,
 		model: sel.model,
+		sessionId: PET_CALL_IDENTITY,
 		messages: [createUserMessage({
 			content: [{
 				type: "text",
@@ -611,7 +560,7 @@ async function generateWith$1(ctx, llm, sel, system, meme) {
 	if (!text) return {
 		ok: false,
 		reason: "generate-error",
-		message: "模型未返回文本"
+		message: noTextReason(assembler.finish)
 	};
 	return meme ? {
 		ok: true,
@@ -622,62 +571,49 @@ async function generateWith$1(ctx, llm, sel, system, meme) {
 		text
 	};
 }
+
+//#endregion
+//#region src/host/whisper-policy.ts
+function automaticWhisperSchedule(policy, petEnabled, configuredPeriodSec) {
+	if (!policy) return {
+		enabled: petEnabled,
+		periodSec: configuredPeriodSec
+	};
+	const period = policy.whisperIntervalSec();
+	return {
+		enabled: petEnabled && policy.isReady() && policy.canWhisper(),
+		periodSec: Number.isFinite(period) ? Math.max(60, period) : 300
+	};
+}
+
 //#endregion
 //#region src/host/memes.ts
-/**
-* 表情包池（host 半侧）：把配置的 memes 映射（名称 → 描述）解析成可用的候选池。
-*
-* 设计：
-* - memes 是「键 = <表情包目录>/<键>.png，值 = 该图内容描述」，碎碎念/对话共用同一张表；
-* - 目录是一条**链**（调用方给，顺序即优先级）：种类独占目录 → 用户目录 → 包内目录。
-*   名字在链上任一目录里存在即算命中——这与 /pic/memes 路由的逐目录查找**必须同一份顺序**
-*   （池说"这张能选"，路由就得"取得到"，否则气泡会图裂）；链怎么算由调用方
-*   （host/index.ts 的 memeDirsFor）唯一决定，本模块只按给定顺序查盘；
-* - 只认**磁盘上真实存在**的图片：配置里写了但文件缺失的条目静默剔除（不告警刷屏，
-*   用户删图后不必同步改配置）；文件在但配置没写的图不参与（无从得知它的描述）；
-* - 顺序 = **配置里写的顺序**（不排序）：它是对外可见的语义——chatImageLimit 的"前 N 张"
-*   与交给模型看的清单都按它走，用户靠调整书写顺序决定优先级；
-* - 纯函数 + 目录参数，便于测试（不碰全局状态）。
-*/
-/**
-* 从配置的 memes 映射解析出候选池。
-* @param memes 配置的 memes 值（未配置/类型非法 → 空池）
-* @param dirs 表情包目录链（顺序即优先级；空链 → 空池）
-* @returns 按**配置里写的顺序**排列的候选池（链上哪个目录都没有该图、或描述为空 → 剔除）
-*/
 function readMemePool(memes, dirs) {
 	if (!memes || typeof memes !== "object" || Array.isArray(memes)) return [];
 	if (dirs.length === 0) return [];
 	const out = [];
-	for (const [name, desc] of Object.entries(memes)) {
+	for (const [name$1, desc] of Object.entries(memes)) {
 		const text = typeof desc === "string" ? desc.trim() : "";
-		if (!name || !text) continue;
-		if (!dirs.some((dir) => existsSync(join(dir, name + ".png")))) continue;
+		if (!name$1 || !text) continue;
+		if (!dirs.some((dir) => existsSync(join(dir, name$1 + ".png")))) continue;
 		out.push({
-			name,
+			name: name$1,
 			desc: text
 		});
 	}
 	return out;
 }
-/** 抽一张图（均匀随机）；空池返回 undefined */
 function pickMeme(pool, random = Math.random) {
 	if (pool.length === 0) return void 0;
-	return pool[Math.floor(random() * pool.length) % pool.length];
+	const idx = Math.floor(random() * pool.length) % pool.length;
+	return pool[idx];
 }
-/** 模型选图校验：只在池内命中时才认（防幻觉出池外名称）；命中返回该条目，否则 undefined */
-function matchMeme(pool, name) {
-	const key = String(name ?? "").trim();
+function matchMeme(pool, name$1) {
+	const key = String(name$1 ?? "").trim();
 	return key ? pool.find((m) => m.name === key) : void 0;
 }
 /** 配图选择标记：`[图:名称]` 附在回复末尾（容忍全角冒号与前后空白） */
 const IMG_TAG = /\[图[:：]\s*([^\]\n]+?)\s*\]\s*$/;
-/**
-* 从模型回复里取配图（对话选图的解析半侧；纯函数，无 LLM 依赖）：
-* - 命中池内 → 采纳该图，并把标记从正文剥离（标记不得留在用户可见文本里）；
-* - 未命中（模型幻觉名称）/ 空池 / 只回标记不回正文 → 一律视为"没选"，
-*   **正文原样保留**（解析失败绝不吞掉回复）。
-*/
 function extractChatImage(text, pool) {
 	const m = IMG_TAG.exec(text);
 	if (!m) return { text };
@@ -689,71 +625,23 @@ function extractChatImage(text, pool) {
 		image: hit.name
 	};
 }
-/** 表情包清单 → 给模型看的候选列表（一行一张：名称 + 描述） */
 function memeCatalog(pool) {
 	return pool.map((m) => "- " + m.name + "：" + m.desc).join("\n");
 }
-/**
-* 按「对话配图张数上限」（配置 chatImageLimit）截断候选池。
-*
-* 语义（与配置注释、设置页提示同一套口径）：
-*   - `limit <= 0` / 非有限数 → **原样返回**（0 = 不限制，与旧行为逐字一致）；
-*   - `limit > 0` → 取**池内前 limit 张**。池由 readMemePool 按**配置里写的顺序**给出，
-*     所以"前 N 张"就是你在配置里写在前面的那 N 条——想让哪几张优先被发出去，往前写就行。
-*   - 小数向下取整（与 slice 的口径一致，避免出现"取 2.5 张"这种含糊值）。
-*
-* 为什么要它：整张清单是**每条对话消息都要附**的（见 chat.ts 的 imageInstruction），
-* token 随张数线性增长；截断后模型只从这几张里挑，单条消息的配图开销上限立刻可控。
-* 只作用于对话选图——碎碎念只带抽中的那一张（whisper 侧不经过本函数）。
-*/
 function limitPool(pool, limit) {
 	const n = Math.floor(Number(limit));
 	if (!Number.isFinite(n) || n <= 0) return pool;
 	return pool.slice(0, n);
 }
+
 //#endregion
 //#region src/host/chat.ts
-/**
-* 对话生成（host 半侧）：用 DSH 的 LLM 统一抽象层（ctx.llm）按条目配置的 chatModel
-* （留空 = 当前对话用的 provider/model）生成一句回复。与碎碎念（generateWhisper）同构，区别是：
-*  - 输入带历史对话（memory.json 截取的最近 N 轮），历史以 user/assistant 消息进入请求；
-*  - user 消息 = 用户刚输入的话（不是"随便叨叨"指令）；
-*  - 回复放宽到 256 token（对话比碎碎念可说得稍多），超时放宽到 60s。
-*
-* 设计：
-*  - provider/model：条目配置的 chatModel 优先（留空 = 不指定），失败回落到
-*    agentDefaultModel.currentSelection()（当前对话的模型，与余额/碎碎念同源）重试一次——
-*    候选链见 model-selection.ts；
-*  - system = 用户配置的 whisperPrompt（人设：碎碎念与对话共用同一人设）；
-*  - reasoningEffort: 'off' —— 仅当模型声明支持 reasoning effort（含 "off"）时传，
-*    关闭深度思考：闲聊对话不需要推理。无 reasoning 元数据的模型（如
-*    reasoningEfforts: false）显式传 off 会被 dsh-llm 判为 UNSUPPORTED_REASONING_EFFORT
-*    并折叠成空流（表现为"模型未返回文本"），因此这类模型省略该字段（语义等价于不传）；
-*  - 历史 assistant 消息用 createAssistantMessage 构造（provider/model 记当前选择，
-*    仅作消息角色载体，不涉及适配器回放）；
-*  - 流式收集 + BlockAssembler 拼装文本；生成失败显式返回结构化原因，不伪造文案。
-*
-* 配图（可选，pool 非空时）：与碎碎念「随机抽」不同——对话有真实上下文（用户输入 + 历史），
-* 故把整张表情包清单交给模型由它**按语境选**一张；模型在末尾附标记 [图:名称]，
-* host 解析并**只在池内命中时**采纳（防幻觉出池外名称），未选/选错则不配图
-* （对话配图是点缀，不强制每句都带）。
-*/
 /** 单次生成超时（ms）：对话等 LLM 回复，60s 足够 */
 const TIMEOUT_MS = 6e4;
 /** 配图指令：附在 user 正文之后（紧邻回答位置，模型更容易遵守） */
 function imageInstruction(pool) {
 	return "\n\n[配图] 回复结尾可选附一张表情包给用户看，从下列清单里挑最贴合当前语境的：\n" + memeCatalog(pool) + "\n挑中就在回复最后另起一行写 [图:名称]（名称原样照抄）；没有合适的就完全不要写这个标记。";
 }
-/**
-* 生成一句对话回复。
-* @param ctx 宿主上下文（注入 agentDefaultModel / llm）
-* @param system 人设提示词（whisperPrompt）
-* @param history 最近记忆（按时间正序；user/assistant 交替）
-* @param userText 用户刚输入的话
-* @param pool 表情包候选池（开启对话配图时传入；空/缺省 = 纯文本，指令与解析都不介入）
-* @param preferred 条目配置单独指定的模型（chatModel）；缺省 / 留空 = 只用当前对话的模型
-* @returns 回复文本（+ 命中池内的配图名），或结构化失败（provider 缺失 / 生成错误）
-*/
 async function generateChat(ctx, system, history, userText, pool = [], preferred) {
 	const candidates = modelCandidates(ctx, preferred);
 	if (candidates.length === 0) return {
@@ -770,7 +658,7 @@ async function generateChat(ctx, system, history, userText, pool = [], preferred
 	let last = {
 		ok: false,
 		reason: "generate-error",
-		message: "模型未返回文本"
+		message: noTextReason(void 0)
 	};
 	for (const [i, sel] of candidates.entries()) {
 		const result = await generateWith(ctx, llm, sel, system, history, userText, pool);
@@ -804,6 +692,7 @@ async function generateWith(ctx, llm, sel, system, history, userText, pool) {
 	const options = {
 		provider: sel.provider,
 		model: sel.model,
+		sessionId: PET_CALL_IDENTITY,
 		messages: [...historyMessages, createUserMessage({
 			content: [{
 				type: "text",
@@ -830,7 +719,7 @@ async function generateWith(ctx, llm, sel, system, history, userText, pool) {
 	if (!text) return {
 		ok: false,
 		reason: "generate-error",
-		message: "模型未返回文本"
+		message: noTextReason(assembler.finish)
 	};
 	if (!wantImage) return {
 		ok: true,
@@ -846,58 +735,41 @@ async function generateWith(ctx, llm, sel, system, history, userText, pool) {
 		text: picked.text
 	};
 }
+
 //#endregion
 //#region src/host/config.ts
-/**
-* host 侧配置模块 —— 全项目唯一的配置读取入口与写盘出口。
-*
-* 角色：
-*   - readAllConfig()：读取 内置默认（assets/config.jsonc，绝对正确）+ 用户主配置
-*     （main-config.jsonc）+ 文件宠物（pet/<名>-config.json，一个文件一个条目），
-*     逐字段合并后返回 **绝对正确** 的完成品聚合：
-*       { main: {...}, test1: {...}, ... }
-*     每个条目都是对应配置文件的原文结构（字段名/位置/嵌套一律不动），且所有字段已填满。
-*   - saveUserConfig()：设置页写盘（PUT /config），白名单重建用户层 main-config.jsonc；
-*     与读取分离——写的是「可编辑层」，文件宠物永不回写、不进此模式。
-*   - syncUserConfigFromDefault()：设置页「同步」写盘（POST /config），把内置默认
-*     （assets/config.jsonc 原文，含注释）整份写入用户层——既是「恢复默认」，又直接给出
-*     一份可编辑的完整配置（不必再自己从包内复制）。合并结果与「没有用户层」等价。
-*
-* 合并规则（唯一规则）：
-*   - 内置默认配置是唯一默认值来源（「代码里的配置绝对正确」）；
-*   - 覆盖文件写了 → 用自己的值；**没写 → 静默填内置默认值**（结构性常态，不告警——
-*     设置页写的用户层本就只含 pets + notificationsEnabled；文件宠物也可以写得很短）；
-*   - **对象字段也是整段替换**（`physics` / `eventsRefreshSec` / `whisperModel` … 都适用）：
-*     写了就整段用自己的，缺的子键**不会**从内置默认补回来——消费端各自兜底
-*     （如余额周期读不到就按 1800、碎碎念按 300）；
-*   - **显式写了但非法**（类型/结构/白名单外）→ 告警 + 填内置默认值
-*     （同一 文件+字段 进程内只告警一次，避免每请求刷屏；保证返回绝不出现残缺/非法值）；
-*   - **例外：全局默认**（GLOBAL_DEFAULT_KEYS 那 9 个「用户级成本/偏好/环境/节奏」字段）——
-*     文件宠物条目的基座取**用户层**（main-config.jsonc）而不是内置默认，即"设置页改一次，
-*     所有宠物都生效"；种类文件仍可在自己顶层覆盖（写了就用自己那份）；
-*   - 身份字段例外（无默认可填）：id 必须存在、全局唯一（缺失/重复/非法/冲突 →
-*     跳过该实例并告警）；name 缺失/空 → 按该宠物 id 处理并告警（既定规则，不继承默认名字）。
-*
-* 消费端契约：其他代码（路由/命令/碎碎念/对话/桌面）只消费 readAllConfig 的返回值，
-* 不做任何校验/兜底；浏览器与桌面通过 GET /dsh-pet-7340/config 拿到同一份成品。
-*
-* 本模块是 host 自包含实现（不 import src/shared —— DSH 单文件加载约束）；
-* 浏览器/桌面侧的对应纯逻辑（把成品拍平成渲染列表）在 src/shared/config.ts。
-*/
-const CORNER_SET = new Set([
+/** 位置角落白名单 */
+const CORNERS = [
 	"top-left",
 	"top-right",
 	"bottom-left",
 	"bottom-right"
-]);
-const PET_DISPLAY_SET = new Set([
+];
+const CORNER_SET = new Set(CORNERS);
+/** display 白名单（导出：宿主路由 POST /pet-display 写单只宠物的显示位置时复用同一份枚举，
+*  读写两侧必须同一份规则，不在路由里另写一个 Set） */
+const PET_DISPLAYS = [
 	"web",
 	"desktop",
 	"both",
 	"none"
+];
+const PET_DISPLAY_SET = new Set(PET_DISPLAYS);
+/** font.family 白名单（预设 id）——**必须与 src/shared/fonts.ts 的 FONT_PRESETS 保持一致**：
+*  host 不能 import src/shared（见文件头注释的 DSH 单文件加载约束），这里是那份清单的自包含副本，
+*  所以加/删字体预设时两边都要改。 */
+const FONT_FAMILY_SET = new Set([
+	"candy",
+	"yahei",
+	"youyuan",
+	"kaiti",
+	"simsun",
+	"comic",
+	"system"
 ]);
-/** id 禁用的字符（Windows 文件名保留符 + 控制字符，防配置值逃逸文件路径）。
-*  同时被 thumb 路由的 petId 校验复用：那里同样是"标识符不得当路径片段"。 */
+/** font.size 合法区间（px，含端点）——与 src/shared/fonts.ts 的 FONT_SIZE_MIN / FONT_SIZE_MAX 同一口径 */
+const FONT_SIZE_MIN = 4;
+const FONT_SIZE_MAX = 200;
 const ID_FORBIDDEN = /[\\/:\x00-\x1f]/;
 /**
 * 「全局默认 + 种类可覆盖」的顶层字段白名单 —— 用户层（main-config.jsonc）里写下的值会成为
@@ -914,13 +786,20 @@ const ID_FORBIDDEN = /[\\/:\x00-\x1f]/;
 *   - `physics`：拖拽抛掷手感；`petCollision` 更是**跨宠物**行为（相撞按动量守恒弹开），
 *     按种类分在语义上站不住：两只不同种类的宠物相撞时用谁的系数？
 *   - `confineToScreen`：多屏是用户环境 / 使用习惯，不是宠物属性
+*   - `font`：字体种类 / 字号 / 是否随宠物缩放是**看的人**的偏好，不是某个种类的属性——
+*     同一套字体偏好用在所有宠物（含 pet pack）才符合预期
 *
 * 不在名单里的顶层字段基座仍是**内置默认**：`whisperPrompt`（人设）、`memes`（表情包）、
 * `animations` / `animationWeights`（与素材根绑定）、`workStatusTexts`（文案）——一个种类一份
 * 动画池 / 一份人设 / 一个表情包目录，各写一份才是 pet pack 的意义。
+*
+* 例外：**人设有实例级覆盖**。`pets[].whisperPrompt`（可选）写了就取代所属条目顶层那一份，
+* 没写则回落条目——回落本身由消费端做（./persona 的 petPersona），合并不填生效值（见 petPersonaField 注释）。
+* 其余实例级字段仍是固定白名单（id/name/size/4 个开关/display/position + whisperPrompt）。
 */
 const GLOBAL_DEFAULT_KEYS = [
 	"physics",
+	"font",
 	"confineToScreen",
 	"whisperImageEnabled",
 	"chatImageEnabled",
@@ -931,7 +810,7 @@ const GLOBAL_DEFAULT_KEYS = [
 	"eventsRefreshSec"
 ];
 /** 已告警过的 文件:字段（进程内去重：同一问题只告警一次，避免每请求刷屏；重启重置） */
-const warnedKeys = /* @__PURE__ */ new Set();
+const warnedKeys = new Set();
 function warnOnce(key, message) {
 	if (warnedKeys.has(key)) return;
 	warnedKeys.add(key);
@@ -947,34 +826,13 @@ function readJsonc(path) {
 		const raw = JSON.parse(stripJsonc(readFileSync(path, "utf8")));
 		return raw && typeof raw === "object" ? raw : void 0;
 	} catch {
-		return;
+		return void 0;
 	}
 }
-/**
-* 读磁盘上的用户层原对象（JSONC 容忍——与读取路径 readAllConfig 共用同一份解析器）。
-*
-* 写路径必须用它：`PUT /config` 的「透传保留」要把用户手改的高级字段（physics /
-* whisperPrompt / animations / memes / ...）原样带回，而用户层可能是「同步」写入的
-* **带 // 注释的 config.jsonc 原文**。那里若用严格 `JSON.parse`，解析必然抛错、又被
-* catch 静默吞掉，existing 就成了 undefined —— 保存时白名单重建，高级字段全部丢失
-* （这正是「保存把用户精调配置抹掉」那次老 bug 的复发路径）。
-*
-* 文件不存在 / 损坏 → undefined（调用方按「无既有字段」处理，不阻塞保存）。
-*/
 function readUserConfig(paths) {
 	const file = effectiveUserFile(paths);
 	return file ? readJsonc(file) : void 0;
 }
-/**
-* 用户层**存在但解析不了**（真损坏：语法错误，连 JSONC 剥注释都救不回来）。
-*
-* 用途：`PUT /config`（保存）的损坏预检。保存是「白名单重建」，一旦 existing 读不出来，
-* 文件里原有的内容（用户手写的 animations / physics / memes / ...）就会被整份丢掉——
-* 而且全程静默。所以宿主这里**先不写盘**，回 409 让设置页弹窗（取消 = 不动文件；
-* 确认 = 强行重建），绝不静默丢配置。
-*
-* 文件不存在 → false（没有东西可丢，正常首次保存）。
-*/
 function userConfigUnparsable(paths) {
 	const file = effectiveUserFile(paths);
 	return file !== void 0 && readJsonc(file) === void 0;
@@ -984,16 +842,8 @@ function userConfigUnparsable(paths) {
 function effectiveUserFile(paths) {
 	if (existsSync(paths.userFile)) return paths.userFile;
 	if (paths.legacyUserFile && existsSync(paths.legacyUserFile)) return paths.legacyUserFile;
+	return void 0;
 }
-/**
-* 老用户一次性迁移：`main-config.json` → `main-config.jsonc`（**重命名**，内容一字不动）。
-*
-* 为什么改扩展名：用户层从「同步」起就是带 `//` 注释的 JSONC 原文，挂在 `.json` 名下名不副实
-* （编辑器会当严格 JSON 报错）。改成 `.jsonc` 后与包内默认 `config.jsonc` 同名同格式。
-*
-* 语义：新文件已存在 → 什么都不做（绝不用旧文件覆盖新文件）；旧文件不存在 → 什么都不做；
-* 重命名失败（占用/权限）→ 静默放过，读取侧对旧路径有回落，功能不受影响。
-*/
 function migrateUserConfig(paths, log) {
 	const legacy = paths.legacyUserFile;
 	if (!legacy || !existsSync(legacy) || existsSync(paths.userFile)) return false;
@@ -1013,10 +863,17 @@ function scanPetFiles(petDir) {
 	} catch {
 		return [];
 	}
-	return entries.filter((e) => e.isFile()).map((e) => e.name).filter((name) => /^.+?-config\.(json|jsonc)$/.test(name)).sort().map((name) => ({
-		prefix: name.replace(/-config\.(json|jsonc)$/, ""),
-		path: join(petDir, name)
+	return entries.filter((e) => e.isFile()).map((e) => e.name).filter((name$1) => /^.+?-config\.(json|jsonc)$/.test(name$1)).sort().map((name$1) => ({
+		prefix: name$1.replace(/-config\.(json|jsonc)$/, ""),
+		path: join(petDir, name$1)
 	}));
+}
+function readPetConfigEntry(paths, entry) {
+	const hit = scanPetFiles(paths.petDir).find((f) => f.prefix === entry);
+	return hit ? {
+		path: hit.path,
+		raw: readJsonc(hit.path)
+	} : void 0;
 }
 /** animations 段完整性校验（与旧 assertAnimationsHost 同一套规则；不 throw，非法返回 false） */
 function animationsValid(a) {
@@ -1040,7 +897,7 @@ function animationsValid(a) {
 			if (slot.length === 0) return false;
 		} else if (Array.isArray(slot)) {
 			if (slot.length === 0) return false;
-			for (const name of slot) if (typeof name !== "string" || name.length === 0) return false;
+			for (const name$1 of slot) if (typeof name$1 !== "string" || name$1.length === 0) return false;
 		} else return false;
 	}
 	const balance = evEntries.balance;
@@ -1070,6 +927,17 @@ function physicsValid(value) {
 	const f = Number(p.groundFriction);
 	const tp = Number(p.throwPower);
 	return Number.isFinite(g) && g >= 0 && Number.isFinite(r) && r >= 0 && r <= 1 && Number.isFinite(f) && f >= 0 && typeof p.ceilingBounce === "boolean" && Number.isFinite(tp) && tp > 0 && typeof p.petCollision === "boolean";
+}
+/** font 段校验：family ∈ 预设白名单、size 为区间内的有限数字、followPet 为布尔。
+*  与 physics 同口径：**整段校验**——任一子键缺失/非法即整段非法（告警 + 取默认），
+*  不做「缺子键逐个补默认」；对象字段一律整段替换（见文件头合并规则）。 */
+function fontValid(value) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const f = value;
+	if (typeof f.family !== "string" || !FONT_FAMILY_SET.has(f.family)) return false;
+	const size = Number(f.size);
+	if (!Number.isFinite(size) || size < FONT_SIZE_MIN || size > FONT_SIZE_MAX) return false;
+	return typeof f.followPet === "boolean";
 }
 /** whisperModel / chatModel 段校验：{ provider, model } 两个字符串，
 *  **要么都留空（= 跟随当前对话的模型）要么都非空**——只填一半（选了服务商没选模型，或反之）
@@ -1109,6 +977,7 @@ function topFieldValid(key, value) {
 		case "animationWeights": return weightsValid(value);
 		case "eventsRefreshSec": return eventsRefreshSecValid(value);
 		case "physics": return physicsValid(value);
+		case "font": return fontValid(value);
 		case "whisperModel":
 		case "chatModel": return modelSelectionValid(value);
 		case "workStatusTexts": return workStatusTextsValid(value);
@@ -1146,7 +1015,7 @@ function packBase(base, mainOverlay) {
 	for (const key of GLOBAL_DEFAULT_KEYS) {
 		const own = mainOverlay[key];
 		if (own === void 0 || !topFieldValid(key, own)) continue;
-		out ??= { ...base };
+		out ?? (out = { ...base });
 		out[key] = own;
 	}
 	return out ?? base;
@@ -1220,13 +1089,13 @@ function mergePet(base, raw, label, seenIds) {
 	}
 	seenIds.add(id);
 	const rawName = typeof p.name === "string" ? p.name.trim() : "";
-	const name = rawName || id;
+	const name$1 = rawName || id;
 	if (!rawName) warnOnce(`${label}:name:${id}`, `宠物「${id}」缺少 name，已按 id 处理`);
 	const basePos = base.position && typeof base.position === "object" ? base.position : {};
 	const ownPos = p.position && typeof p.position === "object" ? p.position : {};
 	return {
 		id,
-		name,
+		name: name$1,
 		size: petNumber(p.size, base.size, 1, label, "size", id),
 		balanceEnabled: petBool(p.balanceEnabled, base.balanceEnabled, label, "balanceEnabled", id),
 		whisperEnabled: petBool(p.whisperEnabled, base.whisperEnabled, label, "whisperEnabled", id),
@@ -1237,19 +1106,24 @@ function mergePet(base, raw, label, seenIds) {
 			corner: petEnum(ownPos.corner, CORNER_SET, basePos.corner, label, "position.corner", id),
 			marginX: petNumber(ownPos.marginX, basePos.marginX, -Infinity, label, "position.marginX", id),
 			marginY: petNumber(ownPos.marginY, basePos.marginY, -Infinity, label, "position.marginY", id)
-		}
+		},
+		...petPersonaField(p.whisperPrompt, label, id)
 	};
 }
 /**
-* 唯一读取函数：内置默认 + 用户主配置 + 文件宠物逐字段合并后的完成品聚合。
-* 返回 { main: {...}, test1: {...}, ... } —— 每个条目都是原文件结构且所有字段已填满，
-* 消费端直接读，不做任何校验/兜底。每次调用重新读文件：修改配置刷新/重启即生效。
+* 实例级 whisperPrompt 的合并：写了非空字符串 → 原样带出；否则返回空对象（该键不出现）。
+* 显式写了非字符串（数字/对象/布尔）才算配置错误 → 告警一次并忽略（回落条目），与 petNumber 同口径。
 */
+function petPersonaField(own, label, id) {
+	if (typeof own === "string") return own.trim() === "" ? {} : { whisperPrompt: own };
+	if (own !== void 0 && own !== null) warnOnce(`${label}:whisperPrompt:${id}`, `宠物「${id}」的 whisperPrompt 非法，已忽略（回落所属条目人设）`);
+	return {};
+}
 function readAllConfig(paths) {
 	const base = readJsonc(paths.defaultFile);
 	if (!base) throw new Error("dsh-pet: 内置默认配置缺失或解析失败（安装损坏）：" + paths.defaultFile);
 	const basePets = Array.isArray(base.pets) ? base.pets : [];
-	const seenIds = /* @__PURE__ */ new Set();
+	const seenIds = new Set();
 	const out = {};
 	const userFile = effectiveUserFile(paths);
 	const mainOverlay = userFile ? readJsonc(userFile) : void 0;
@@ -1266,34 +1140,23 @@ function readAllConfig(paths) {
 	}
 	return out;
 }
-/** 拍平全部条目的 pets 为单列表（host 消费端用：桌面宠物列表 / 命令 / 当前桌宠解析） */
 function flattenPetList(merged) {
 	const out = [];
 	for (const conf of Object.values(merged)) if (Array.isArray(conf?.pets)) out.push(...conf.pets);
 	return out;
 }
-/** 在完成品聚合里按实例 id 定位宠物及其所属条目（host 内部消费索引）：
-*  条目 key 即素材根（assetRoot）；条目级字段（whisperPrompt/chatMemoryRounds/animations）随条目取。 */
 function findPetInstance(merged, petId) {
 	for (const [entry, conf] of Object.entries(merged)) {
-		const found = (Array.isArray(conf?.pets) ? conf.pets : []).find((p) => String(p.id) === petId);
+		const pets = Array.isArray(conf?.pets) ? conf.pets : [];
+		const found = pets.find((p) => String(p.id) === petId);
 		if (found) return {
 			entry,
 			conf,
 			pet: found
 		};
 	}
+	return void 0;
 }
-/**
-* 保存用户层（PUT /config）：更新 main-config.jsonc，接受可编辑字段（pets + 全局开关：
-* notificationsEnabled / whisperImageEnabled / chatImageEnabled / confineToScreen + physics
-* + whisperModel / chatModel + chatMemoryRounds + chatImageLimit）。
-* 编辑语义：**非白名单顶层字段（whisperPrompt / eventsRefreshSec / memes 等）从
-* `existing`（当前磁盘上的用户文件原对象）原样透传保留**——
-* 用户手动编辑的精调配置不会被设置页保存抹掉（旧实现是纯白名单重建，会整体覆盖丢失）。
-* 白名单字段同理只在请求体**真的传了**时才算白名单：没传就走透传，不会被抹成默认值。
-* 非法 → 返回 null（宿主回 400）。与读取分离——文件宠物永不回写、不在本模式内。
-*/
 function saveUserConfig(raw, existing) {
 	const o = raw && typeof raw === "object" ? raw : {};
 	const arr = Array.isArray(o.pets) ? o.pets : null;
@@ -1306,10 +1169,10 @@ function saveUserConfig(raw, existing) {
 		if (!id || id.length > 64 || ID_FORBIDDEN.test(id)) return null;
 		const size = Number(pp.size);
 		if (!Number.isFinite(size) || size <= 0) return null;
-		let name = typeof pp.name === "string" ? pp.name.trim() : "";
-		if (!name) {
+		let name$1 = typeof pp.name === "string" ? pp.name.trim() : "";
+		if (!name$1) {
 			console.warn(`dsh-pet: pet「${id}」缺少 name，已按默认 ${id}（宠物 id）处理`);
-			name = id;
+			name$1 = id;
 		}
 		const balanceEnabled = pp.balanceEnabled;
 		if (typeof balanceEnabled !== "boolean") return null;
@@ -1327,9 +1190,12 @@ function saveUserConfig(raw, existing) {
 		const marginX = Number(pos.marginX);
 		const marginY = Number(pos.marginY);
 		if (!Number.isFinite(marginX) || !Number.isFinite(marginY)) return null;
-		out.push({
+		const rawPersona = pp.whisperPrompt;
+		if (rawPersona !== void 0 && rawPersona !== null && typeof rawPersona !== "string") return null;
+		const persona = typeof rawPersona === "string" ? rawPersona.trim() : "";
+		const pet = {
 			id,
-			name,
+			name: name$1,
 			size,
 			balanceEnabled,
 			whisperEnabled,
@@ -1341,7 +1207,9 @@ function saveUserConfig(raw, existing) {
 				marginX,
 				marginY
 			}
-		});
+		};
+		if (persona) pet.whisperPrompt = persona;
+		out.push(pet);
 	}
 	const ne = o.notificationsEnabled;
 	if (ne !== void 0 && typeof ne !== "boolean") return null;
@@ -1353,6 +1221,8 @@ function saveUserConfig(raw, existing) {
 	if (cts !== void 0 && typeof cts !== "boolean") return null;
 	const ph = o.physics;
 	if (ph !== void 0 && !physicsValid(ph)) return null;
+	const fo = o.font;
+	if (fo !== void 0 && !fontValid(fo)) return null;
 	const wm = o.whisperModel;
 	if (wm !== void 0 && !modelSelectionValid(wm)) return null;
 	const cm = o.chatModel;
@@ -1371,6 +1241,7 @@ function saveUserConfig(raw, existing) {
 	if (cie !== void 0) outConfig.chatImageEnabled = cie;
 	if (cts !== void 0) outConfig.confineToScreen = cts;
 	if (ph !== void 0) outConfig.physics = ph;
+	if (fo !== void 0) outConfig.font = fo;
 	if (wm !== void 0) outConfig.whisperModel = cleanModel(wm);
 	if (cm !== void 0) outConfig.chatModel = cleanModel(cm);
 	if (cmr !== void 0) outConfig.chatMemoryRounds = Number(cmr);
@@ -1381,6 +1252,7 @@ function saveUserConfig(raw, existing) {
 	if (cie !== void 0) bodyOwned.add("chatImageEnabled");
 	if (cts !== void 0) bodyOwned.add("confineToScreen");
 	if (ph !== void 0) bodyOwned.add("physics");
+	if (fo !== void 0) bodyOwned.add("font");
 	if (wm !== void 0) bodyOwned.add("whisperModel");
 	if (cm !== void 0) bodyOwned.add("chatModel");
 	if (cmr !== void 0) bodyOwned.add("chatMemoryRounds");
@@ -1391,139 +1263,23 @@ function saveUserConfig(raw, existing) {
 	}
 	return outConfig;
 }
-/**
-* 同步用户层（POST /config，设置页「同步」）：把内置默认配置**原文**写入用户主配置文件。
-*
-* 为什么是"复制原文"而不是"删除用户层"（旧实现）：删掉之后用户手上没有配置文件，
-* 想手改高级字段（physics / whisperPrompt / animations / memes / ...）就得自己从包内
-* assets/config.jsonc 复制一份——这一步是死的、每次都要做。这里直接把那份文件（含全部
-* 中文注释、全部字段）落到用户配置路径上：既等价于恢复默认（合并结果 = 内置默认），
-* 又让用户拿到一份开箱可编辑的完整配置。
-*
-* 注释无害：读取侧统一走 readJsonc（stripJsonc 剥注释），带注释写入照样能读。
-*
-* 注意（调用方要在 UI 上讲清楚）：文件一旦生成即成为**显式覆盖层**——用户层写了什么就
-* 覆盖内置默认的对应字段，所以插件升级改了内置默认后，这个文件里的旧值仍会继续生效。
-*
-* 默认文件缺失/目录不可写 → 直接抛（宿主回 500）：绝不静默留下半个配置文件。
-*/
 function syncUserConfigFromDefault(paths) {
 	const raw = readFileSync(paths.defaultFile, "utf8");
 	mkdirSync(dirname(paths.userFile), { recursive: true });
 	writeFileSync(paths.userFile, raw, "utf8");
 }
-/**
-* 对话记忆截取：从消息列表里取尾部 `rounds` 轮（1 轮 = 1 问 1 答 → 2 条）。
-*
-* 为什么单独抽一个函数：`rounds = 0` 表示「不带历史」。若直接写 `messages.slice(-rounds * 2)`，
-* 会踩 JS 的 `-0` 陷阱——`-0 === 0`，`slice(-0)` 返回**整个数组**而不是空数组，
-* 于是「关掉历史」反而变成「带全部历史」（用户实测：设 0 后问生日，10 秒后仍答得出）。
-* 这里显式分支：0 → 空列表；> 0 → 截尾部。`rounds` 由合并器保证为非负有限数，
-* 负数/NaN 兜底按 0 处理（不产出荒谬的 slice 行为）。
-*/
 function sliceMemoryRounds(messages, rounds) {
 	return rounds > 0 ? messages.slice(-Math.floor(rounds) * 2) : [];
 }
-//#endregion
-//#region src/host/broadcast.ts
-/**
-* 第三方投喂（`POST /dsh-pet-7340/broadcast`）的**纯决策层**。
-*
-* 背景（issue #76）：宿主侧其他插件（女仆巡检验等）想说自己的话，需要一个把它们给的文本
-* 放进桌宠气泡的入口。这个端点**不生成**内容，只搬运——和 /whisper（用 LLM 生成）分工不同。
-*
-* 为什么单独一层：本功能的契约就是这几条校验规则（文本非空、宠物必须真实存在、
-* 配图必须命中包内表情包池），它们必须能脱离 HTTP 与真实文件系统被单测——路由层
-* （src/host/index.ts）在源码形态下读不到包内 assets，测不了这些分支。
-*
-* 设计口径：
-* - **不设长度限制，也不限频**：投喂是显式的调用方行为，内容与频率都由调用方自己负责；
-*   宿主只保证"非空就搬运"，不做静默丢弃、截断或排队。
-* - 配图只认**该桌宠条目表情包池内**的名称（池内命中即取其规范名）：杜绝第三方注入外部地址，
-*   前端也就不会去加载任意 URL。与对话选图共用同一份 matchMeme 校验。
-* - 失败一律返回明确 reason，不抛异常（路由据此回 HTTP 200 + ok:false，与 /chat 口径一致）。
-* - memeDirs 是参数而非模块常量：池的目录链由调用方（host/index.ts 的 memeDirsFor）唯一决定，
-*   便于测试注入临时目录（同 memes.ts 的约定）。
-*/
-/**
-* 投喂文本规范化：非字符串 / 纯空白 → 空串。
-* 路由与决策层**共用这一条规则**（路由用它先短路掉"空文本"，避免为了一个必然失败的
-* 请求去读配置；两处若各写一遍就会走样）。
-*/
-function normalizeBroadcastText(text) {
-	return typeof text === "string" ? text.trim() : "";
-}
-/**
-* 把外部给的 `{ text, image }` 与当前配置核对成一个结论。
-*
-* @param cfg readAllConfig 的合并成品（所有字段已填满，这里不做兜底解析）
-* @param requested `?pet=` 的原值（可为空串）
-* @param active `resolveActivePetId()` 的结果（可为空串；无宠物时为空）
-* @param text 外部给的文本（未规范化）
-* @param image 外部给的配图名（未规范化；空/缺省 = 不配图）
-* @param memeDirs 条目（素材根）→ 表情包目录链（顺序即优先级）；决定池里哪些图真实存在
-*/
-function decideBroadcast(args) {
-	const { cfg, requested, active, memeDirs } = args;
-	const text = normalizeBroadcastText(args.text);
-	if (!text) return {
-		ok: false,
-		reason: "bad-request",
-		message: "text 为空"
-	};
-	const petId = String(requested || active || "main");
-	if (!flattenPetList(cfg).some((p) => String(p.id) === petId)) return {
-		ok: false,
-		reason: "unknown-pet",
-		message: "没有这只桌宠：" + petId
-	};
-	const rawImage = typeof args.image === "string" ? args.image.trim() : "";
-	if (!rawImage) return {
-		ok: true,
-		petId,
-		text
-	};
-	const found = findPetInstance(cfg, petId);
-	const hit = matchMeme(readMemePool((found ? found.conf : cfg.main ?? {}).memes, memeDirs(found ? found.entry : "main")), rawImage);
-	if (!hit) return {
-		ok: false,
-		reason: "unknown-image",
-		message: "配图不在表情包池内：" + rawImage
-	};
-	return {
-		ok: true,
-		petId,
-		text,
-		image: hit.name
-	};
-}
+
 //#endregion
 //#region src/host/anim.ts
-/**
-* 播放动画（`POST /dsh-pet-7340/anim`）的**纯决策层**。
-*
-* 用途：宿主侧其他插件想让桌宠播一段动画（"点播"），效果与右键菜单里点「动作」树完全一致
-* ——两端都复用同一个菜单动作处理函数，本模块只负责**判定该不该播、播哪一个**。
-*
-* 为什么单独一层：契约就是"名字必须在菜单能点到的集合里"。播放端对不存在的动画没有兜底
-* （名字即文件名，404 → 加载失败 → 表现为"点了没反应"），所以名字校验是硬要求，且必须能
-* 脱离 HTTP 单测。本模块只依赖配置（动画池都在 animations 里，不碰文件系统），可完全离线测。
-*
-* 允许集合 = 右键菜单三级树叶里所有 `anim` 的并集。菜单树的唯一事实来源是
-* src/shared/menu.ts 的 buildMenuTree()，它取这 7 个池：idle / turn / drag / clicks /
-* moves.actions / categories / events。
-* **host 不 import src/shared**（DSH 单文件加载约束，见 index.ts 顶部说明），所以这里按同一
-* 口径自包含实现一份；两边的守卫测试会同时钉住这份口径，任一侧改了池子就会有一边失败。
-*/
 /** 字符串数组收窄（配置里的池子；非数组/空串 → 空数组） */
 function strings(v) {
 	return Array.isArray(v) ? v.filter((x) => typeof x === "string" && x !== "") : [];
 }
-/**
-* 该条目的 animations 配置 → 可点播的动画名（去重，保持首次出现顺序）。
-* 池子与顺序对齐 src/shared/menu.ts 的 buildMenuTree()：
-*   待机 → 转向 → 拖拽 → 点击回应 → 移动 → config 随机动作分类 → 事件（数组槽位展平）
-*/
+/** 朝向收窄：只认两个字面量（大小写、空白、非字符串一律不算），不认识返回 `null` */
+const petFacing = (v) => v === "left" || v === "right" ? v : null;
 function animationNames(animations) {
 	const a = animations && typeof animations === "object" ? animations : {};
 	const out = [];
@@ -1550,42 +1306,1073 @@ function animationNames(animations) {
 	}
 	return out;
 }
-/**
-* 把外部给的点播请求与当前配置核对成一个结论。
-*
-* @param cfg readAllConfig 的合并成品（所有字段已填满，这里不做兜底解析）
-* @param requested `?pet=` 的原值（可为空串）
-* @param active `resolveActivePetId()` 的结果（可为空串；无宠物时为空）
-* @param name 外部给的动画名（未规范化）
-*/
+function normalizeHttpUrl(v) {
+	if (typeof v !== "string") return null;
+	const raw = v.trim();
+	if (!raw) return null;
+	let parsed;
+	try {
+		parsed = new URL(raw);
+	} catch {
+		return null;
+	}
+	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+	return raw;
+}
 function decideAnim(args) {
-	const { cfg, requested, active } = args;
-	const name = typeof args.name === "string" ? args.name.trim() : "";
-	if (!name) return {
+	const { cfg, requested } = args;
+	const name$1 = typeof args.name === "string" ? args.name.trim() : "";
+	const rawUrl = typeof args.url === "string" ? args.url.trim() : "";
+	if (name$1 && rawUrl) return {
 		ok: false,
 		reason: "bad-request",
-		message: "name 为空"
+		message: "name 与 url 只能给一个"
 	};
-	const petId = String(requested || active || "main");
+	if (!name$1 && !rawUrl) return {
+		ok: false,
+		reason: "bad-request",
+		message: "name 或 url 必须给一个"
+	};
+	let facing;
+	if (args.facing !== void 0 && args.facing !== null) {
+		const f = petFacing(args.facing);
+		if (f === null) return {
+			ok: false,
+			reason: "bad-request",
+			message: "facing 必须是 left / right"
+		};
+		facing = f;
+	}
+	const petId = String(requested ?? "").trim();
+	if (!petId) return {
+		ok: false,
+		reason: "pet-required",
+		message: "pet 必填：要指定操作哪只桌宠"
+	};
+	const found = findPetInstance(cfg, petId);
+	if (!found) return {
+		ok: false,
+		reason: "unknown-pet",
+		message: "没有这只桌宠：" + petId
+	};
+	if (rawUrl) {
+		const url = normalizeHttpUrl(rawUrl);
+		if (url === null) return {
+			ok: false,
+			reason: "bad-request",
+			message: "url 必须是 http/https 的完整地址"
+		};
+		return {
+			ok: true,
+			petId,
+			url,
+			facing
+		};
+	}
+	const allowed = animationNames(found.conf.animations);
+	if (!allowed.includes(name$1)) return {
+		ok: false,
+		reason: "unknown-animation",
+		message: "没有这个动画：" + name$1
+	};
+	return {
+		ok: true,
+		petId,
+		name: name$1,
+		facing
+	};
+}
+
+//#endregion
+//#region src/host/broadcast.ts
+/** 气泡默认显示时长（ms）——与两端消费侧的常量同值（host 不得 import src/shared，只能各写一份）。
+*  这个值只用于**把缺省解析成显式值**写进叶子，让 /state 里能看到实际生效的时长。 */
+const DEFAULT_BUBBLE_DURATION_MS = 10 * 1e3;
+function normalizeBroadcastText(text) {
+	return typeof text === "string" ? text.trim() : "";
+}
+function normalizeBroadcastDuration(duration) {
+	if (duration === void 0 || duration === null) return DEFAULT_BUBBLE_DURATION_MS;
+	if (typeof duration !== "number" || !Number.isFinite(duration) || duration < 0) return null;
+	return duration;
+}
+function normalizeBroadcastAnim(anim) {
+	return anim !== false;
+}
+/**
+* `?pet=` → 实际落点（与 ./anim、./motion-cue 同一口径）：**必填**且必须真实存在。
+*
+* 两种失败分开报（issue #122 第 1 条「绝不默认退到列表第一只」）：没给 → `pet-required`；
+* 给了但配置里没有 → `unknown-pet`。收紧前这里是 `requested || active || 'main'`——`active`
+* 是"当前桌宠" = **有效宠物列表第一只**，落点随用户 /pet 操作而变，第三方无从预期，故整条删除。
+*/
+function resolvePetId(cfg, requested) {
+	const petId = String(requested ?? "").trim();
+	if (!petId) return {
+		ok: false,
+		reason: "pet-required",
+		message: "pet 必填：要指定操作哪只桌宠"
+	};
+	const found = findPetInstance(cfg, petId);
+	if (!found) return {
+		ok: false,
+		reason: "unknown-pet",
+		message: "没有这只桌宠：" + petId
+	};
+	return {
+		ok: true,
+		petId,
+		entry: found.entry,
+		conf: found.conf
+	};
+}
+function decideBroadcast(args) {
+	const { cfg, requested, memeDirs } = args;
+	const text = normalizeBroadcastText(args.text);
+	if (!text) return {
+		ok: false,
+		reason: "bad-request",
+		message: "text 为空"
+	};
+	const who = resolvePetId(cfg, requested);
+	if (!who.ok) return {
+		ok: false,
+		reason: who.reason,
+		message: who.message
+	};
+	const petId = who.petId;
+	const rawImage = typeof args.image === "string" ? args.image.trim() : "";
+	const rawUrl = typeof args.url === "string" ? args.url.trim() : "";
+	if (rawImage && rawUrl) return {
+		ok: false,
+		reason: "bad-request",
+		message: "image 与 url 只能给一个"
+	};
+	if (!rawImage && !rawUrl) return {
+		ok: true,
+		petId,
+		text,
+		duration: args.duration,
+		anim: args.anim
+	};
+	if (rawUrl) {
+		const url = normalizeHttpUrl(rawUrl);
+		if (url === null) return {
+			ok: false,
+			reason: "bad-request",
+			message: "url 必须是 http/https 的完整地址"
+		};
+		return {
+			ok: true,
+			petId,
+			text,
+			url,
+			duration: args.duration,
+			anim: args.anim
+		};
+	}
+	const hit = matchMeme(readMemePool(who.conf.memes, memeDirs(who.entry)), rawImage);
+	if (!hit) return {
+		ok: false,
+		reason: "unknown-image",
+		message: "配图不在表情包池内：" + rawImage
+	};
+	return {
+		ok: true,
+		petId,
+		text,
+		image: hit.name,
+		duration: args.duration,
+		anim: args.anim
+	};
+}
+function decideBubbleClear(args) {
+	const who = resolvePetId(args.cfg, args.requested);
+	if (!who.ok) return {
+		ok: false,
+		reason: who.reason,
+		message: who.message
+	};
+	return {
+		ok: true,
+		petId: who.petId
+	};
+}
+
+//#endregion
+//#region src/host/lock.ts
+const LOCK_DEFAULT_TTL_MS = 2 * 60 * 1e3;
+const LOCK_MIN_TTL_MS = 1 * 1e3;
+const LOCK_MAX_TTL_MS = 30 * 60 * 1e3;
+/** cause → 给人看的一句话（回执里的 message；reason 才是机器读的那个） */
+const CAUSE_TEXT = {
+	expired: "占用已过期（没有及时续期）",
+	released: "占用已被释放",
+	preempted: "占用已被用户接管（拖拽/点击/隐藏/关闭）",
+	unknown: "lock 不是当前生效的占用编号"
+};
+/** ttl 合法性说明（路由与决策层共用同一条规则，免得两处走样） */
+const TTL_TEXT = `ttl 必须是 ${LOCK_MIN_TTL_MS}~${LOCK_MAX_TTL_MS} 之间的有限数字（毫秒）`;
+function normalizeLockTtl(ttl, fallback) {
+	if (ttl === void 0 || ttl === null) return fallback;
+	if (typeof ttl !== "number" || !Number.isFinite(ttl)) return null;
+	if (ttl < LOCK_MIN_TTL_MS || ttl > LOCK_MAX_TTL_MS) return null;
+	return ttl;
+}
+/**
+* lockId 规范化：缺省 / null → 空串（= "没给"，走新建那条路）；字符串 → trim 后原样；
+* **非字符串 → null（非法）**。空串按"没给"处理是有意的（与 `image`/`url` 的宽松口径一致）。
+*/
+function normalizeLockId(v) {
+	if (v === void 0 || v === null) return "";
+	if (typeof v !== "string") return null;
+	return v.trim();
+}
+var LockStore = class {
+	constructor(opts) {
+		this.locks = new Map();
+		this.tombstones = new Map();
+		this.seq = 0;
+		this.now = opts?.now ?? Date.now;
+		this.onChange = opts?.onChange ?? (() => {});
+	}
+	/**
+	* 当前占用（**懒判过期**）。到点即视为没有：清记录、记墓碑、同步一次叶子。
+	*
+	* 这里会写叶子（读方法带一次副作用）是有意的：叶子是渲染端唯一能看到的信号，
+	* 而宿主这一侧没有任何定时器。任一动作端点或内部来源调一次本方法，过期的锁就会被清掉并
+	* 如实写进 S；即便一次都没人调，渲染端也会按叶子里的 `expiresAt` **自己**解除静止。
+	*/
+	current(petId) {
+		const rec = this.locks.get(petId);
+		if (rec === void 0) return null;
+		if (this.now() < rec.expiresAt) return rec;
+		this.drop(petId, rec, "expired");
+		return null;
+	}
+	/** 这只宠物此刻是否被占用（宿主内部自动来源用它决定跳过；同样懒判过期） */
+	locked(petId) {
+		return this.current(petId) !== null;
+	}
+	/**
+	* 当前是否有**任意**宠物被占用（测试 / 观测用，同 ./state 的 `waiterCount()`）。
+	*
+	* **生产路径上没有人调它**：占用期间要挡的两个**全局段**（`sections.balance` /
+	* `sections.workStatus`）是**所有宠物共用一份**，宿主"跳过写入"会连带静音别的宠物
+	* （issue #122 要的是"只控制指定 main"），所以那两处改由**渲染端按宠物忽略**——
+	* 叶子照常推进，被占用那只自己不看（见 src/client/pet.ts 的冻结判定与
+	* runtime/electron-helper/events.js 里同一处判断）。宿主侧只挡 per-pet 的碎碎念周期。
+	*/
+	anyLocked() {
+		for (const petId of [...this.locks.keys()]) if (this.current(petId) !== null) return true;
+		return false;
+	}
+	/**
+	* 动作端点的门禁（`/anim`、`/broadcast`、`/position`、`/throw`、`/bubble/clear` 共用）。
+	*
+	* 无锁时按「有没有带编号」分两条：
+	*   - **没带 `lock`** → 放行。没有占用的常态下，既有调用方一个字都不用改。
+	*   - **带了 `lock` 但查不到锁** → `lock-lost`。带了编号就说明调用方以为自己还持有；这时放行
+	*     等于把「你把锁丢了」悄悄抹掉，它会以为演出还在继续。`cause` 从墓碑里取，从没建过锁就是
+	*     `unknown`（issue #122 第 4 点：旧租约不能继续执行迟到请求）。
+	*/
+	gate(petId, provided) {
+		const rec = this.current(petId);
+		if (rec !== null) {
+			if (provided && provided === rec.lockId) return { ok: true };
+			if (!provided) return {
+				ok: false,
+				reason: "lock-required",
+				message: "这只桌宠正被占用，必须带 lock=<lockId>"
+			};
+			return {
+				ok: false,
+				reason: "lock-lost",
+				cause: "unknown",
+				message: CAUSE_TEXT.unknown
+			};
+		}
+		if (!provided) return { ok: true };
+		const cause = this.causeOf(petId, provided);
+		return {
+			ok: false,
+			reason: "lock-lost",
+			cause,
+			message: CAUSE_TEXT[cause]
+		};
+	}
+	/**
+	* 取锁 / 续期（**二合一**：`lockId` 给了就是续期，没给就是新建）。
+	*
+	* 真值表（每一格都有确定结论，不替调用方猜）：
+	*   | body       | 当前锁       | 结论 |
+	*   | 无 lockId  | 无锁         | 新建 |
+	*   | 无 lockId  | 有锁         | `locked` + `expiresAt` |
+	*   | 有 lockId  | 一致         | 续期 |
+	*   | 有 lockId  | 有锁但不一致 | `lock-lost` / `unknown` |
+	*   | 有 lockId  | 无锁         | `lock-lost` / 墓碑里的 cause |
+	*
+	* **「有 id + 当前无锁」一律报错，不复活**：过期/被释放/被抢占之后拿旧编号来续期，
+	* 不能借这条路把锁重新建起来——否则「我丢了锁」这件事会被悄悄抹掉，持锁者会以为演出还在继续。
+	*/
+	acquire(args) {
+		const { petId } = args;
+		const renewId = normalizeLockId(args.lockId);
+		if (renewId === null) return {
+			ok: false,
+			reason: "bad-request",
+			message: "lockId 必须是字符串"
+		};
+		const rec = this.current(petId);
+		if (renewId) {
+			if (rec === null || rec.lockId !== renewId) {
+				const cause = rec === null ? this.causeOf(petId, renewId) : "unknown";
+				return {
+					ok: false,
+					reason: "lock-lost",
+					cause,
+					message: CAUSE_TEXT[cause]
+				};
+			}
+			const ttl$1 = normalizeLockTtl(args.ttl, rec.ttl);
+			if (ttl$1 === null) return {
+				ok: false,
+				reason: "bad-request",
+				message: TTL_TEXT
+			};
+			rec.ttl = ttl$1;
+			rec.expiresAt = this.now() + ttl$1;
+			this.onChange(petId, {
+				locked: true,
+				expiresAt: rec.expiresAt
+			});
+			return {
+				ok: true,
+				petId,
+				lockId: rec.lockId,
+				expiresAt: rec.expiresAt,
+				renewed: true
+			};
+		}
+		if (rec !== null) return {
+			ok: false,
+			reason: "locked",
+			expiresAt: rec.expiresAt,
+			message: "这只桌宠已被占用"
+		};
+		const ttl = normalizeLockTtl(args.ttl, LOCK_DEFAULT_TTL_MS);
+		if (ttl === null) return {
+			ok: false,
+			reason: "bad-request",
+			message: TTL_TEXT
+		};
+		const record = {
+			lockId: this.newId(),
+			ttl,
+			expiresAt: this.now() + ttl
+		};
+		this.locks.set(petId, record);
+		this.tombstones.delete(petId);
+		this.onChange(petId, {
+			locked: true,
+			expiresAt: record.expiresAt
+		});
+		return {
+			ok: true,
+			petId,
+			lockId: record.lockId,
+			expiresAt: record.expiresAt,
+			renewed: false
+		};
+	}
+	/**
+	* 释放。两种形态**二选一**：
+	*   - `lockId`：持锁者收工 → `cause: released`
+	*   - `force: true`：**渲染端**在用户拖拽/点击/隐藏/关闭时调 → `cause: preempted`
+	*
+	* 幂等：当前没有锁时回 `ok:true`（`released: false`）——"让锁消失"这个意图在空状态下已经成立。
+	* 但有锁而 `lockId` 不匹配时**必须报错**（不许误放别人的锁）：这是唯一一条"释放也会失败"的路。
+	*
+	* `force` 只认**严格 `true`**（宽松口径会把误传当真，代价是撤掉别人的锁——宁可严格）。
+	*/
+	release(args) {
+		const { petId } = args;
+		const force = args.force === true;
+		const releaseId = normalizeLockId(args.lockId);
+		if (releaseId === null) return {
+			ok: false,
+			reason: "bad-request",
+			message: "lockId 必须是字符串"
+		};
+		if (force && releaseId) return {
+			ok: false,
+			reason: "bad-request",
+			message: "lockId 与 force 只能给一个"
+		};
+		if (!force && !releaseId) return {
+			ok: false,
+			reason: "bad-request",
+			message: "lockId 或 force 必须给一个"
+		};
+		const rec = this.current(petId);
+		if (rec === null) return {
+			ok: true,
+			petId,
+			released: false
+		};
+		if (!force && rec.lockId !== releaseId) return {
+			ok: false,
+			reason: "lock-lost",
+			cause: "unknown",
+			message: CAUSE_TEXT.unknown
+		};
+		this.drop(petId, rec, force ? "preempted" : "released");
+		return {
+			ok: true,
+			petId,
+			released: true
+		};
+	}
+	/** 撤掉全部占用（插件卸载路径）：不这样做的话，渲染端要等 TTL 到点才解除静止 */
+	releaseAll() {
+		for (const petId of [...this.locks.keys()]) {
+			const rec = this.locks.get(petId);
+			if (rec !== void 0) this.drop(petId, rec, "released");
+		}
+	}
+	/** 撤锁并记墓碑（唯一改状态的出口：释放/抢占/过期都走它，保证叶子与墓碑不漏写） */
+	drop(petId, rec, cause) {
+		this.locks.delete(petId);
+		this.tombstones.set(petId, {
+			lockId: rec.lockId,
+			cause
+		});
+		this.onChange(petId, { locked: false });
+	}
+	/** 墓碑查询：编号对得上就回它当初的 cause，否则 unknown（拿错编号 / 从来没有过） */
+	causeOf(petId, lockId) {
+		const stone = this.tombstones.get(petId);
+		return stone !== void 0 && stone.lockId === lockId ? stone.cause : "unknown";
+	}
+	/** 新编号：`lk-<时间36>-<自增36>`（与 ./playback 的 playbackId 同一套，只保证一次运行内唯一） */
+	newId() {
+		return "lk-" + this.now().toString(36) + "-" + (++this.seq).toString(36);
+	}
+};
+
+//#endregion
+//#region src/host/menu.ts
+/**
+* 第三方右键菜单注册表（进程内存态，DSH 重启即清空；不落盘）。
+*
+* 用途：别的插件想在桌宠右键菜单里加自己的入口，就走这里注册；用户点了之后，注册方用它自己的
+* owner 去查"我这一项被点了没有、是哪只宠物上点的"。
+*
+* 数据形状（两层，没有第三层）：
+*
+*   owners: Map<owner, Map<label, petId | null>>
+*           键 = owner（身份键，同时也是一级分组名）
+*           值 = label → 触发它的宠物 id；null = 没点过
+*
+* 语义要点（实现前先读完，都是刻意的）：
+*  - **注册 = 整体覆盖**：该 owner 的菜单项 = 本次 labels 事件（不在列表里的项连同触发标记一起
+*    丢弃）。没有单独的删除接口——注销就再注册一个空列表？不，空列表按非法处理（400），
+*    所以"不想要了"只能注册一份新的（或等进程重启）。这是有意的：菜单项生命周期与插件一致。
+*  - **同 owner 内 label 唯一**：重复 label 去重（保留第一次出现的顺序）。
+*  - **点击是闩锁不是队列**：同一项连点两次，查询只看到"点过"一次；不计数、不排序。
+*  - **查询即清空**（读取即消费）：返回后把这些标记全部清成 null。没有确认、没有重投——
+*    查询方没处理完就崩了，这次触发就丢了（对"用户点了一下菜单"这种一次性触发是合理取舍）。
+*  - **一个 owner 只该有一个消费者**：两个进程同时查会互抢（谁先返回谁拿到标记）。
+*
+* 限额（防本机进程把菜单/内存刷爆）：
+*  - owner ≤ 64 字符、label ≤ 32 字符（都允许中文，trim 后非空，禁控制字符）
+*  - 每 owner ≤ 20 项、全局 ≤ 32 个 owner
+*/
+/** owner 长度上限 */
+const OWNER_MAX = 64;
+/** 单个菜单项 label 长度上限（面板宽 150–240px，再长会被省略号截断） */
+const LABEL_MAX = 32;
+/** 每 owner 菜单项上限 */
+const ITEMS_MAX = 20;
+/** 全局 owner 上限 */
+const OWNERS_MAX = 32;
+const MENU_WAIT_MAX_MS = 1e4;
+/** 控制字符（换行/制表等会把菜单布局搞炸，一律拒绝） */
+const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
+/** 校验一个显示用字符串：必须是 string、trim 后非空、不超长、无控制字符 */
+function displayText(value, max) {
+	if (typeof value !== "string") return null;
+	const text = value.trim();
+	if (text === "" || text.length > max || CONTROL_CHARS.test(text)) return null;
+	return text;
+}
+var MenuRegistry = class {
+	constructor() {
+		this.owners = new Map();
+		this.waiters = new Map();
+	}
+	/**
+	* 注册（整体覆盖）：`{ owner, labels: string[] }`。
+	*
+	* 覆盖的粒度是 **owner 的全部菜单项**，不是逐项 upsert：这样注册方每次都能用一份完整列表
+	* 描述"我现在有什么"，不必关心上次注册了什么，也不会留下已下线的僵尸项。
+	*/
+	register(raw) {
+		if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {
+			ok: false,
+			reason: "bad-request",
+			message: "body 必须是 { owner, labels }"
+		};
+		const body = raw;
+		const owner = displayText(body.owner, OWNER_MAX);
+		if (owner === null) return {
+			ok: false,
+			reason: "invalid-owner",
+			message: `owner 必须是 1–${OWNER_MAX} 字符的字符串（禁控制字符）`
+		};
+		const rawLabels = body.labels;
+		if (!Array.isArray(rawLabels) || rawLabels.length === 0) return {
+			ok: false,
+			reason: "invalid-labels",
+			message: "labels 必须是非空数组"
+		};
+		if (rawLabels.length > ITEMS_MAX) return {
+			ok: false,
+			reason: "too-many-items",
+			message: `每个 owner 最多 ${ITEMS_MAX} 项`
+		};
+		const labels = [];
+		for (const rawLabel of rawLabels) {
+			const label = displayText(rawLabel, LABEL_MAX);
+			if (label === null) return {
+				ok: false,
+				reason: "invalid-label",
+				message: `每个 label 必须是 1–${LABEL_MAX} 字符的字符串（禁控制字符）`
+			};
+			if (!labels.includes(label)) labels.push(label);
+		}
+		if (!this.owners.has(owner) && this.owners.size >= OWNERS_MAX) return {
+			ok: false,
+			reason: "too-many-owners",
+			message: `最多 ${OWNERS_MAX} 个 owner`
+		};
+		this.owners.set(owner, new Map(labels.map((label) => [label, null])));
+		return { ok: true };
+	}
+	/**
+	* 清掉一个 owner 的全部菜单项（连它上面未取走的触发标记一起丢）。
+	*
+	* 幂等：owner 本来就不存在 → `removed: 0`，仍算成功——调用方重试注销时不该看到错误。
+	* 挂在该 owner 上的长轮询会被叫醒，醒来后查不到 owner → `null`（路由回 `ok:false` +
+	* `unknown-owner`），调用方据此知道要重新注册。
+	*/
+	clear(rawOwner) {
+		const owner = displayText(rawOwner, OWNER_MAX);
+		if (owner === null) return {
+			ok: false,
+			reason: "invalid-owner",
+			message: `owner 必须是 1–${OWNER_MAX} 字符的字符串（禁控制字符）`
+		};
+		const items = this.owners.get(owner);
+		if (!items) return {
+			ok: true,
+			removed: 0
+		};
+		const removed = items.size;
+		this.owners.delete(owner);
+		const waiters = this.waiters.get(owner);
+		this.waiters.delete(owner);
+		if (waiters) for (const wake of [...waiters]) wake();
+		return {
+			ok: true,
+			removed
+		};
+	}
+	/** 全量快照（写进 state；顺序 = 注册顺序 + 列表顺序，两端渲染顺序与它一致） */
+	snapshot() {
+		const out = [];
+		for (const [owner, items] of this.owners) for (const label of items.keys()) out.push({
+			owner,
+			label
+		});
+		return out;
+	}
+	/**
+	* 渲染端上报一次点击：把该项标成"被 petId 点了"，并叫醒该 owner 上挂着的长轮询。
+	*
+	* `delivered = false`（项不存在：菜单刚好被覆盖/还没注册）**不算错误**——渲染端拿着的是
+	* 上一拍 /state 的快照，这一拍菜单已经变了，属于正常竞态，路由仍回 200。
+	*/
+	click(raw) {
+		const body = raw && typeof raw === "object" ? raw : {};
+		const owner = typeof body.owner === "string" ? body.owner : "";
+		const label = typeof body.label === "string" ? body.label : "";
+		const pet = typeof body.pet === "string" ? body.pet.trim() : "";
+		const items = this.owners.get(owner);
+		if (!items || !items.has(label) || pet === "") return {
+			ok: true,
+			delivered: false
+		};
+		items.set(label, pet);
+		const waiters = this.waiters.get(owner);
+		if (waiters) for (const wake of [...waiters]) wake();
+		return {
+			ok: true,
+			delivered: true
+		};
+	}
+	/**
+	* 查询触发：返回 `{ label: petId | null }` 全量映射，**返回即清空**这些标记。
+	*
+	* `waitMs > 0` 且当下没有任何触发 → 挂起等待（该 owner 被点/超时/被覆盖都会唤醒），
+	* 超时后照常返回全 null 的映射。owner 不存在 → null（路由回 404，调用方据此知道要重新注册）。
+	*/
+	async poll(owner, waitMs) {
+		const items = this.owners.get(owner);
+		if (!items) return null;
+		if (waitMs > 0 && !hasFired(items)) await new Promise((resolve$1) => {
+			const set = this.waiters.get(owner) ?? new Set();
+			this.waiters.set(owner, set);
+			const hold = {};
+			let settled = false;
+			const finish = () => {
+				if (settled) return;
+				settled = true;
+				if (hold.timer !== void 0) clearTimeout(hold.timer);
+				set.delete(finish);
+				if (set.size === 0 && this.waiters.get(owner) === set) this.waiters.delete(owner);
+				resolve$1();
+			};
+			hold.timer = setTimeout(finish, Math.min(waitMs, MENU_WAIT_MAX_MS));
+			set.add(finish);
+		});
+		const current = this.owners.get(owner);
+		if (!current) return null;
+		const out = {};
+		for (const [label, pet] of current) {
+			out[label] = pet;
+			current.set(label, null);
+		}
+		return out;
+	}
+};
+/** 该 owner 当前有没有任意一项被点过 */
+function hasFired(items) {
+	for (const pet of items.values()) if (pet !== null) return true;
+	return false;
+}
+
+//#endregion
+//#region src/host/motion-cue.ts
+const POSITION_MODES = [
+	"instant",
+	"spring",
+	"line"
+];
+/** 夹到 0~1：归一化坐标的合法范围，**越界夹取而不是拒绝**（调用方拿响应里的实际值即可） */
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+/** 有限数字收窄：字符串 / 布尔 / NaN / Infinity 一律不算（配置里也这么判） */
+const finite = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
+/** 模式收窄：只认三个字面量（大小写、空白、非字符串一律不算），不认识返回 `null` */
+const positionMode = (v) => typeof v === "string" && POSITION_MODES.includes(v) ? v : null;
+/**
+* 目标宠物解析（与 ./anim、./broadcast 同一口径）：`?pet=` **必填**且必须真实存在。
+*
+* 两种失败分开报（issue #122 第 1 条「绝不默认退到列表第一只」）：
+* 没给 → `pet-required`；给了但配置里没有 → `unknown-pet`。
+*
+* 收紧前这里是 `requested || active || 'main'`：`active` 是"当前桌宠" = **有效宠物列表第一只**，
+* 而那个落点是用户 /pet 操作的函数——同一句不带 pet 的调用，落点会随用户操作而变，调用方无从
+* 预期。所以整条缺省链已删除，pet 与 /pet-display 的 `id` 一样是必填项。
+*/
+function resolvePet(cfg, requested) {
+	const petId = String(requested ?? "").trim();
+	if (!petId) return {
+		ok: false,
+		reason: "pet-required",
+		message: "pet 必填：要指定操作哪只桌宠"
+	};
 	if (!flattenPetList(cfg).some((p) => String(p.id) === petId)) return {
 		ok: false,
 		reason: "unknown-pet",
 		message: "没有这只桌宠：" + petId
 	};
-	const conf = (findPetInstance(cfg, petId) ?? { conf: cfg.main ?? {} }).conf;
-	if (!animationNames(conf.animations).includes(name)) return {
+	return {
+		ok: true,
+		petId
+	};
+}
+function decidePosition(args) {
+	const x = finite(args.x);
+	if (x === null) return {
 		ok: false,
-		reason: "unknown-animation",
-		message: "没有这个动画：" + name
+		reason: "bad-request",
+		message: "x 必须是有限数字"
+	};
+	const y = finite(args.y);
+	if (y === null) return {
+		ok: false,
+		reason: "bad-request",
+		message: "y 必须是有限数字"
+	};
+	const mode = positionMode(args.mode);
+	if (mode === null) return {
+		ok: false,
+		reason: "bad-request",
+		message: "mode 必须是 instant / spring / line"
+	};
+	let duration = null;
+	if (mode === "line") {
+		const d = finite(args.duration);
+		if (d === null || d < 0) return {
+			ok: false,
+			reason: "bad-request",
+			message: "line 模式的 duration 必须是非负有限数字（毫秒）"
+		};
+		duration = d;
+	}
+	const pet = resolvePet(args.cfg, args.requested);
+	if (!pet.ok) return pet;
+	return {
+		ok: true,
+		petId: pet.petId,
+		x: clamp01(x),
+		y: clamp01(y),
+		mode,
+		duration
+	};
+}
+const positionLeafData = (d) => d.duration === null ? {
+	x: d.x,
+	y: d.y,
+	mode: d.mode
+} : {
+	x: d.x,
+	y: d.y,
+	mode: d.mode,
+	duration: d.duration
+};
+function decideThrow(args) {
+	const angle = finite(args.angle);
+	if (angle === null) return {
+		ok: false,
+		reason: "bad-request",
+		message: "angle 必须是有限数字"
+	};
+	const power = finite(args.power);
+	if (power === null || power <= 0) return {
+		ok: false,
+		reason: "bad-request",
+		message: "power 必须是大于 0 的有限数字"
+	};
+	const pet = resolvePet(args.cfg, args.requested);
+	if (!pet.ok) return pet;
+	return {
+		ok: true,
+		petId: pet.petId,
+		angle,
+		power
+	};
+}
+
+//#endregion
+//#region src/host/playback.ts
+const TERMINAL_STATUSES = [
+	"ended",
+	"failed",
+	"cancelled"
+];
+const REPORTABLE_STATUSES = [
+	"playing",
+	"ended",
+	"failed",
+	"cancelled"
+];
+const PLAYBACK_KEEP_MS = 60 * 1e3;
+const MAX_PLAYBACK_WAIT_MS = 10 * 1e3;
+/** 终态判定用集合 */
+const TERMINAL = new Set(TERMINAL_STATUSES);
+/** 可上报判定用集合 */
+const REPORTABLE = new Set(REPORTABLE_STATUSES);
+const isTerminalStatus = (s) => TERMINAL.has(s);
+const isPlaybackStatus = (s) => s === "accepted" || REPORTABLE.has(s);
+const isReportableStatus = (s) => REPORTABLE.has(s);
+function parsePlaybackPath(rest) {
+	const m = /^playback\/([^/]+)(\/report)?$/.exec(rest);
+	if (!m) return void 0;
+	return {
+		playbackId: m[1] ?? "",
+		isReport: m[2] === "/report"
+	};
+}
+function parseWaitQuery(waitRaw, timeoutRaw) {
+	if (waitRaw === null && timeoutRaw === null) return { kind: "none" };
+	if (waitRaw === null || timeoutRaw === null) return {
+		kind: "error",
+		error: "wait and timeout must be used together"
+	};
+	const wait = waitRaw.split(",").map((s) => s.trim()).filter((s) => s !== "");
+	const bad = wait.find((s) => !isPlaybackStatus(s));
+	if (wait.length === 0 || bad !== void 0) return {
+		kind: "error",
+		error: `invalid wait status: ${bad ?? waitRaw}`
+	};
+	if (!/^\d+$/.test(timeoutRaw)) return {
+		kind: "error",
+		error: `invalid timeout (expect 0..${MAX_PLAYBACK_WAIT_MS})`
+	};
+	const timeoutMs = Number(timeoutRaw);
+	if (!Number.isFinite(timeoutMs) || timeoutMs > MAX_PLAYBACK_WAIT_MS) return {
+		kind: "error",
+		error: `invalid timeout (expect 0..${MAX_PLAYBACK_WAIT_MS})`
+	};
+	return {
+		kind: "ok",
+		wait,
+		timeoutMs
+	};
+}
+var PlaybackStore = class {
+	constructor() {
+		this.records = new Map();
+		this.waiters = new Map();
+		this.activeByPet = new Map();
+		this.seq = 0;
+	}
+	/**
+	* 受理一次点播：建记录（accepted），并把该宠物上一场（若仍在非终态）标为 cancelled/superseded。
+	* @returns 新建的记录（调用方取 playbackId 下发给调用方）
+	*/
+	create(petId, name$1) {
+		this.sweep();
+		const prev = this.activeByPet.get(petId);
+		if (prev !== void 0) this.finish(prev, "cancelled", "superseded");
+		const now = Date.now();
+		const record = {
+			playbackId: "pb-" + now.toString(36) + "-" + (++this.seq).toString(36),
+			petId,
+			name: name$1,
+			status: "accepted",
+			createdAt: now,
+			updatedAt: now
+		};
+		this.records.set(record.playbackId, record);
+		this.activeByPet.set(petId, record.playbackId);
+		return record;
+	}
+	/** 查记录；不存在 / 已过期 → undefined（路由回 404） */
+	get(playbackId) {
+		this.sweep();
+		return this.records.get(playbackId);
+	}
+	/**
+	* 渲染端上报一次状态。
+	*
+	* 幂等与终态保护：**终态之后的上报一律 ignored**（迟到的 ended 不许覆盖 cancelled），
+	* 与当前状态相同的上报同样 ignored。两种情况路由都回 200——对上报方来说"已经这样了"就是成功。
+	*/
+	report(playbackId, status, reason) {
+		this.sweep();
+		const record = this.records.get(playbackId);
+		if (!record) return "unknown";
+		const next = typeof status === "string" ? status : "";
+		if (!isReportableStatus(next)) return "invalid";
+		if (isTerminalStatus(record.status) || record.status === next) return "ignored";
+		const why = typeof reason === "string" && reason !== "" ? reason : void 0;
+		this.finish(playbackId, next, why);
+		return "ok";
+	}
+	/**
+	* 挂起一个等待者。
+	* @returns 取消函数；编号不存在时返回 **undefined**（路由据此立刻回 404，不挂）
+	*/
+	wait(args) {
+		this.sweep();
+		const record = this.records.get(args.playbackId);
+		if (!record) return void 0;
+		const waiter = {
+			wait: new Set(args.wait),
+			onWake: args.onWake,
+			record,
+			timer: void 0
+		};
+		let set = this.waiters.get(args.playbackId);
+		if (!set) {
+			set = new Set();
+			this.waiters.set(args.playbackId, set);
+		}
+		set.add(waiter);
+		waiter.timer = setTimeout(() => {
+			this.dropWaiter(args.playbackId, waiter);
+			waiter.onWake(waiter.record, false);
+		}, Math.max(0, args.timeoutMs));
+		waiter.timer.unref?.();
+		return () => this.dropWaiter(args.playbackId, waiter);
+	}
+	/**
+	* 结束**所有**挂起的等待（插件卸载 / 宿主退出路径）。
+	* 唤醒时 matched=false：调用方据此立刻收尾，而不是留一个悬挂的响应。
+	*/
+	cancelAll() {
+		for (const [playbackId, set] of [...this.waiters]) for (const waiter of [...set]) {
+			this.dropWaiter(playbackId, waiter);
+			waiter.onWake(waiter.record, false);
+		}
+	}
+	/**
+	* 清理过期终态记录（惰性调用：create / get / report 各调一次，记录数很少，成本可忽略）。
+	*
+	* **必须先把还在等它的人叫醒**：等待上限（10s）通常远小于保留时长（60s），但调用方完全可以在
+	* 一条终态记录的保留窗口末尾注册一个等"别的状态"的等待者——那种情况下记录会被清理，
+	* 不唤醒就成了永远等不到的悬挂等待者。
+	*
+	* @param now 注入时间（单测用；缺省取当前时刻）
+	*/
+	sweep(now = Date.now()) {
+		for (const [playbackId, record] of this.records) {
+			if (!isTerminalStatus(record.status)) continue;
+			if (now - record.updatedAt < PLAYBACK_KEEP_MS) continue;
+			const set = this.waiters.get(playbackId);
+			if (set) for (const waiter of [...set]) {
+				this.dropWaiter(playbackId, waiter);
+				waiter.onWake(waiter.record, false);
+			}
+			this.records.delete(playbackId);
+		}
+	}
+	/** 当前记录数（测试 / 观测用） */
+	count() {
+		return this.records.size;
+	}
+	/** 当前等待者数（测试 / 观测用：验证不泄漏） */
+	waiterCount() {
+		let n = 0;
+		for (const set of this.waiters.values()) n += set.size;
+		return n;
+	}
+	/**
+	* 落到一个终态：写状态、更新时间、摘掉"当前活跃"、唤醒在等这个状态的人。
+	* 唯一的状态写入点——等待者唤醒只在这里发生（不需要 diff、不需要比对）。
+	*/
+	finish(playbackId, status, reason) {
+		const record = this.records.get(playbackId);
+		if (!record) return;
+		record.status = status;
+		record.updatedAt = Date.now();
+		if (status === "ended") record.endedAt = record.updatedAt;
+		if (reason !== void 0) record.reason = reason;
+		if (this.activeByPet.get(record.petId) === playbackId) this.activeByPet.delete(record.petId);
+		const set = this.waiters.get(playbackId);
+		if (!set) return;
+		for (const waiter of [...set]) {
+			if (!waiter.wait.has(status)) continue;
+			this.dropWaiter(playbackId, waiter);
+			waiter.onWake(waiter.record, true);
+		}
+	}
+	/** 摘掉一个等待者（清定时器 + 从集合移除 + 空集合回收） */
+	dropWaiter(playbackId, waiter) {
+		if (waiter.timer !== void 0) {
+			clearTimeout(waiter.timer);
+			waiter.timer = void 0;
+		}
+		const set = this.waiters.get(playbackId);
+		if (!set) return;
+		set.delete(waiter);
+		if (set.size === 0) this.waiters.delete(playbackId);
+	}
+};
+
+//#endregion
+//#region src/host/pose.ts
+function normalizePoseInput(raw) {
+	const o = raw && typeof raw === "object" ? raw : null;
+	if (!o) return {
+		ok: false,
+		reason: "bad-request",
+		message: "请求体必须是对象：{ x, y, facing }"
+	};
+	if (typeof o.x !== "number" || !Number.isFinite(o.x)) return {
+		ok: false,
+		reason: "bad-request",
+		message: "x 必须是有限数字（归一化横坐标）"
+	};
+	if (typeof o.y !== "number" || !Number.isFinite(o.y)) return {
+		ok: false,
+		reason: "bad-request",
+		message: "y 必须是有限数字（归一化纵坐标）"
+	};
+	if (o.facing !== "left" && o.facing !== "right") return {
+		ok: false,
+		reason: "bad-request",
+		message: "facing 必须是 left / right"
 	};
 	return {
 		ok: true,
-		petId,
-		name
+		pose: {
+			x: o.x,
+			y: o.y,
+			facing: o.facing
+		}
 	};
 }
+var PoseStore = class {
+	constructor(opts) {
+		this.byPet = new Map();
+		this.now = opts?.now ?? Date.now;
+	}
+	/** 覆盖一只宠物的实况（返回落定的快照，方便调用方断言） */
+	set(petId, pose) {
+		const snap = {
+			x: pose.x,
+			y: pose.y,
+			facing: pose.facing,
+			updatedAt: this.now()
+		};
+		this.byPet.set(petId, snap);
+		return snap;
+	}
+	/** 读最近一次实况；从没上报过 → undefined（路由回 `pose-unavailable`） */
+	get(petId) {
+		return this.byPet.get(petId);
+	}
+	/** 当前快照数（测试 / 观测用） */
+	count() {
+		return this.byPet.size;
+	}
+};
+
+//#endregion
+//#region src/host/surface.ts
+const SURFACES = [
+	"web",
+	"desktop",
+	"both",
+	"any"
+];
+const SURFACE_TEXT = "surface 必填：web / desktop / both / any";
+function normalizeSurface(v) {
+	return typeof v === "string" && SURFACES.includes(v) ? v : null;
+}
+function displayCovers(want, display) {
+	switch (want) {
+		case "any": return display === "web" || display === "desktop" || display === "both";
+		case "web": return display === "web" || display === "both";
+		case "desktop": return display === "desktop" || display === "both";
+		case "both": return display === "both";
+	}
+}
+
 //#endregion
 //#region src/host/work-status.ts
+const HOST_WORK_STATUS_STATES = [
+	"thinking",
+	"working",
+	"result",
+	"waiting",
+	"success",
+	"error"
+];
 /**
 * turn/end reason.kind → 状态：
 *   completed → success、错误系（error/max-tokens/timeout）→ error、blocked → waiting（回合被阻塞，等用户确认）；
@@ -1600,7 +2387,7 @@ function turnEndState(kind) {
 }
 /** ask_user_question 工具名：模型在等用户选择题答复 → 归为 waiting（等待确认）而非普通工作 */
 const USER_QUESTION_TOOL$1 = "ask_user_question";
-/** 解析 update_goal 的 arguments（原始 JSON 字符串）→ 收尾动作；解析失败/非收尾动作 → null */
+const GOAL_UPDATE_TOOL = "update_goal";
 function goalUpdateAction(args) {
 	try {
 		const o = JSON.parse(args);
@@ -1609,27 +2396,19 @@ function goalUpdateAction(args) {
 	} catch {}
 	return null;
 }
-/**
-* turn/end reason=completed 的终局判定：
-*   - 非 goal 轮（默认）→ success（原行为：一轮答完即成功）；
-*   - 自动续跑轮中间轮（goalRound && 未收尾）→ result：本轮完成 ≠ 整个任务完成，不庆祝；
-*   - 收尾轮 complete → success（整个目标达成，庆祝）；
-*   - 收尾轮 blocked → error（目标被阻塞结束，诚实地表沮丧而非庆祝）。
-*/
 function completedState(turn) {
 	if (!turn?.goalRound) return "success";
 	if (turn.closing === "blocked") return "error";
 	if (turn.closing === "complete") return "success";
 	return "result";
 }
-/** 从会话事件压缩出工作状态；无变化/不关心返回 null。
-*  turn 为当前回合上下文（goal 续跑轮判定），只影响 turn/end completed 的终局语义。 */
 function reduceWorkStatus(event, turn) {
 	switch (event?.type) {
 		case "turn/start": return "thinking";
-		case "tool/call":
+		case "tool/call": {
 			if (String(event?.data?.name ?? "") === USER_QUESTION_TOOL$1) return "waiting";
 			return "working";
+		}
 		case "tool/result": return "result";
 		case "approval/asked": return "waiting";
 		case "turn/end": {
@@ -1640,13 +2419,7 @@ function reduceWorkStatus(event, turn) {
 		default: return null;
 	}
 }
-/**
-* todo/write 的 in_progress/pending 项文本 → 任务详情；null = 无（清单已全部完成）。
-*
-* 取**最后一个** in_progress（最近开始的那一步），而不是第一个：agent 常把新步骤标成 in_progress
-* 却忘了把上一步标 completed，取第一个就会永远停在最早那步——issue #59 场景 1（分阶段任务文案
-* 不随进度变化）的成因。没有进行中的项时回落到第一个 pending（= 下一步要做的）。
-*/
+const TASK_TEXT_MAX = 40;
 function currentTaskFromTodo(event) {
 	const todos = Array.isArray(event?.data?.todos) ? event.data.todos : [];
 	let current;
@@ -1655,10 +2428,8 @@ function currentTaskFromTodo(event) {
 	const content = String(current?.content ?? "").trim();
 	if (!content) return null;
 	const points = Array.from(content);
-	return points.length > 40 ? `${points.slice(0, 40).join("")}…` : content;
+	return points.length > TASK_TEXT_MAX ? `${points.slice(0, TASK_TEXT_MAX).join("")}…` : content;
 }
-/** 展示优先级：waiting > error > working > thinking > result > success
-*  （result 高于 success：任何会话的进行中过渡态都不被别处已完成态压过，防中途庆祝；同档按最近更新优先） */
 const WORK_STATUS_PRIORITY = {
 	waiting: 60,
 	error: 50,
@@ -1667,27 +2438,14 @@ const WORK_STATUS_PRIORITY = {
 	result: 25,
 	success: 20
 };
-/** 展示用条目：所有会话里优先级最高者（同优先级取 seq 更大者）；无会话 → undefined */
 function pickDisplayed(entries) {
 	let best;
 	for (const entry of entries) if (!best || WORK_STATUS_PRIORITY[entry.state] > WORK_STATUS_PRIORITY[best.state] || WORK_STATUS_PRIORITY[entry.state] === WORK_STATUS_PRIORITY[best.state] && entry.seq > best.seq) best = entry;
 	return best;
 }
-/**
-* 工作状态聚合（纯逻辑，可单测）：按会话维护 state/task，对外只暴露一个展示快照。
-*
-* 为什么 task 必须挂在会话条目上（issue #59 的主因）：它原先是一个**全局单值**，只由 todo/write
-* 写入、没有任何独立于 todo/write 的生命周期，于是 agent 写过一次清单之后，这条文案就跟着此后
-* 所有会话活动一直显示——会话结束、开一段完全无关的新对话都不消失，配置里的 workStatusTexts
-* 档位文案也被永久屏蔽。挂进条目后文案与它的会话**同生共死**：
-*   - 条目被清（回合中断 / 终态过期）→ 文案随之消失；
-*   - 新一轮 turn/start → 由调用方清空（上一轮的详情不该在新一轮继续挂着）；
-*   - 清单里再无 in_progress/pending → 写成 null，回落档位文案。
-* 展示时 state 与 task 取自**同一个** best 会话，因此也不会再出现"A 会话的状态配 B 会话的文案"。
-*/
 var WorkStatusStore = class {
 	constructor() {
-		this.sessions = /* @__PURE__ */ new Map();
+		this.sessions = new Map();
 		this.snap = {
 			state: null,
 			task: null,
@@ -1701,6 +2459,10 @@ var WorkStatusStore = class {
 	/** 该会话当前档位（无条目 / 已清 → undefined） */
 	stateOf(sessionId) {
 		return this.sessions.get(sessionId)?.state;
+	}
+	/** 该会话当前任务详情（无条目 → null） */
+	taskOf(sessionId) {
+		return this.sessions.get(sessionId)?.task ?? null;
 	}
 	/** 写会话状态（保留该会话已有的 task）；同状态且 seq 不更新 → 无变化返回 false（防刷屏） */
 	setState(sessionId, state, seq = 0) {
@@ -1746,24 +2508,9 @@ var WorkStatusStore = class {
 		this.snap.ts = Date.now();
 	}
 };
+
 //#endregion
 //#region src/host/notify-events.ts
-/**
-* 这条会话的事件该不该变成通知。
-*
-* 子代理（`origin === 'subagent'`）与更深层委派（`delegationDepth > 0`）一律不发：
-* 你等的是父对话，不是某一路子代理跑完。实测 3 个子代理会连弹 3 条「对话完成」，
-* 而宿主的 298 条会话里 198 条是子代理——通知直接变刷屏（issue #82）。
-*
-* **判据必须是 `origin`，绝不能用 `parentSession`。** 宿主 `parentSession` 的语义是
-* "fork 自哪条会话"（SessionHeader 注释原文：*the session this one was forked from*），
-* 普通 fork 也带它——本机实测正在对话的那条主会话就是 fork，`parentSession` 有值而
-* `origin` 为空。用它判子代理会把主对话一起静音。官方 dsh-subagent 的归档准入是同一套判据：
-* *"A fork shares the lineage field without the origin"*（archive-admission.js）。
-*
-* 判据不可用（session / header 缺失或形状不对）→ **放行**：宁可多弹一条，
-* 也不能因为宿主换了字段形状就让通知整体失效。
-*/
 function shouldNotifySession(session) {
 	const header = session?.header;
 	if (!header || typeof header !== "object") return true;
@@ -1772,7 +2519,28 @@ function shouldNotifySession(session) {
 	if (typeof depth === "number" && Number.isFinite(depth) && depth > 0) return false;
 	return true;
 }
-/** turn/end reason.kind → 通知类别；不弹的分支返回 null（与 shared/notify.ts 过滤一致） */
+function sessionIdOf(session) {
+	const s = session;
+	return String(s?.header?.id ?? s?.id ?? "unknown");
+}
+function withSessionId(frame, sessionId) {
+	return sessionId === "unknown" ? frame : {
+		...frame,
+		sessionId
+	};
+}
+function isCompletionTurnEnd(event) {
+	const e = event;
+	return e?.type === "turn/end" && e.data?.reason?.kind === "completed";
+}
+function hasBlockingActivity(activity) {
+	if (!Array.isArray(activity)) return false;
+	for (const item of activity) {
+		const kind = item?.kind;
+		if (kind === "job" || kind === "subagent" || kind === "schedule") return true;
+	}
+	return false;
+}
 function turnEndNotifyKind(kind) {
 	if (kind === "completed") return "completed";
 	if (kind === "error" || kind === "max-tokens") return kind;
@@ -1780,28 +2548,24 @@ function turnEndNotifyKind(kind) {
 }
 /** ask_user_question 工具名（与 work-status.ts 同源；该工具触发时模型在等用户选择题答复） */
 const USER_QUESTION_TOOL = "ask_user_question";
-/** 解析 tool/call 的 arguments（JSON 字符串）→ questions 数组；解析失败/非数组 → null */
 function parseToolQuestions(args) {
 	if (typeof args !== "string") return null;
 	try {
-		const questions = JSON.parse(args)?.questions;
+		const parsed = JSON.parse(args);
+		const questions = parsed?.questions;
 		if (!Array.isArray(questions)) return null;
 		return questions;
 	} catch {
 		return null;
 	}
 }
-/**
-* 把一条 session/event 子事件压缩成通知帧；不关心/过滤型事件返回 null。
-* 帧形状与 shared/notify.ts 的 frameToToast 期望完全一致（浏览器侧映射零改动）。
-* data 按宽松 Record 接收（approval/asked 的 reason 是字符串、turn/end 的是对象），内部各自安全取值。
-*/
 function reduceNotifyFrame(event) {
 	if (!event?.type) return null;
 	switch (event.type) {
 		case "turn/end": {
 			const reason = event.data?.reason;
-			if (!turnEndNotifyKind(reason?.kind)) return null;
+			const kind = turnEndNotifyKind(reason?.kind);
+			if (!kind) return null;
 			return {
 				type: "session/event",
 				event: {
@@ -1830,37 +2594,16 @@ function reduceNotifyFrame(event) {
 		default: return null;
 	}
 }
-/** agent/error（无回合位置的失败）→ host/agent-error 帧（与 shared 期望的 message 字段一致） */
 function agentErrorFrame(error) {
+	const message = typeof error === "string" ? error : error instanceof Error ? error.message : String(error ?? "");
 	return {
 		type: "host/agent-error",
-		message: typeof error === "string" ? error : error instanceof Error ? error.message : String(error ?? "")
+		message
 	};
 }
+
 //#endregion
 //#region src/host/storage-paths.ts
-/**
-* 插件存储位置清单（设置页「卸载与存储」区块的数据源）。
-*
-* 这四类位置分属互不相干的基准目录，本模块按「谁写得进谁说了算」分两种来源：
-*
-*   1) 直接吃真实写入方给的路径（零重复，不存在漂移）：
-*      - 用户数据    ← 调用方传 index.ts 的 userRoot（拼 'dsh-pet' 的地方只有那一处）
-*      - Electron    ← 调用方传 helper-process.ts 的 electronLandingDir()（下载方的唯一定义）
-*
-*   2) 系统规则，本模块按平台镜像一份（写入方不是本仓库的代码，无法调用）：
-*      - 桌面端 userData  ← Electron 的 app.getPath('userData')
-*      - Electron 下载缓存 ← @electron/get 默认 cacheRoot = env-paths('electron').cache
-*
-* 第 2 类里唯一能靠调用消掉的字面量是桌面端应用名（main.js 的 app.setName），
-* 但那个文件是独立 CJS（无构建、不可 import），只能在两处各写一遍——
-* storage-paths.test.ts 直接读 main.js 校验它，改了不同步就红。
-* 第 2 类的其余部分（env-paths 的平台口径、Electron 的 userData 口径）是上游约定，
-* 用逐平台用例钉住；上游若改口径，这里必须跟着改（测试只保证我们自己没写错）。
-*
-* 本模块只做路径推导，不复制任何写入逻辑。
-*/
-/** 桌面端 Electron userData 目录名（= main.js 的 app.setName 入参） */
 const DESKTOP_APP_NAME = "dsh-pet-electron-helper";
 /** Electron 下载缓存的应用名（@electron/get 写死 env-paths('electron')，与插件名无关） */
 const ELECTRON_PATHS_NAME = "electron";
@@ -1891,16 +2634,8 @@ function electronCacheDir(input) {
 	if (platform === "darwin") return join(home, "Library", "Caches", ELECTRON_PATHS_NAME);
 	return join(env.XDG_CACHE_HOME || join(home, ".cache"), ELECTRON_PATHS_NAME);
 }
-/**
-* 插件在本机落盘的全部位置（顺序即设置页展示顺序：先用户数据，后运行时与缓存，最后插件本体）。
-*
-* 前两条直接取真实写入方的路径（userDataRoot / electronDir 由调用方从写盘方传入），
-* 只有系统级目录（桌面端 userData 与 Electron 下载缓存）由本模块按平台推导。
-* @param input 各基准目录与平台/环境（测试注入）
-* @returns 条目数组；exists 由当前磁盘状态即时判定
-*/
 function storageEntries(input) {
-	return [
+	const items = [
 		{
 			key: "userData",
 			path: input.userDataRoot
@@ -1921,40 +2656,67 @@ function storageEntries(input) {
 			key: "package",
 			path: input.packageRoot
 		}
-	].map((it) => ({
+	];
+	return items.map((it) => ({
 		...it,
 		exists: existsSync(it.path)
 	}));
 }
-/**
-* 从本包路径反推 profile 名（设置页拼卸载命令用）。
-*
-* 常规安装形态是 <$DSH_HOME>/profiles/<name>/node_modules/dsh-pet；命中即得 <name>。
-* 反推不出来的情况（link: 安装到别处、或装在 profiles/node_modules 共享层）返回 undefined，
-* 由客户端退回占位符——宁可不给具体名字，也不猜一个错的。
-* @param packageRoot 本包根目录
-* @returns profile 名，或 undefined
-*/
-function profileNameFrom(packageRoot) {
-	return /[\\/]profiles[\\/]([^\\/]+)[\\/]node_modules[\\/][^\\/]+[\\/]?$/.exec(packageRoot)?.[1];
+function profileNameFrom(packageRoot$1) {
+	const m = /[\\/]profiles[\\/]([^\\/]+)[\\/]node_modules[\\/][^\\/]+[\\/]?$/.exec(packageRoot$1);
+	return m?.[1];
 }
+
 //#endregion
 //#region src/host/state.ts
+const MAX_STATE_WAIT_MS = 10 * 1e3;
+function parseStateWaitQuery(sinceRaw, timeoutRaw) {
+	if (sinceRaw === null && timeoutRaw === null) return { kind: "none" };
+	if (sinceRaw === null || timeoutRaw === null) return {
+		kind: "error",
+		error: "since and timeout must be used together"
+	};
+	if (!/^\d+$/.test(sinceRaw)) return {
+		kind: "error",
+		error: "invalid since (expect a non-negative integer)"
+	};
+	if (!/^\d+$/.test(timeoutRaw)) return {
+		kind: "error",
+		error: `invalid timeout (expect 0..${MAX_STATE_WAIT_MS})`
+	};
+	const since = Number(sinceRaw);
+	const timeoutMs = Number(timeoutRaw);
+	if (!Number.isFinite(since)) return {
+		kind: "error",
+		error: "invalid since (expect a non-negative integer)"
+	};
+	if (!Number.isFinite(timeoutMs) || timeoutMs > MAX_STATE_WAIT_MS) return {
+		kind: "error",
+		error: `invalid timeout (expect 0..${MAX_STATE_WAIT_MS})`
+	};
+	return {
+		kind: "ok",
+		since,
+		timeoutMs
+	};
+}
 /** 空叶子：counter=0 表示"从未写过"——前端首拉把它当基线，之后 counter 变化才渲染 */
 const emptyLeaf = () => ({
 	counter: 0,
 	data: null
 });
-/** 轮询统一状态存储（一个插件实例一个；进程内内存态，重启即空） */
 var PollStateStore = class {
 	constructor() {
 		this.last = 0;
 		this.sections = {
 			balance: emptyLeaf(),
 			workStatus: emptyLeaf(),
-			notify: emptyLeaf()
+			notify: emptyLeaf(),
+			config: emptyLeaf(),
+			menu: emptyLeaf()
 		};
-		this.pets = /* @__PURE__ */ new Map();
+		this.pets = new Map();
+		this.waiters = new Set();
 	}
 	/** 下一个 counter：`Date.now()` 与「上一个 +1」取大——单调、不回退、同毫秒不重复 */
 	next() {
@@ -1962,22 +2724,26 @@ var PollStateStore = class {
 		return this.last;
 	}
 	/**
-	* 写一个全局叶子（余额 / 工作状态 / 通知）。
+	* 写一个全局叶子（余额 / 工作状态 / 通知 / 配置变更信号）。
 	* 每次都整体替换叶子对象（不原地改字段），保证 `read()` 拿到的引用不会半新半旧。
 	*/
-	writeSection(name, data) {
-		this.sections[name] = {
+	writeSection(name$1, data) {
+		this.sections[name$1] = {
 			counter: this.next(),
 			data
 		};
+		this.wakeWaiters();
 	}
-	/** 写一只宠物的叶子（宠物条目不存在则自动建立，两个槽位一起建好，形状恒定） */
+	/** 写一只宠物的叶子（宠物条目不存在则自动建立，**所有槽位一起建好**，形状恒定） */
 	writePet(petId, leaf, data) {
 		let entry = this.pets.get(petId);
 		if (!entry) {
 			entry = {
 				say: emptyLeaf(),
-				anim: emptyLeaf()
+				anim: emptyLeaf(),
+				position: emptyLeaf(),
+				throw: emptyLeaf(),
+				lock: emptyLeaf()
 			};
 			this.pets.set(petId, entry);
 		}
@@ -1985,6 +2751,7 @@ var PollStateStore = class {
 			counter: this.next(),
 			data
 		};
+		this.wakeWaiters();
 	}
 	/**
 	* 当前 S（GET /state 的响应体）。
@@ -1993,112 +2760,526 @@ var PollStateStore = class {
 	*/
 	read() {
 		return {
+			counter: this.last,
 			sections: { ...this.sections },
 			pets: Object.fromEntries(this.pets)
 		};
 	}
-};
-//#endregion
-//#region src/host/window-activation.ts
-/** Correlated window activation on the Desktop parent's private process IPC. */
-/** Expected activation failure, with a stable code independent of display text. */
-var WindowActivationError = class extends Error {
-	code;
-	constructor(code, message) {
-		super(message);
-		this.code = code;
+	/**
+	* 挂起一个等待者：直到 `last` 变得不等于 `since`、或超时、或调用方取消。
+	*
+	* 三种收尾对调用方是同一件事（去 `read()` 拿最新状态），所以回调不带参数——
+	* 需要区分"等到了"还是"超时了"的场景并不存在。
+	*
+	* **唤醒发生在写入落定之后**（见两个 write 方法里 `wakeWaiters()` 的位置）：如果放在
+	* `next()` 里，回调会先于 `this.sections[name] = …` 执行，调用方读到的就是**旧状态**。
+	*
+	* @returns 取消函数（清掉超时定时器并摘掉等待者）
+	*/
+	wait(args) {
+		const waiter = {
+			since: args.since,
+			onWake: args.onWake,
+			timer: void 0
+		};
+		this.waiters.add(waiter);
+		waiter.timer = setTimeout(() => {
+			this.dropWaiter(waiter);
+			waiter.onWake();
+		}, Math.max(0, args.timeoutMs));
+		if (process.env.NODE_TEST_CONTEXT === void 0) waiter.timer.unref?.();
+		return () => this.dropWaiter(waiter);
+	}
+	/**
+	* 结束**所有**挂起的等待（插件卸载 / 宿主退出路径）。
+	* 唤醒时不给区分标志：调用方据此立刻收尾，而不是留一个悬挂的响应。
+	*/
+	cancelAll() {
+		for (const waiter of [...this.waiters]) {
+			this.dropWaiter(waiter);
+			waiter.onWake();
+		}
+	}
+	/** 当前等待者数（测试 / 观测用：验证不泄漏） */
+	waiterCount() {
+		return this.waiters.size;
+	}
+	/**
+	* 唤醒所有**已经过期**的等待者（唯一调用点是两个 write 方法，且必须在叶子写定之后）。
+	* `since === this.last` 的跳过：那种等待者是"已经是最新"的，叫醒它等于空转。
+	*/
+	wakeWaiters() {
+		if (this.waiters.size === 0) return;
+		for (const waiter of [...this.waiters]) {
+			if (waiter.since === this.last) continue;
+			this.dropWaiter(waiter);
+			waiter.onWake();
+		}
+	}
+	/** 摘掉一个等待者（清定时器 + 从集合移除） */
+	dropWaiter(waiter) {
+		if (waiter.timer !== void 0) {
+			clearTimeout(waiter.timer);
+			waiter.timer = void 0;
+		}
+		this.waiters.delete(waiter);
 	}
 };
-/** Validate the Desktop PID supplied across the process environment. */
-function desktopActivationPid(value) {
-	if (!value || !/^[1-9]\d*$/.test(value)) return void 0;
-	const pid = Number(value);
-	return Number.isSafeInteger(pid) && pid < 4294967295 ? value : void 0;
+
+//#endregion
+//#region src/host/time-context.ts
+/**
+* 时段划分表：[起始小时, 时段]，**按起始小时从晚到早**排列——匹配时取第一个不超过当前小时的档。
+* 口径（含起始小时，0–23 全覆盖、不重叠）：
+*   凌晨 0–4 / 清晨 5–6 / 早上 7–8 / 上午 9–10 / 中午 11–12 / 下午 13–16 / 傍晚 17–18 / 晚上 19–22 / 深夜 23
+*/
+const SLOTS = [
+	[23, "深夜"],
+	[19, "晚上"],
+	[17, "傍晚"],
+	[13, "下午"],
+	[11, "中午"],
+	[9, "上午"],
+	[7, "早上"],
+	[5, "清晨"],
+	[0, "凌晨"]
+];
+/** 星期文案：索引 = Date.getDay()（0 = 周日） */
+const WEEKDAYS = [
+	"星期日",
+	"星期一",
+	"星期二",
+	"星期三",
+	"星期四",
+	"星期五",
+	"星期六"
+];
+/** 一天毫秒数（日期算术用 UTC 毫秒，避开本地时区） */
+const DAY_MS = 864e5;
+/** 缺省窗口：提前 3 天预热、本身 1 天、过后 3 天回味 */
+const DEFAULT_AHEAD = 3;
+const DEFAULT_SPAN = 1;
+const DEFAULT_AFTER = 3;
+/** 假期区间的窗口：提前 3 天预热、末尾 3 天说「快结束了」、结束后 3 天回味 */
+const SEASON_AHEAD = 3;
+const SEASON_ENDING_AHEAD = 3;
+const SEASON_AFTER = 3;
+/** 两位补零（只用于时分；月/日刻意不补零——中文日期写「2月17日」比「02月17日」自然） */
+function pad2(n) {
+	return String(n).padStart(2, "0");
 }
-/** Create one activation caller; dispose rejects outstanding requests and detaches listeners. */
-function windowActivation(transport, deadlineMs = 2e3) {
-	let nextId = 1;
-	let disposed = false;
-	const pending = /* @__PURE__ */ new Map();
-	const unavailable = () => new WindowActivationError("unavailable", "Desktop window activation is unavailable");
-	const disconnect = () => {
-		for (const request of pending.values()) request.reject(new WindowActivationError("disconnect", "Desktop window activation is unavailable: disconnected"));
+function timeSlotOf(hour) {
+	for (const [start, slot] of SLOTS) if (hour >= start) return slot;
+	return "凌晨";
+}
+function dayKindOf(day) {
+	return day === 0 || day === 6 ? "周末" : "工作日";
+}
+/**
+* ★ 顺序 = 优先级（靠前的先说话）。编排口径：
+*   ① 只有「当天」值得说、且会被邻座节日窗口挤掉的小节（情人节 / 跨年夜 / 愚人节 / 青年节）排在各自邻座之前，
+*      并用 after: 0 掐掉回味，免得反过来压住邻座的当天；
+*   ② 除夕、元宵必须排在春节之前：否则 2/16 会说「明天就是春节」、3/3 会说「春节假期最后一天」，
+*      而不是「今天是除夕」「今天是元宵节」；
+*   ③ 大节与家庭假期（春节 / 中秋 / 国庆 / 元旦 / 端午 / 清明 / 劳动节 / 寒暑假）在中段，
+*      传统节日（七夕 / 中元 / 龙抬头 / 重阳 / 腊八 / 小年）紧随其后并**排在寒暑假之前**——
+*      所以暑假里的七夕、寒假里的小年照常由节日说话；
+*   ④ 纪念日类（妇女节 / 教师节 / 建党节 / 建军节 / 万圣夜 / 平安夜 / 圣诞节）排在最后，
+*      因此暑假期间的建党节（7/1）、建军节（8/1）会让位给「正在放暑假」。
+*   ⑤ 寒暑假区间放在中段之后、纪念日之前：7/1 既是建党节又是暑假首日，按本顺序由「暑假开始了」说话。
+*/
+const PRIORITY = [
+	{
+		kind: "solar",
+		key: "2-14",
+		name: "情人节",
+		after: 0
+	},
+	{
+		kind: "solar",
+		key: "12-31",
+		name: "跨年夜",
+		after: 0
+	},
+	{
+		kind: "solar",
+		key: "4-1",
+		name: "愚人节",
+		after: 0
+	},
+	{
+		kind: "solar",
+		key: "5-4",
+		name: "青年节",
+		ahead: 0,
+		after: 0
+	},
+	{
+		kind: "lunarEve",
+		name: "除夕",
+		ahead: 1,
+		after: 0
+	},
+	{
+		kind: "lunar",
+		key: "1-15",
+		name: "元宵节"
+	},
+	{
+		kind: "lunar",
+		key: "1-1",
+		name: "春节",
+		spoken: "大年初一",
+		span: 15
+	},
+	{
+		kind: "lunar",
+		key: "8-15",
+		name: "中秋节",
+		span: 3,
+		after: 2
+	},
+	{
+		kind: "solar",
+		key: "10-1",
+		name: "国庆节",
+		span: 7
+	},
+	{
+		kind: "solar",
+		key: "1-1",
+		name: "元旦",
+		spoken: "新年第一天",
+		span: 3
+	},
+	{
+		kind: "lunar",
+		key: "5-5",
+		name: "端午节",
+		span: 3
+	},
+	{
+		kind: "solar",
+		key: "4-4",
+		name: "清明节",
+		span: 3,
+		ahead: 1
+	},
+	{
+		kind: "solar",
+		key: "5-1",
+		name: "劳动节",
+		span: 3
+	},
+	{
+		kind: "solar",
+		key: "6-1",
+		name: "儿童节"
+	},
+	{
+		kind: "lunar",
+		key: "7-7",
+		name: "七夕"
+	},
+	{
+		kind: "lunar",
+		key: "7-15",
+		name: "中元节"
+	},
+	{
+		kind: "lunar",
+		key: "2-2",
+		name: "龙抬头"
+	},
+	{
+		kind: "lunar",
+		key: "9-9",
+		name: "重阳节"
+	},
+	{
+		kind: "lunar",
+		key: "12-8",
+		name: "腊八节"
+	},
+	{
+		kind: "lunar",
+		key: "12-23",
+		name: "小年"
+	},
+	{
+		kind: "season",
+		from: "1-20",
+		to: "2-18",
+		name: "寒假"
+	},
+	{
+		kind: "season",
+		from: "7-1",
+		to: "8-29",
+		name: "暑假"
+	},
+	{
+		kind: "solar",
+		key: "3-8",
+		name: "妇女节"
+	},
+	{
+		kind: "solar",
+		key: "9-10",
+		name: "教师节"
+	},
+	{
+		kind: "solar",
+		key: "7-1",
+		name: "建党节"
+	},
+	{
+		kind: "solar",
+		key: "8-1",
+		name: "建军节"
+	},
+	{
+		kind: "solar",
+		key: "10-31",
+		name: "万圣夜"
+	},
+	{
+		kind: "solar",
+		key: "12-24",
+		name: "平安夜",
+		after: 0
+	},
+	{
+		kind: "solar",
+		key: "12-25",
+		name: "圣诞节"
+	}
+];
+/** 公历 / 农历 / 除夕 / 假期区间的索引（模块加载时按 PRIORITY 建一次） */
+const SOLAR_INDEX = new Map();
+const LUNAR_INDEX = new Map();
+const SEASON_ENTRIES = [];
+let LUNAR_EVE;
+PRIORITY.forEach((entry, priority) => {
+	if (entry.kind === "solar") SOLAR_INDEX.set(entry.key, {
+		entry,
+		priority
+	});
+	else if (entry.kind === "lunar") LUNAR_INDEX.set(entry.key, {
+		entry,
+		priority
+	});
+	else if (entry.kind === "lunarEve") LUNAR_EVE = {
+		entry,
+		priority
 	};
-	const message = (input) => {
-		if (typeof input !== "object" || input === null || !("type" in input) || input.type !== "window-activated" || !("requestId" in input) || typeof input.requestId !== "number" || !Number.isSafeInteger(input.requestId) || "error" in input && typeof input.error !== "string" || "errorCode" in input && typeof input.errorCode !== "string") return;
-		const request = pending.get(input.requestId);
-		if ("error" in input) request?.reject(new WindowActivationError("errorCode" in input ? input.errorCode : "unavailable", input.error));
-		else request?.resolve();
-	};
-	transport.on("message", message);
-	transport.on("disconnect", disconnect);
+	else SEASON_ENTRIES.push({
+		entry,
+		priority,
+		from: entry.from,
+		to: entry.to
+	});
+});
+/** ICU 中国农历格式器；null = 已判定本环境不可用（不重试、不抛错） */
+let lunarFormatter;
+/**
+* 取 ICU 农历格式器。
+* Intl 在缺少该日历时**不会抛错**，而是静默退回公历——那会让每个月都被当成农历同月同日，
+* 所以这里用 resolvedOptions().calendar 确认它真的解析成了 'chinese'，否则一律判不可用。
+*/
+function getLunarFormatter() {
+	if (lunarFormatter === null) return void 0;
+	if (!lunarFormatter) {
+		const fmt = new Intl.DateTimeFormat("en-u-ca-chinese", {
+			month: "numeric",
+			day: "numeric",
+			year: "numeric"
+		});
+		lunarFormatter = fmt.resolvedOptions().calendar === "chinese" ? fmt : null;
+	}
+	return lunarFormatter ?? void 0;
+}
+/** 年内日序号（0 起，按 UTC 计算，闰年自然正确）——假期区间比较用它 */
+function dayOfYear(date) {
+	return (Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - Date.UTC(date.getFullYear(), 0, 1)) / DAY_MS;
+}
+/** '月-日' → 该年内的日序号（0 起） */
+function dayOfYearOf(year, monthDay) {
+	const [month, day] = monthDay.split("-").map(Number);
+	return (Date.UTC(year, (month ?? 1) - 1, day ?? 1) - Date.UTC(year, 0, 1)) / DAY_MS;
+}
+/**
+* 公历日期 → 农历月日。
+* @returns 农历月/日（闰月 month 为负）；环境不支持农历、取不到月日，或**农历年与公历年不吻合**
+*   （自洽校验，合理范围：公历年或公历年 − 1，用于挡住 ICU 退化时把公历当农历返回）→ undefined。
+*/
+function lunarPartsOf(date) {
+	const fmt = getLunarFormatter();
+	if (!fmt) return void 0;
+	const parts = fmt.formatToParts(date);
+	const pick = (type) => parts.find((p) => p.type === type)?.value;
+	const rawMonth = pick("month");
+	const rawDay = pick("day");
+	const rawYear = pick("relatedYear") ?? pick("year");
+	if (!rawMonth || !rawDay || !rawYear) return void 0;
+	const month = Number.parseInt(rawMonth, 10);
+	const day = Number.parseInt(rawDay, 10);
+	const year = Number.parseInt(rawYear, 10);
+	if (!Number.isFinite(month) || !Number.isFinite(day) || !Number.isFinite(year)) return void 0;
+	const gregorianYear = date.getFullYear();
+	if (year !== gregorianYear && year !== gregorianYear - 1) return void 0;
 	return {
-		async activate() {
-			if (disposed || !transport.connected) throw unavailable();
-			const requestId = nextId++;
-			let timer;
-			try {
-				await new Promise((resolve, reject) => {
-					pending.set(requestId, {
-						resolve,
-						reject
-					});
-					timer = setTimeout(() => reject(new WindowActivationError("activation-timeout", "Desktop window activation timed out")), deadlineMs);
-					try {
-						transport.send({
-							type: "activate-window",
-							requestId
-						}, (error) => {
-							if (error !== null) reject(error);
-						});
-					} catch (error) {
-						reject(error);
-					}
-				});
-			} finally {
-				clearTimeout(timer);
-				pending.delete(requestId);
-			}
-		},
-		dispose() {
-			if (disposed) return;
-			disposed = true;
-			transport.off("message", message);
-			transport.off("disconnect", disconnect);
-			disconnect();
-		}
+		month: /bis/i.test(rawMonth) ? -month : month,
+		day
 	};
 }
+/** 当天是否是除夕（腊月最后一天：次日为正月初一即成立，廿九/三十都能认） */
+function isLunarEve(date) {
+	const today = lunarPartsOf(date);
+	if (!today || today.month !== 12) return false;
+	const next = lunarPartsOf(new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1));
+	return Boolean(next && next.month === 1 && next.day === 1);
+}
+/** 某一天命中的全部条目（公历、农历、除夕三类；假期区间不按天查，另行处理） */
+function entriesAt(date) {
+	const out = [];
+	const solar = SOLAR_INDEX.get(date.getMonth() + 1 + "-" + date.getDate());
+	if (solar) out.push(solar);
+	const lunar = lunarPartsOf(date);
+	if (lunar && lunar.month > 0) {
+		const hit = LUNAR_INDEX.get(lunar.month + "-" + lunar.day);
+		if (hit) out.push(hit);
+	}
+	if (LUNAR_EVE && isLunarEve(date)) out.push(LUNAR_EVE);
+	return out;
+}
+/**
+* 相位 → 从句措辞。
+* @param delta 相对**节日起始日**的天数：> 0 = 还有这么多天；0 = 起始当天；< 0 = 已在节期内或过后
+*/
+function phraseOf(entry, delta) {
+	const span = entry.span ?? DEFAULT_SPAN;
+	if (delta > 0) return delta === 1 ? "明天就是" + entry.name : "快要过" + entry.name + "了";
+	if (delta === 0) return "今天是" + (entry.spoken ?? entry.name);
+	const daysIn = -delta;
+	if (daysIn < span) return span - daysIn === 1 ? entry.name + "假期最后一天了" : "还在" + entry.name + "假期里";
+	const rest = daysIn - span;
+	return rest <= 1 ? entry.name + "刚过完" : entry.name + "这么快就过完了";
+}
+/**
+* 条目 → 候选从句（不在自身窗口内则返回 undefined）。
+* @param delta 相对节日起始日的天数
+*/
+function candidateOf(ranked, delta) {
+	const { entry, priority } = ranked;
+	const ahead = entry.ahead ?? DEFAULT_AHEAD;
+	const span = entry.span ?? DEFAULT_SPAN;
+	const after = entry.after ?? DEFAULT_AFTER;
+	const daysIn = -delta;
+	if (delta > 0) {
+		if (delta > ahead) return void 0;
+	} else if (delta < 0) {
+		if (daysIn >= span + after) return void 0;
+	}
+	return {
+		clause: phraseOf(entry, delta),
+		priority
+	};
+}
+/** 假期区间 → 候选从句（不在窗口内返回 undefined） */
+function seasonCandidateOf(date) {
+	const year = date.getFullYear();
+	const today = dayOfYear(date);
+	for (const ranked of SEASON_ENTRIES) {
+		const { entry, priority, from: fromMd, to: toMd } = ranked;
+		const name$1 = entry.name;
+		const from = dayOfYearOf(year, fromMd);
+		const to = dayOfYearOf(year, toMd);
+		if (today < from) {
+			const ahead = from - today;
+			if (ahead > SEASON_AHEAD) continue;
+			return {
+				clause: ahead === 1 ? "明天就放" + name$1 + "了" : "快要放" + name$1 + "了",
+				priority
+			};
+		}
+		if (today <= to) {
+			if (today === from) return {
+				clause: name$1 + "开始了",
+				priority
+			};
+			if (to - today < SEASON_ENDING_AHEAD) return {
+				clause: name$1 + "快结束了",
+				priority
+			};
+			return {
+				clause: "正在放" + name$1,
+				priority
+			};
+		}
+		const rest = today - to - 1;
+		if (rest >= SEASON_AFTER) continue;
+		return {
+			clause: rest <= 1 ? name$1 + "刚结束" : name$1 + "这么快就过完了",
+			priority
+		};
+	}
+	return void 0;
+}
+/** 条目里最长的预热天数与回看距离（长假 15 天 + 回味 3 天），据此决定扫描窗口 */
+const HOLIDAY_ENTRIES = PRIORITY.filter((e) => e.kind !== "season");
+const MAX_AHEAD = Math.max(...HOLIDAY_ENTRIES.map((e) => e.ahead ?? DEFAULT_AHEAD));
+const MAX_LOOKBACK = Math.max(...HOLIDAY_ENTRIES.map((e) => (e.span ?? DEFAULT_SPAN) - 1 + (e.after ?? DEFAULT_AFTER)));
+/**
+* 节日从句：扫描窗口内枚举每一天命中的条目、算出各自相位与措辞，取**优先级最小**（数组里最靠前）的那个。
+* @returns 如「今天是大年初一」「快要过国庆节了」「还在春节假期里」「正在放暑假」；无节日时 ''
+*/
+function holidayClauseOf(date) {
+	let best;
+	const keep = (candidate) => {
+		if (candidate && (!best || candidate.priority < best.priority)) best = candidate;
+	};
+	for (let delta = -MAX_LOOKBACK; delta <= MAX_AHEAD; delta++) {
+		const day = new Date(date.getFullYear(), date.getMonth(), date.getDate() + delta);
+		for (const ranked of entriesAt(day)) keep(candidateOf(ranked, delta));
+	}
+	keep(seasonCandidateOf(date));
+	return best ? best.clause : "";
+}
+function timeContextOf(date) {
+	if (Number.isNaN(date.getTime())) return "";
+	const day = date.getDay();
+	const hour = date.getHours();
+	const holiday = holidayClauseOf(date);
+	return "【当下】现在是" + date.getFullYear() + "年" + (date.getMonth() + 1) + "月" + date.getDate() + "日" + (WEEKDAYS[day] ?? "星期?") + " " + pad2(hour) + ":" + pad2(date.getMinutes()) + "，" + timeSlotOf(hour) + "，" + dayKindOf(day) + (holiday ? "，" + holiday : "") + "。这只是背景，不必刻意报时，也别句句都提节日——多数时候正常说话就好，真贴切时才顺口带一句。";
+}
+
+//#endregion
+//#region src/host/persona.ts
+function petPersona(conf, pet) {
+	const own = pet.whisperPrompt;
+	if (typeof own === "string" && own.trim() !== "") return own;
+	const entry = conf.whisperPrompt;
+	return typeof entry === "string" ? entry : "";
+}
+function composeSystemPrompt(parts) {
+	const name$1 = String(parts.name || parts.id);
+	const nameLine = name$1 ? "你的名字是“" + name$1 + "”。" : "";
+	const lines = [parts.prompt, nameLine].filter((line) => line !== "");
+	const time = timeContextOf(parts.now);
+	if (time) lines.push(time);
+	return lines.join("\n");
+}
+
 //#endregion
 //#region src/host/helper-process.ts
-/**
-* 桌面 Helper 进程管理器 —— 拉起/守护 Electron 透明窗口进程。
-*
-* 架构：Helper 与宿主之间除了日志，还有一条 **stdin/stdout JSON 行协议**（bridge）：
-*   - 渲染端不再直接访问 DSH WebServer（DSH Desktop 2.0.3+ 的浏览器访问闸门会给插件自拉的
-*     独立进程裸 HTTP 请求回 403），改走自定义 scheme `dsh-pet-bridge://` → Electron 主进程
-*     （main.js 的 protocol.handle）→ 本模块的管道 → 宿主 handlePetRoute（与 HTTP 路由同一份逻辑）。
-*   - 协议行统一前缀 `dsh-pet-bridge:`，与普通日志行区分（main.js 的 console 输出也走 stdout）。
-*   - 素材（webm/字体/光标）不把二进制过管道：宿主返回文件绝对路径，main.js 自行读盘应答。
-* 本文件负责解析 Electron 可执行文件、以子进程方式拉起 electron-helper/main.js、
-* 守护协议通道、并在异常退出时自动重启。
-*/
 const require = createRequire(import.meta.url);
-const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const here = dirname(fileURLToPath(import.meta.url));
+const packageRoot = resolve(here, "..");
 const defaultHelperMain = resolve(packageRoot, "runtime", "electron-helper", "main.js");
-/** 协议行前缀：stdout/stdin 里以此开头的整行 JSON 属于 bridge 协议，其余为日志 */
 const BRIDGE_PREFIX = "dsh-pet-bridge:";
-/**
-* 解析 Electron 可执行文件。
-* 优先级：
-*   1. 显式候选（用户配置）/ DSH_PET_ELECTRON_PATH 环境变量
-*   2. 本机已安装的 electron npm 包（require('electron') 返回二进制路径）
-*   3. $DSH_HOME/electron（默认 ~/.dsh/electron）—— ensureElectronDownload 的落地路径
-*   4. 都不存在时由 ensureElectronDownload() 进程内异步下载（不 spawn 子进程，
-*      避免 process.execPath 在 Electron 宿主（如 DSH Desktop）里指向宿主 exe 导致崩溃）
-*/
 function resolveElectronPath(candidates = []) {
-	const seen = /* @__PURE__ */ new Set();
+	const seen = new Set();
 	const list = [];
 	const push = (value) => {
 		if (!value || seen.has(value)) return;
@@ -2114,22 +3295,6 @@ function resolveElectronPath(candidates = []) {
 	push(defaultElectronExe());
 	return list.find((value) => existsSync(value));
 }
-/** $DSH_HOME（默认 ~/.dsh），与 ensure-electron.mjs 的 HOME 计算一致。 */
-/**
-* 判断当前环境能否真的跑起 Electron 图形窗口。
-*
-* 【为什么需要】Linux 无显示环境（服务器 / 容器 / 纯 CLI）下，Electron 能被成功
-* 下载并 spawn 拉起，但初始化图形栈时立刻崩溃。配合 Helper 的守护循环
-* （异常退出自动重启），结果是每秒反复「拉起→崩溃→重启」，每个 core dump
-* 约 14MB —— 实测几小时可堆到数十 GB 打满磁盘。必须在拉起之前判断。
-*
-* 判定口径（只拦「明确跑不起来」的情况）：
-*   - win32 / darwin：桌面系统，放行（macOS 无 DISPLAY 也走 WindowServer）；
-*   - linux：需要 DISPLAY 或 WAYLAND_DISPLAY 其一，都没有则判为无显示环境。
-*
-* 【逃生口】DSH_PET_DESKTOP_FORCE=1 强制跳过，供 Xvfb / 远程桌面等
-* 「环境变量没设但其实能显示」的场景使用。
-*/
 function hasGraphicalDisplay() {
 	if (process.platform !== "linux") return true;
 	if (process.env.DSH_PET_DESKTOP_FORCE === "1") return true;
@@ -2143,31 +3308,16 @@ function dshHomeDir() {
 const PLAT = process.platform;
 /** $DSH_HOME/electron 落地目录下，可执行文件的相对路径（按平台） */
 const ELECTRON_REL = PLAT === "win32" ? "electron.exe" : PLAT === "darwin" ? join("Electron.app", "Contents", "MacOS", "Electron") : "electron";
-/**
-* Electron 运行时落地目录（$DSH_HOME/electron）—— 下载解压的目标，
-* 也是设置页「卸载与存储」里让用户清理的那个目录。
-*
-* 唯一定义处：解析（resolveElectronPath / defaultElectronExe）与下载
-* （ensureElectronDownload）全部走这里，避免同一个目录字面量在多个模块各写一遍，
-* 改了一处而另一处没改（设置页就会显示一个永远不存在的路径）。
-*/
 function electronLandingDir() {
 	return join(dshHomeDir(), "electron");
 }
-/** Electron 落地路径：$DSH_HOME/electron/<按平台的可执行文件>。 */
 function defaultElectronExe() {
 	return join(electronLandingDir(), ELECTRON_REL);
 }
-/**
-* 进程内下载并解压 Electron 到 $DSH_HOME/electron。
-* 不 spawn 子进程：在 CLI node 与 Electron 宿主（DSH Desktop）里都可用，
-* 修复原 ensure-electron.mjs 用 process.execPath 调脚本导致宿主重复拉起的问题。
-* 已存在则原样返回；失败返回 undefined（不影响 DSH 与浏览器 overlay）。
-*/
 async function ensureElectronDownload(options = {}) {
 	const version = options.version || process.env.DSH_PET_ELECTRON_VERSION || "43.3.0";
 	const mirror = options.mirror || process.env.DSH_PET_ELECTRON_MIRROR || "https://npmmirror.com/mirrors/electron/";
-	const timeoutMs = options.timeoutMs ?? 600 * 1e3;
+	const timeoutMs = options.timeoutMs ?? 10 * 60 * 1e3;
 	const targetDir = electronLandingDir();
 	const exe = defaultElectronExe();
 	if (existsSync(exe)) return exe;
@@ -2175,10 +3325,10 @@ async function ensureElectronDownload(options = {}) {
 	const warn = (message) => console.warn(`[dsh-pet] ${message}`);
 	const startedAt = Date.now();
 	log(`Electron not found, downloading v${version} (${PLAT}-${process.arch}) ...`);
-	mkdirSync(targetDir, { recursive: true });
 	try {
+		mkdirSync(targetDir, { recursive: true });
 		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(/* @__PURE__ */ new Error(`Electron download timed out after ${timeoutMs}ms`)), timeoutMs);
+		const timer = setTimeout(() => controller.abort(new Error(`Electron download timed out after ${timeoutMs}ms`)), timeoutMs);
 		timer.unref?.();
 		let nextLogAt = Date.now() + 3e3;
 		try {
@@ -2197,10 +3347,13 @@ async function ensureElectronDownload(options = {}) {
 					}
 				}
 			});
-			log(`download complete (${((Date.now() - startedAt) / 1e3).toFixed(1)}s), extracting to ${targetDir} ...`);
+			const seconds = ((Date.now() - startedAt) / 1e3).toFixed(1);
+			log(`download complete (${seconds}s), extracting to ${targetDir} ...`);
+			const { default: extract } = await import("@electron-internal/extract-zip");
 			await extract(zipPath, { dir: targetDir });
 			if (!existsSync(exe)) throw new Error(`Electron zip extracted, but ${ELECTRON_REL} not found`);
-			log(`ready in ${((Date.now() - startedAt) / 1e3).toFixed(1)}s: ${exe}`);
+			const readySeconds = ((Date.now() - startedAt) / 1e3).toFixed(1);
+			log(`ready in ${readySeconds}s: ${exe}`);
 			return exe;
 		} finally {
 			clearTimeout(timer);
@@ -2208,34 +3361,20 @@ async function ensureElectronDownload(options = {}) {
 	} catch (error) {
 		warn(`ensure failed: ${error instanceof Error ? error.message : String(error)}`);
 		warn("desktop pet unavailable. Set DSH_PET_ELECTRON_PATH to an existing Electron, or retry later.");
-		return;
+		return void 0;
 	}
 }
 function defaultLaunch(options = {}) {
 	const electronPath = resolveElectronPath([options.electronPath]);
 	if (!electronPath) throw new Error("dsh-pet: cannot resolve Electron executable. Set DSH_PET_ELECTRON_PATH or install electron.");
+	const helperPath = options.helperPath || defaultHelperMain;
 	return {
 		command: electronPath,
-		args: [options.helperPath || defaultHelperMain]
+		args: [helperPath]
 	};
 }
-/** 停止 helper 的等待上限（ms）：超过就升级 SIGKILL（issue #64） */
 const HELPER_STOP_TIMEOUT_MS = 3e3;
-/** SIGKILL 之后还给进程多久退出（ms）；到点仍未退出就放弃等待，绝不无限挂住调用方 */
 const HELPER_STOP_GRACE_MS = 1e3;
-/**
-* spawn helper 用的环境变量（纯函数，可独立测试）。
-*
-* **必须删掉 `ELECTRON_RUN_AS_NODE`**（issue #63）：宿主自己可能就是个 Electron 应用（DSH Desktop），
-* 它的 `process.env` 里可能带着这个变量；原样透传会让我们 spawn 的 Electron 以**纯 Node 模式**启动——
-* 内置 `electron` 模块根本不注册，main.js 顶部 `require('electron')` 直接 MODULE_NOT_FOUND →
-* helper 崩 → 守护循环重启 → 12 次熔断 → 桌面模式彻底不再出现，且没有任何用户可见提示。
-*
-* 为什么是"删除"而不是设成空串：Electron 只看这个变量**存不存在**。实测 Electron 43.3.0（Windows，
-* 与插件用的是同一份二进制）：删除 → `process.type=browser`、`require('electron')` 正常拿到 app；
-* 设 `''` → 直接 abort（exit 134，`node::CreateEnvironment` 断言失败）；设 `'0'`/`'false'`/`'1'` →
-* 都进纯 Node 模式。运行期再 `delete process.env` 已经晚了（模块加载器在进程启动瞬间就定了）。
-*/
 function helperSpawnEnv(hostPid, extra) {
 	const env = {
 		...process.env,
@@ -2265,8 +3404,11 @@ var HelperProcess = class {
 			args: this.options.args || [helperPath]
 		} : defaultLaunch(this.options);
 		const command = launch.command;
-		const child = spawn(command, this.options.args || launch.args, {
-			cwd: this.options.cwd || packageRoot,
+		const args = this.options.args || launch.args;
+		const cwd = this.options.cwd || dshHomeDir();
+		mkdirSync(cwd, { recursive: true });
+		const child = spawn(command, args, {
+			cwd,
 			env: helperSpawnEnv(process.pid, this.options.env),
 			stdio: [
 				"pipe",
@@ -2278,6 +3420,10 @@ var HelperProcess = class {
 		this.child = child;
 		child.once("error", (error) => {
 			this.logger.error?.(`dsh-pet desktop helper failed to start: ${error.message}`);
+			if (child.pid === void 0 && this.child === child) {
+				this.child = void 0;
+				this.scheduleRestart();
+			}
 		});
 		child.once("exit", (code, signal) => {
 			if (this.child !== child) return;
@@ -2306,7 +3452,7 @@ var HelperProcess = class {
 			this.stdoutBuffer = this.stdoutBuffer.slice(nl + 1);
 			const trimmed = line.trim();
 			if (!trimmed) continue;
-			if (trimmed.startsWith("dsh-pet-bridge:")) {
+			if (trimmed.startsWith(BRIDGE_PREFIX)) {
 				this.handleBridgeLine(trimmed);
 				continue;
 			}
@@ -2316,10 +3462,11 @@ var HelperProcess = class {
 	/** 处理一条协议请求：交给宿主 bridgeHandler，结果按 id POST 回 main.js 的回调服务器
 	*  （cb 由请求行携带；不走 stdin —— Electron 主进程收不到 piped stdin） */
 	async handleBridgeLine(line) {
-		if (!this.child?.stdin || !this.options.bridgeHandler) return;
+		const child = this.child;
+		if (!child?.stdin || !this.options.bridgeHandler) return;
 		let req;
 		try {
-			req = JSON.parse(line.slice(15));
+			req = JSON.parse(line.slice(BRIDGE_PREFIX.length));
 		} catch {
 			this.logger.warn?.("[dsh-pet desktop helper] bridge 协议行非法，已忽略");
 			return;
@@ -2421,13 +3568,13 @@ var HelperProcess = class {
 */
 function waitForChildExit(child, timeoutMs, onTimeout) {
 	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-	return new Promise((resolve) => {
+	return new Promise((resolve$1) => {
 		let giveUpTimer;
 		const done = () => {
 			clearTimeout(killTimer);
 			if (giveUpTimer) clearTimeout(giveUpTimer);
 			child.removeListener("exit", done);
-			resolve();
+			resolve$1();
 		};
 		const killTimer = setTimeout(() => {
 			onTimeout();
@@ -2438,22 +3585,15 @@ function waitForChildExit(child, timeoutMs, onTimeout) {
 		child.once("exit", done);
 	});
 }
-/** 稳定运行判定阈值：Helper 连续无崩溃运行 ≥ 3 分钟后，重启失败计数清零。 */
-const HELPER_STABLE_MS = 180 * 1e3;
-/**
-* 指数退避：第 n 次（0 起）失败后等待 base × 2ⁿ，封顶 30s。
-* 默认 base 750ms 保持与旧版首延一致，序列：750 → 1500 → 3000 → … → 30000。
-*/
+const HELPER_STABLE_MS = 3 * 60 * 1e3;
 function restartBackoffDelayMs(consecutiveFailures, baseMs = 750) {
 	const MAX = 3e4;
 	const raw = baseMs * 2 ** Math.max(0, consecutiveFailures);
 	return Math.min(raw, MAX);
 }
-/** 熔断判定：连续崩溃 ≥ limit（默认 12，按默认退避累计约 3 分钟）次后不再自动重启。 */
 function shouldCircuitBreak(consecutiveFailures, limit = 12) {
 	return consecutiveFailures >= limit;
 }
-/** 稳定运行判定：距上次拉起 ≥ HELPER_STABLE_MS 视为一次「成功运行」，可清零计数。 */
 function helperRunIsStable(elapsedMs) {
 	return elapsedMs >= HELPER_STABLE_MS;
 }
@@ -2466,86 +3606,34 @@ function envPositiveInt(value, fallback) {
 	const parsed = Number.parseInt(String(value ?? ""), 10);
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
+
 //#endregion
 //#region src/host/index.ts
-/**
-* dsh-pet 宿主半侧（host half）—— 宠物插件的"后端"部分
-*
-* 职责：提供 `/dsh-pet-7340/` 前缀的**业务能力**（handlePetRoute 纯函数，路由与桌面管道共用）。
-* 全部配置（内置默认 + 用户主配置 + 文件宠物）由 ./config 的 readAllConfig 统一读取合并，
-* 本文件只消费它的返回值（绝对正确、零校验），不再接触任何配置文件。
-*
-* 两个入口消费同一份 handlePetRoute：
-*   - HTTP 路由：注册在 DSH WebServer 上（浏览器 overlay / 设置页 / 斜杠命令用）
-*   - 桌面 Helper 管道：helper-process.ts 的 bridgeHandler（DSH_PET_BRIDGE=1 时经
-*     dsh-pet-bridge:// scheme + stdout JSON 行 + 本地回调，**不走 HTTP**——
-*     DSH Desktop 2.0.3+ 的浏览器访问闸门会拦插件子进程的裸 HTTP 请求）
-* 两端行为严格一致（硬契约：浏览器/桌面功能/文案/配置完全对齐）。
-*
-* 路由：
-*   /dsh-pet-7340/config             → 合并后的**成品配置**（{ main:{...}, test1:{...}, ... }，
-*                                每条目字段已填满；浏览器/桌面/设置页的唯一配置入口）
-*                                GET 读取成品；PUT 保存用户层（白名单重建 main-config.jsonc）、
-*                                POST 同步用户层（把内置默认 config.jsonc **原文**整份写入，
-*                                含注释与全部高级字段；合并结果与「没有用户层」等价）——
-*                                两个写接口的**响应体都是保存后的成品聚合**，设置页即时生效
-*                                直接拍平这份响应，客户端不再有第二份"补吹条目级字段"的实现
-*   /dsh-pet-7340/reload              → 桌面端「重载配置」（右键菜单，POST）：重启桌面 Helper，全部桌面
-*                                宠物窗口按最新配置重建（改配置文件后不必回设置页点保存）；与保存走
-*                                **同一条**重启路径（syncDesktop），宠物数量/display/size 变化同样生效
-*   /dsh-pet-7340/config/meta         → 配置文件与素材目录路径 + 全部存储位置清单
-*                                       （设置页「高级配置」「卸载与存储」展示用）
-*   /dsh-pet-7340/models              → 可选「服务商 + 模型」清单（设置页「AI 模型」下拉框数据源；
-*                                       与 DSH 模型选择器同源，取宿主 llm 服务的 listProviders/listModels）
-*   /dsh-pet-7340/thumb/<素材根>/<动画名>.webm|.mov  → 素材按宠物归属（.mov 为 macOS 定制，扩展名取决于
-*       客户端播放常量 ANIMATION_EXT；本路由固定双扩展名兜底）：
-*       文件宠物 = $DSH_HOME/dsh-pet/pet/<素材根>-animation/（只查自己的，绝不回落）；
-*       主宠物   = $DSH_HOME/dsh-pet/main-animation/<webm|mov>（用户目录，优先）→ 包内 assets/<webm|mov>
-*       <素材根> 是**标识符**（pet/ 下文件名前缀），含分隔符/保留字符即 400（见 ID_FORBIDDEN）
-*   /dsh-pet-7340/state               → **轮询统一状态 S**（GET，前端 1s 轮询的唯一数据源）：
-*                                       { sections: { balance, workStatus, notify }, pets: { <id>: { say } } }，
-*                                       每个叶子 = { counter, data }；counter 变了前端才渲染。
-*                                       只读、纯内存、零副作用（绝不在这里触发外部调用/模型生成）。
-*   /dsh-pet-7340/balance              → 余额刷新（POST 动作端点，写 S；数据从 /state 读）
-*   /dsh-pet-7340/whisper              → 让某只宠物立即说一句（POST 动作端点，写 S 的 pets.<id>.say）
-*   /dsh-pet-7340/broadcast            → 第三方投喂：把外部给定的文本写进气泡（POST 动作端点，写 S 的
-*                                       pets.<id>.say；不生成、只搬运，供宿主侧其他插件集成）
-*   /dsh-pet-7340/anim                 → 点播动画：让桌宠播一段指定动画（POST 动作端点，写 S 的
-*                                       pets.<id>.anim；效果与右键「动作」菜单一致，供其他插件调用）
-*   /dsh-pet-7340/chat                 → 对话与记忆（GET 最近窗口 / POST 对话并写 memory.json；
-*                                       POST 只回 {ok}，回复同样写 S 的 pets.<id>.say）
-*   /dsh-pet-7340/font|pic             → 字体 / 通知图标素材
-*
-* 系统通知不属于宠物行为、不在这里的旧实现是：浏览器半侧 notify.ts 经 connection 事件流
-* （api.events.mux/host）监听 DSH 事件。但 DSH 0.1.5 已删除该事件流 API——通知改为
-* host 侧监听宿主事件（session/event + agent/error）生成帧写进 S 的 sections.notify，
-* 浏览器统一轮询 /state 后弹 toast（帧契约与 shared/notify.ts 一致；单槽，见下方 pushNotifyFrame）。
-*
-* 桌面模式（Electron 透明窗）没有独立配置文件：宠物显示在哪全部由宠物条目的 display 决定
-* （web=仅浏览器 / desktop=仅桌面 / both=两者 / none=都不显示；缺失时合并器填内置默认值）。
-*
-* 安全性：resolveAsset 做"防穿越"校验，保证路径仍在对应根目录内；
-*         PUT 保存经 saveUserConfig 白名单重建，id 过滤文件名非法字符。
-*
-* TODO(类型)：peer 依赖类型包本地暂不可解析，ctx/req/res 暂用 any；
-*             依赖可解析后替换为 DSH 官方类型。
-*/
-/** 插件行 id（与 cordis.patch.yml 一致） */
 const name = "pet";
-/** 需要注入的服务：webServer（路由）+ agentDefaultModel（当前服务商）+ credentials（凭证）+ llm（对话模型调用）+ commands（/balance 斜杠命令） */
 const inject = [
 	"webServer",
 	"agentDefaultModel",
 	"credentials",
 	"llm",
-	"commands"
+	"commands",
+	"connection"
 ];
 /** 本包目录：宿主构建产物位于 lib/，其上一级即包根。 */
 const PACKAGE_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
+/** 包内 assets 根 */
+const PACKAGE_ROOT_ASSETS = join(PACKAGE_ROOT, "assets");
 /** 包内表情包目录（表情包池的最后一环：assets/memes/<名称>.png） */
-const PACKAGE_MEMES_DIR = join(join(PACKAGE_ROOT, "assets"), "memes");
+const PACKAGE_MEMES_DIR = join(PACKAGE_ROOT_ASSETS, "memes");
 /** 路由前缀 */
 const ROUTE_PREFIX = "/dsh-pet-7340";
+/**
+* 宿主是不是 **DSH 桌面应用**（Electron 宿主）。
+*
+* 判据只用 `process.versions.electron`：桌面应用以 `ELECTRON_RUN_AS_NODE=1` 跑宿主（见 dsh.cmd），
+* 该字段照样在；而 `dsh web` / 独立模式都是纯 Node 进程，取不到它。据此把「打开网站」自动分派：
+* 桌面宿主 → 唤起桌面应用窗口（helper 走 `dsh://open`），其余 → 浏览器打开站点。
+*/
+const isDesktopHost = () => Boolean(process.versions.electron);
 /** 不同扩展名对应的 Content-Type 映射 */
 const MIME = {
 	".webm": "video/webm",
@@ -2610,8 +3698,8 @@ function sendFile(res, file, contentType) {
 /** 该宠物是否参与桌面模式（Electron 透明窗） */
 const isDesktopVisible = (display) => display === "desktop" || display === "both";
 /** 发送 JSON 响应（headers 可选：如 no-cache 触发计数） */
-function sendJson(res, status, obj, headers = {}) {
-	const body = JSON.stringify(obj);
+function sendJson(res, status, obj$1, headers = {}) {
+	const body = JSON.stringify(obj$1);
 	res.writeHead(status, {
 		"content-type": "application/json; charset=utf-8",
 		"content-length": Buffer.byteLength(body),
@@ -2633,25 +3721,9 @@ function readBody(req) {
 		req.on("error", reject);
 	});
 }
-/** 宿主插件主体：注册 `/dsh-pet-7340` 前缀路由 + 斜杠命令（/balance /pet /chat）。 */
 function apply(ctx) {
-	const desktopPid = desktopActivationPid(process.env.DSH_DESKTOP_WINDOW_ACTIVATION_PID);
-	const activation = process.platform === "win32" && process.env.DSH_DESKTOP_WINDOW_ACTIVATION === "1" && desktopPid && process.send ? windowActivation({
-		get connected() {
-			return process.connected;
-		},
-		send(message, callback) {
-			return process.send(message, callback);
-		},
-		on(event, listener) {
-			return process.on(event, listener);
-		},
-		off(event, listener) {
-			return process.off(event, listener);
-		}
-	}) : void 0;
-	if (activation) ctx.effect(() => () => activation.dispose());
-	const userRoot = join(resolveDshHome(), "dsh-pet");
+	const dshHome = resolveDshHome();
+	const userRoot = join(dshHome, "dsh-pet");
 	const userConfigPath = join(userRoot, "main-config.jsonc");
 	const legacyUserConfigPath = join(userRoot, "main-config.json");
 	const petConfigDir = join(userRoot, "pet");
@@ -2681,24 +3753,207 @@ function apply(ctx) {
 		return [memesUserRoot, PACKAGE_MEMES_DIR];
 	};
 	const state = new PollStateStore();
+	const menuRegistry = new MenuRegistry();
+	ctx.provide("petApi7340", { balance: {
+		register: registerBalanceProvider,
+		list: listBalanceProviders
+	} });
+	const playback = new PlaybackStore();
 	const workStatus = new WorkStatusStore();
+	/** 外部写入槽：固定会话 id，最后写入者生效；不做多写者仲裁/租约/会话管理 */
+	const EXTERNAL_WORK_SESSION = "api";
+	let externalWorkSeq = 0;
+	const WORK_STATE_GAP_MS = 5e3;
+	/** 忙碌档：只有这两个档位之间的互切算"抖动"，其余档位变化一律立即写 */
+	const isBusyTier = (s) => s === "working" || s === "result";
 	let publishedWork = "\0";
+	let publishedState = null;
+	let publishedTask = null;
+	let publishedWorkAt = 0;
+	let workFlushTimer = null;
 	const publishWorkStatus = () => {
 		const snap = workStatus.snapshot();
 		const key = String(snap.state) + "\0" + String(snap.task);
 		if (key === publishedWork) return;
+		const churn = snap.task === publishedTask && isBusyTier(publishedState) && isBusyTier(snap.state);
+		const wait = WORK_STATE_GAP_MS - (Date.now() - publishedWorkAt);
+		if (churn && wait > 0) {
+			workFlushTimer ?? (workFlushTimer = setTimeout(() => {
+				workFlushTimer = null;
+				publishWorkStatus();
+			}, wait));
+			return;
+		}
+		if (workFlushTimer !== null) {
+			clearTimeout(workFlushTimer);
+			workFlushTimer = null;
+		}
 		publishedWork = key;
+		publishedState = snap.state;
+		publishedTask = snap.task;
+		publishedWorkAt = Date.now();
 		state.writeSection("workStatus", {
 			state: snap.state,
 			task: snap.task
 		});
 	};
+	const lock = new LockStore({ onChange: (petId, data) => state.writePet(petId, "lock", data) });
+	const pose = new PoseStore();
+	/**
+	* `?surface=` 的**参数级**校验（缺省 / 非法 → `bad-request`）。放在读盘之前：必然失败的请求
+	* 不碰磁盘（与 pet 空串同一处境）。通过则给出收窄后的取值。
+	*/
+	const surfaceParam = (params) => {
+		const want = normalizeSurface(params.get("surface"));
+		if (want !== null) return {
+			ok: true,
+			want
+		};
+		return {
+			ok: false,
+			res: {
+				kind: "json",
+				status: 200,
+				obj: {
+					ok: false,
+					reason: "bad-request",
+					message: SURFACE_TEXT
+				}
+			}
+		};
+	};
+	/**
+	* `?surface=` 与该宠物 `display` 的对齐校验（issue #122 第 1 条）：不满足 → `pet-not-displayed`
+	* + **实际 display 原样回给调用方**（调用方据此一眼知道该怎么办），放行回 null。
+	*
+	* 这是**前置校验**，不是按面分发——指令照旧写进同一个叶子、两端内容照旧完全一致
+	* （要"网页播 A、桌面播 B"用两只宠物表达，见 ./surface 的第 1 条边界）。
+	*/
+	const surfaceMismatch = (pet, petId, want) => {
+		const display = String(pet.display ?? "");
+		if (displayCovers(want, display)) return null;
+		return {
+			kind: "json",
+			status: 200,
+			obj: {
+				ok: false,
+				reason: "pet-not-displayed",
+				message: petId + " 的显示模式是 " + display + "，不满足 surface=" + want,
+				display
+			}
+		};
+	};
+	/**
+	* 决策函数**之后**的 surface 校验（`/anim`、`/broadcast`、`/bubble/clear`、`/position`、
+	* `/throw` 共用）：这五条的 pet 解析住在各自的决策模块里，所以这里按 `petId` 再查一次实例取
+	* `display`（配置已在手，成本可忽略）。放行回 null。
+	*
+	* 位置与 `lockBlocked` 一致——都在决策函数之后、任何副作用之前，所以校验顺序是
+	* 「body → pet → surface → 锁」。
+	*/
+	const surfaceBlocked = (cfg, petId, params) => {
+		const p = surfaceParam(params);
+		if (!p.ok) return p.res;
+		return surfaceMismatch(findPetInstance(cfg, petId)?.pet ?? {}, petId, p.want);
+	};
+	/**
+	* 路由层的 pet 参数解析（`/lock`、`/lock/release`、`/whisper`、`/chat` 用——这四条没有独立决策层；
+	* `/anim`、`/broadcast`、`/bubble/clear`、`/position`、`/throw` 的同一套校验住在各自的决策模块里，
+	* 口径与这里逐字一致）：**必填**且必须真实存在。
+	*
+	* 两种失败分开报（issue #122 第 1 条「绝不默认退到列表第一只」）：
+	* 没给 / 空串 → `pet-required`；给了但配置里没有 → `unknown-pet`。
+	*
+	* 收紧前这四条是 `get('pet') || resolveActivePetId() || 'main'`：缺省会落到"当前桌宠"
+	* = **有效宠物列表第一只**（`/whisper`、`/chat` 更彻底——`?? ''` 直接空串：人设按 main 条目取、
+	* 生成结果写进没人消费的 `pets[""].say`，还回 ok:true——钱花了、话丢了、调用方以为成功）。
+	* 落点随用户 /pet 操作而变、失败也不报，第三方无从预期，故整条缺省链已删除：
+	* pet 与 `/pet-display` 的 `id` 一样是必填项。
+	*
+	* `cfg` 传**惰性读取**：pet 空串时不必碰磁盘（与 /broadcast 的 text/duration 同一处境，
+	* routes.test.ts 里"配置不可达"那一组断言正是靠这个顺序钉住的）。
+	*
+	* `opts.surface` = 是否同时校验 `?surface=`。**只对会产生渲染端可见效果的端点开**：
+	* `/lock`、`/whisper`、`/chat` 的 POST。`/lock/release` 与 `/chat` 的 GET 不开——
+	* 释放必须永远能成功（否则宠物中途被隐藏就撤不掉锁），读记忆与显示在哪一端无关。
+	*/
+	const requirePet = (params, cfg, opts) => {
+		const fail = (reason, message) => ({
+			ok: false,
+			res: {
+				kind: "json",
+				status: 200,
+				obj: {
+					ok: false,
+					reason,
+					message
+				}
+			}
+		});
+		const petId = String(params.get("pet") ?? "").trim();
+		if (!petId) return fail("pet-required", "pet 必填：要指定操作哪只桌宠");
+		let want = null;
+		if (opts?.surface === true) {
+			const p = surfaceParam(params);
+			if (!p.ok) return {
+				ok: false,
+				res: p.res
+			};
+			want = p.want;
+		}
+		const found = findPetInstance(cfg(), petId);
+		if (!found) return fail("unknown-pet", "没有这只桌宠：" + petId);
+		if (want !== null) {
+			const mismatch = surfaceMismatch(found.pet, petId, want);
+			if (mismatch) return {
+				ok: false,
+				res: mismatch
+			};
+		}
+		return {
+			ok: true,
+			petId,
+			entry: found.entry,
+			conf: found.conf,
+			pet: found.pet
+		};
+	};
+	/**
+	* 动作端点的占用门禁（`/anim`、`/broadcast`、`/position`、`/throw`、`/bubble/clear` 共用）：
+	* 放行回 null，否则直接给出路由应答。抽成一个函数，是为了让"哪些接口受占用约束"只有一处可查。
+	*
+	* **无锁时按「有没有带 `lock`」分流**：没带 → 返回 null（既有调用方一个字都不用改）；
+	* 带了但查不到锁 → `lock-lost`，旧租约不能继续执行迟到请求。
+	* 没带这一支就是「不传 lock = 现状零变化」（issue #122 最重要的边界）的落点。
+	*
+	* 位置放在决策函数**之后**：`petId` 要先解析出来才知道问哪只宠物的锁，而这时还没有任何副作用
+	* （没写叶子、没建播放记录、没调模型）。所以"先判锁再干活"这个意图是满足的，只是与
+	* body 校验的先后为「body → pet → 锁」——两者都不合法时报的是 body 的错。
+	*/
+	const lockBlocked = (petId, params) => {
+		const g = lock.gate(petId, String(params.get("lock") ?? ""));
+		if (g.ok) return null;
+		return {
+			kind: "json",
+			status: 200,
+			obj: g.reason === "lock-lost" ? {
+				ok: false,
+				reason: g.reason,
+				cause: g.cause,
+				message: g.message
+			} : {
+				ok: false,
+				reason: g.reason,
+				message: g.message
+			}
+		};
+	};
 	const pushNotifyFrame = (frame) => {
 		state.writeSection("notify", frame);
 	};
-	const turnFlags = /* @__PURE__ */ new Map();
+	const turnFlags = new Map();
 	/** 终态（success/error）展示窗口定时器：约 60s 后清掉该会话条目，陈旧完成态不再浮上来（Bug 2/3） */
-	const terminalTimers = /* @__PURE__ */ new Map();
+	const terminalTimers = new Map();
 	const TERMINAL_KEEP_MS = 60 * 1e3;
 	/** 取消某会话待执行的终态清理：会话已回到非终态，那次清理到点后既不清理也不重排，留着只会误导 */
 	const cancelTerminalCleanup = (sessionId) => {
@@ -2721,8 +3976,35 @@ function apply(ctx) {
 		}, TERMINAL_KEEP_MS);
 		terminalTimers.set(sessionId, t);
 	};
+	const NOTIFY_ACTIVITY_DELAY_MS = 1500;
+	/** 每会话一个待查定时器（同会话连续收尾只保留最后一次：后到覆盖先到，与单槽帧同语义） */
+	const notifyActivityTimers = new Map();
+	/** 这条会话是否还有在跑的活；判据不可用一律 false＝放行 */
+	const sessionHasRunningWork = async (sessionId) => {
+		const waterfall = ctx.waterfall;
+		if (typeof waterfall !== "function") return false;
+		try {
+			const activity = await waterfall.call(ctx, "workspace/session-activity", { sessionId }, () => Promise.resolve([]));
+			return hasBlockingActivity(activity);
+		} catch {
+			return false;
+		}
+	};
+	/** 排一个活动门定时器：到点确认空闲才推这一帧 */
+	const scheduleCompletionNotify = (sessionId, event) => {
+		const prev = notifyActivityTimers.get(sessionId);
+		if (prev !== void 0) clearTimeout(prev);
+		notifyActivityTimers.set(sessionId, setTimeout(() => {
+			notifyActivityTimers.delete(sessionId);
+			(async () => {
+				if (await sessionHasRunningWork(sessionId)) return;
+				const frame = reduceNotifyFrame(event);
+				if (frame) pushNotifyFrame(withSessionId(frame, sessionId));
+			})();
+		}, NOTIFY_ACTIVITY_DELAY_MS));
+	};
 	let activePetId = "";
-	const lastWhisperAt = /* @__PURE__ */ new Map();
+	const lastWhisperAt = new Map();
 	const memoryPath = join(userRoot, "memory.json");
 	let chatQueue = Promise.resolve();
 	/** 读记忆文件：不存在 → 空；损坏 → 显式报错 + 备份原始文件（绝不静默丢数据）+ 重建空记忆 */
@@ -2756,58 +4038,81 @@ function apply(ctx) {
 		chatQueue = run.then(() => void 0, () => void 0);
 		return run;
 	};
-	/** 某宠物的最终人设 system：所属条目（非文件宠物 → main 条目）的 whisperPrompt（合并器已填默认）
-	*  + 无条件追加一句名字声明（name，缺失已按 id）——碎碎念与对话共用同一拼装。 */
-	const petSystemPrompt = (petId, cfg) => {
-		const found = findPetInstance(cfg, petId);
-		const conf = found ? found.conf : cfg.main ?? {};
-		const prompt = typeof conf.whisperPrompt === "string" ? conf.whisperPrompt : "";
-		const nameLine = "你的名字是“" + (found ? String(found.pet.name || found.pet.id || petId) : petId) + "”。";
-		return prompt ? prompt + "\n" + nameLine : nameLine;
-	};
-	/** 对话记忆轮数（1 轮 = 1 问 1 答）：所属条目/主条目的 chatMemoryRounds（合并器已填默认非负数字） */
-	const memoryRounds = (petId, cfg) => {
-		const found = findPetInstance(cfg, petId);
-		const v = Number(found?.conf.chatMemoryRounds ?? cfg.main?.chatMemoryRounds);
+	/** 某宠物的最终人设 system：**实例级** `pets[].whisperPrompt` 优先，没写回落到所属条目
+	*  （写在该条目 `pets` 里的实例 → 那个条目；主配置的实例 → `main`）的 whisperPrompt（合并器已填默认）。
+	*  拼装本身在 ./persona（纯函数、有单测）：人设正文 + 一句名字声明（name，缺失已按 id）+ 一行时间背景
+	*  （日期/星期/时刻/时段/工作日或周末/节日）——碎碎念与对话共用同一份拼装。
+	*  时间每次现算（这里传 new Date()），所以拿到的永远是**当前**时刻，不需要额外的刷新机制。
+	*
+	*  收 `findPetInstance` 的**命中结果**而不是 `(petId, cfg)`：两个调用方都已经解析过了，这里再查一次
+	*  只会多出一处"查不到就兜底 main"的不可达分支。 */
+	const petSystemPrompt = (found) => composeSystemPrompt({
+		prompt: petPersona(found.conf, found.pet),
+		name: String(found.pet.name ?? ""),
+		id: String(found.pet.id ?? ""),
+		now: new Date()
+	});
+	/** 对话记忆轮数（1 轮 = 1 问 1 答）：该宠物**所属条目**的 chatMemoryRounds（合并器已填默认非负数字）。
+	*  同样收**已解析的条目配置**：两个调用方都已经拿到 `findPetInstance` 的结果。 */
+	const memoryRounds = (conf) => {
+		const v = Number(conf.chatMemoryRounds);
 		return Number.isFinite(v) && v >= 0 ? Math.floor(v) : 5;
 	};
 	/** 生成/返回某宠物的一句碎碎念（周期 GET 与菜单手动触发共用的同一逻辑）：
-	*  每只宠物独立生成（所属条目的人设）。生成成功就写进 S 的 pets.<id>.say——
+	*  每只宠物独立生成（人设 = 它自己的 whisperPrompt，没写回落到所属条目）。生成成功就写进 S 的 pets.<id>.say——
 	*  碎碎念 / 命令气泡 / 对话回复在前端本来就是**同一条展示链路**（同一个 triggerWhisper、
 	*  同一个气泡槽、同一批 events.whisper 动画），所以合并成同一个叶子；"周期内不重复"由
 	*  调度侧的 lastWhisperAt 保证，不再需要一份 whisperCache（多端共享也由 S 天然保证）。
-	*  配图（whisperImageEnabled 开启时）：从表情包池**随机抽 1 张**，把描述注入指令并随文本一起写。 */
+	*  配图（whisperImageEnabled 开启时）：从表情包池**随机抽 1 张**，把描述注入指令并随文本一起写。
+	*
+	*  失败**带回真实 reason**（含 `unknown-pet`：目标宠物在"校验那次读"与这里之间被删掉了）。
+	*  成功**带回生成的文本**（与同时写进叶子的那份完全相同）——调用方拿到就不必再拉一拍 /state。 */
 	const publishWhisper = async (petId) => {
 		const cfg = readAllConfig(configPaths);
 		const found = findPetInstance(cfg, petId);
-		const conf = found ? found.conf : cfg.main ?? {};
-		const entry = found ? found.entry : "main";
-		const result = await generateWhisper(ctx, petSystemPrompt(petId, cfg), conf.whisperImageEnabled === true ? pickMeme(readMemePool(conf.memes, memeDirsFor(entry))) : void 0, configuredModel(conf, "whisperModel"));
+		if (!found) return {
+			ok: false,
+			reason: "unknown-pet",
+			message: "没有这只桌宠：" + petId
+		};
+		const system = petSystemPrompt(found);
+		const meme = found.conf.whisperImageEnabled === true ? pickMeme(readMemePool(found.conf.memes, memeDirsFor(found.entry))) : void 0;
+		const result = await generateWhisper(ctx, system, meme, configuredModel(found.conf, "whisperModel"));
 		if (!result.ok) {
 			console.warn("[dsh-pet] 碎碎念生成失败 pet=" + petId + " reason=" + result.reason + (result.message ? " " + result.message : ""));
-			return false;
+			return result;
 		}
 		state.writePet(petId, "say", result.image ? {
 			text: result.text,
 			image: result.image
 		} : { text: result.text });
-		return true;
+		return {
+			ok: true,
+			text: result.text,
+			...result.image ? { image: result.image } : {}
+		};
 	};
 	/** 与某只宠物对话：截取最近记忆 → 生成回复 → 写入记忆 → 把回复写进 S 的 pets.<id>.say。
 	*  供 POST /chat（动作端点）与 /chat 命令共用同一条路径（锁内读写，防两端交错写盘）。
-	*  配图（chatImageEnabled 开启时）：把表情包清单交给模型按语境选一张，命中池内才随回复写回。 */
+	*  配图（chatImageEnabled 开启时）：把表情包清单交给模型按语境选一张，命中池内才随回复写回。
+	*  成功**带回回复文本**（与同时写进叶子的那份完全相同）——调用方拿到就不必再拉一拍 /state。 */
 	const chatWithPet = async (petId, text) => withMemoryLock(async () => {
+		var _found$entry;
 		const cfg = readAllConfig(configPaths);
-		const rounds = memoryRounds(petId, cfg);
 		const found = findPetInstance(cfg, petId);
-		const conf = (found ?? { conf: cfg.main ?? {} }).conf;
-		const system = petSystemPrompt(petId, cfg);
-		const pool = conf.chatImageEnabled === true ? limitPool(readMemePool(conf.memes, memeDirsFor(found?.entry ?? "main")), Number(conf.chatImageLimit)) : [];
+		if (!found) return {
+			ok: false,
+			reason: "unknown-pet",
+			message: "没有这只桌宠：" + petId
+		};
+		const rounds = memoryRounds(found.conf);
+		const system = petSystemPrompt(found);
+		const pool = found.conf.chatImageEnabled === true ? limitPool(readMemePool(found.conf.memes, memeDirsFor(found.entry)), Number(found.conf.chatImageLimit)) : [];
 		const mem = await readMemory();
-		const bucketKey = found?.entry ?? petId;
-		const bucket = mem[bucketKey] ??= {};
-		const entry = bucket[petId] ??= { messages: [] };
-		const generated = await generateChat(ctx, system, sliceMemoryRounds(entry.messages, rounds), text, pool, configuredModel(conf, "chatModel"));
+		const bucket = mem[_found$entry = found.entry] ?? (mem[_found$entry] = {});
+		const entry = bucket[petId] ?? (bucket[petId] = { messages: [] });
+		const list = sliceMemoryRounds(entry.messages, rounds);
+		const generated = await generateChat(ctx, system, list, text, pool, configuredModel(found.conf, "chatModel"));
 		if (!generated.ok) return generated;
 		const now = Date.now();
 		entry.messages.push({
@@ -2825,7 +4130,11 @@ function apply(ctx) {
 			text: generated.text,
 			image: generated.image
 		} : { text: generated.text });
-		return { ok: true };
+		return {
+			ok: true,
+			text: generated.text,
+			...generated.image ? { image: generated.image } : {}
+		};
 	});
 	/**
 	* 当前生效宠物列表 = readAllConfig 成品拍平（main + 文件宠物全部条目；合并器已保证 id 唯一、
@@ -2838,9 +4147,11 @@ function apply(ctx) {
 		const n = Number(ers?.balance);
 		return Number.isFinite(n) && n > 0 ? n : 1800;
 	};
-	/** 碎碎念周期（秒）：该宠物**所属条目**的 eventsRefreshSec.whisper（合并器已填默认；非法兜底 300） */
-	const whisperPeriodSec = (cfg, petId) => {
-		const ers = (findPetInstance(cfg, petId) ?? { conf: cfg.main ?? {} }).conf.eventsRefreshSec;
+	/** 碎碎念周期（秒）：该宠物**所属条目**的 eventsRefreshSec.whisper（合并器已填默认；非法兜底 300）。
+	*  收**已解析的条目配置**：唯一调用方是周期调度，而它的 `petId` 就是从**同一份 cfg** 拍平出来的，
+	*  所以这里再查一次只会多出一处"查不到就兜底 main"的不可达分支。 */
+	const whisperPeriodSec = (conf) => {
+		const ers = conf.eventsRefreshSec;
 		const n = Number(ers?.whisper);
 		return Number.isFinite(n) && n > 0 ? n : 300;
 	};
@@ -2874,7 +4185,7 @@ function apply(ctx) {
 		return {
 			version,
 			locale: "zh-CN",
-			timezoneOffsetSeconds: -(/* @__PURE__ */ new Date()).getTimezoneOffset() * 60
+			timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60
 		};
 	};
 	const refreshBalance = async (manual = false) => {
@@ -2883,13 +4194,22 @@ function apply(ctx) {
 			manual: true
 		} : v;
 		try {
-			const result = await queryBalance(ctx.agentDefaultModel.currentSelection().provider, async (ref) => {
-				return (await ctx.credentials.resolve(credentialRef(ref)))?.value;
-			}, async () => {
-				const account = ctx.get("deepseekAccount", false);
-				if (!account) return void 0;
-				return account.getBalance(accountClientMetadata());
-			});
+			const sel = ctx.agentDefaultModel.currentSelection();
+			const result = await queryBalance(
+				sel.provider,
+				async (ref) => {
+					const rc = await ctx.credentials.resolve(credentialRef(ref));
+					return rc?.value;
+				},
+				// `deepseek-account`（免费额度 / 平台登录）没有 API Key：它的凭证是 DSH 账号服务
+				// 持有的授权记录，只能经 getBalance 查询。账号服务是**可选**服务（软取，不放进
+				// inject）——没装账号插件时它不在场，此时该路由报 credential-missing 而不是崩。
+				async () => {
+					const account = ctx.get("deepseekAccount", false);
+					if (!account) return void 0;
+					return account.getBalance(accountClientMetadata());
+				}
+);
 			state.writeSection("balance", mark(result));
 		} catch (e) {
 			state.writeSection("balance", mark({
@@ -2913,9 +4233,18 @@ function apply(ctx) {
 	};
 	/** 宠物的显示名（name，缺失回落 id）——命令文案用 */
 	const petDisplayName = (pet) => {
-		return String(pet.name ?? "").trim() || String(pet.id ?? "");
+		const n = String(pet.name ?? "").trim();
+		return n || String(pet.id ?? "");
 	};
 	let hasDesktopPet = false;
+	/**
+	* 桌面模式是否**曾经**成功启动过（粘性，仅本插件生命周期内有效）。
+	* 把「没有桌面宠物就不启动」放宽成「从来没有过桌面宠物才不启动」：桌面宠物被全部改成
+	* web/none 之后，Helper 仍会带着空宠物列表重启并常驻——因为托盘（桌面端显示开关）是此时
+	* 唯一还能把宠物切回桌面的入口，Helper 一退它就没了。
+	* 纯浏览器用户（从未有过桌面宠物）不受影响：照旧不探测、不下载、不拉起 Electron。
+	*/
+	let desktopModeEverActive = false;
 	const refreshDesktop = () => {
 		hasDesktopPet = false;
 		try {
@@ -2945,7 +4274,7 @@ function apply(ctx) {
 	/** 用已确认存在的 Electron 路径拉起桌面 Helper（每只桌面宠物一个局部小窗口）。 */
 	const launchHelper = (electronPath) => {
 		if (helper || disposed) return;
-		if (!hasDesktopPet) return;
+		if (!hasDesktopPet && !desktopModeEverActive) return;
 		const port = typeof ctx.webServer?.port === "number" ? ctx.webServer.port : 0;
 		if (!port || port <= 0) {
 			if (!startRetryTimer) {
@@ -2957,46 +4286,20 @@ function apply(ctx) {
 			}
 			return;
 		}
-		const configUrl = `${`http://127.0.0.1:${port}`}${ROUTE_PREFIX}/config`;
+		const origin = `http://127.0.0.1:${port}`;
+		const siteUrl = ctx.connection.authenticatedUrl(origin);
+		const configUrl = `${origin}${ROUTE_PREFIX}/config`;
 		helper = new HelperProcess({
 			electronPath,
 			env: {
 				DSH_PET_CONFIG_URL: configUrl,
+				DSH_PET_SITE_URL: siteUrl,
+				DSH_PET_OPEN_TARGET: isDesktopHost() ? "desktop" : "site",
 				DSH_PET_SCALE: "1",
-				DSH_PET_HOST_EXECUTABLE: process.execPath,
-				DSH_PET_DESKTOP_PID: activation ? desktopPid : void 0,
 				DSH_PET_BRIDGE: "1",
 				DSH_PET_PETS: JSON.stringify(desktopPetList())
 			},
 			bridgeHandler: async (req) => {
-				if (req.method === "POST" && req.url === "/dsh-pet-7340/activate-desktop") {
-					let result;
-					try {
-						if (!activation) throw new WindowActivationError("unavailable", "请更新并重启 DSH Desktop");
-						await activation.activate();
-						result = { ok: true };
-					} catch (error) {
-						const code = error instanceof WindowActivationError ? error.code : "unavailable";
-						console.error("[dsh-pet] Desktop activation failed:", error);
-						const reasons = {
-							"unavailable": "DSH 连接不可用，请重启 DSH Desktop",
-							"focus-denied": "DSH 已显示，但未能切到前台，请点击任务栏图标",
-							"activation-timeout": "DSH 唤起超时，请点击任务栏图标",
-							"disconnect": "DSH 连接已断开，请重启 DSH Desktop"
-						};
-						result = {
-							ok: false,
-							code,
-							reason: activation ? reasons[code] ?? reasons.unavailable : "请更新并重启 DSH Desktop"
-						};
-					}
-					return {
-						id: req.id,
-						status: 200,
-						contentType: "application/json",
-						body: JSON.stringify(result)
-					};
-				}
 				const result = await handlePetRoute(req.url ?? "/", req.method ?? "GET", req.body);
 				if (result.kind === "file") return {
 					id: req.id,
@@ -3010,6 +4313,12 @@ function apply(ctx) {
 					contentType: "text/plain; charset=utf-8",
 					body: result.body
 				};
+				if (result.kind === "none") return {
+					id: req.id,
+					status: 204,
+					contentType: "text/plain; charset=utf-8",
+					body: ""
+				};
 				return {
 					id: req.id,
 					status: result.status,
@@ -3020,6 +4329,7 @@ function apply(ctx) {
 		}, ctx.logger ?? console);
 		try {
 			helper.start();
+			desktopModeEverActive = true;
 			ctx.logger?.info?.(`dsh-pet desktop helper started (config: ${configUrl})`);
 		} catch (e) {
 			ctx.logger?.warn?.(`dsh-pet desktop helper start failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -3030,7 +4340,7 @@ function apply(ctx) {
 	*  （不 spawn 子进程，CLI node 与 DSH Desktop 均适用），下载完成后自动拉起。 */
 	const startHelper = () => {
 		if (helper || electronEnsure || disposed) return;
-		if (!hasDesktopPet) return;
+		if (!hasDesktopPet && !desktopModeEverActive) return;
 		if (!hasGraphicalDisplay()) {
 			if (!displayWarned) {
 				displayWarned = true;
@@ -3097,16 +4407,19 @@ function apply(ctx) {
 	const userRootFor = (ext) => join(thumbUserRoot, animSubdirFor(ext));
 	/** 单次业务路由(WebServer 注册 → HTTP 落盘 / 桌面 Helper 管道 → scheme 应答,共用同一份实现):
 	*  输入只需 rawUrl(/dsh-pet-7340/... + 查询) + method + body 文本;返回 RouteResult(JSON/文本/文件),
-	*  消费方各自落盘——业务逻辑只有一份,两端天然一致(硬契约:浏览器/桌面行为严格对齐)。 */
-	const handlePetRoute = async (rawUrl, method, body) => {
+	*  消费方各自落盘——业务逻辑只有一份,两端天然一致(硬契约:浏览器/桌面行为严格对齐)。
+	*  signal（可选）：调用方断开时**中止挂起等待**（只有 /playback 的 wait 分支会用到）。
+	*  管道侧不传——桌面渲染端不查 /playback；HTTP 侧由注册处按 res 的 close 触发。 */
+	const handlePetRoute = async (rawUrl, method, body, signal) => {
 		const url = new URL(rawUrl, "http://localhost");
-		const rest = decodeURIComponent(url.pathname.slice(14));
+		const rest = decodeURIComponent(url.pathname.slice(ROUTE_PREFIX.length + 1));
 		if (rest === "config") {
 			if (method === "GET") try {
 				return {
 					kind: "json",
 					status: 200,
-					obj: readAllConfig(configPaths)
+					obj: readAllConfig(configPaths),
+					headers: { "cache-control": "no-cache, no-store" }
 				};
 			} catch (e) {
 				return {
@@ -3116,7 +4429,9 @@ function apply(ctx) {
 				};
 			}
 			if (method === "PUT") try {
-				const clean = saveUserConfig(JSON.parse(body ?? ""), readUserConfig(configPaths));
+				const parsed = JSON.parse(body ?? "");
+				const existing = readUserConfig(configPaths);
+				const clean = saveUserConfig(parsed, existing);
 				if (!clean) return {
 					kind: "json",
 					status: 400,
@@ -3169,6 +4484,82 @@ function apply(ctx) {
 				obj: { error: "method not allowed" }
 			};
 		}
+		if (rest === "pet-display") {
+			if (method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			const fail = (reason, message) => ({
+				kind: "json",
+				status: 200,
+				obj: {
+					ok: false,
+					reason,
+					message
+				}
+			});
+			let payload;
+			try {
+				payload = JSON.parse(body ?? "");
+			} catch {
+				return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid JSON body" }
+				};
+			}
+			const petId$1 = typeof payload.id === "string" ? payload.id.trim() : "";
+			const nextDisplay = String(payload.display ?? "");
+			if (!petId$1) return fail("pet-required", "pet 必填：要指定操作哪只桌宠");
+			if (!PET_DISPLAY_SET.has(nextDisplay)) return fail("bad-request", `display 必须是 web / desktop / both / none：${nextDisplay}`);
+			let merged;
+			try {
+				merged = readAllConfig(configPaths);
+			} catch (e) {
+				return fail("generate-error", e instanceof Error ? e.message : String(e));
+			}
+			const hit = findPetInstance(merged, petId$1);
+			if (!hit) return fail("unknown-pet", `没有这只桌宠：${petId$1}`);
+			let layerPath;
+			let layerDir;
+			let existing;
+			if (hit.entry === "main") {
+				layerPath = userConfigPath;
+				layerDir = userRoot;
+				existing = readUserConfig(configPaths);
+			} else {
+				const file$1 = readPetConfigEntry(configPaths, hit.entry);
+				if (!file$1) return fail("generate-error", `宠物条目配置文件找不到：${hit.entry}`);
+				layerPath = file$1.path;
+				layerDir = petConfigDir;
+				existing = file$1.raw;
+			}
+			const layerPets = Array.isArray(hit.conf.pets) ? hit.conf.pets : [];
+			const pets = layerPets.map((p) => String(p.id) === petId$1 ? {
+				...p,
+				display: nextDisplay
+			} : p);
+			const clean = saveUserConfig({ pets }, existing);
+			if (!clean) return fail("bad-request", "宠物配置非法");
+			try {
+				await mkdir(layerDir, { recursive: true });
+				await writeFile(layerPath, JSON.stringify(clean, null, 2), "utf8");
+			} catch (e) {
+				return fail("generate-error", e instanceof Error ? e.message : String(e));
+			}
+			state.writeSection("config", {});
+			if (nextDisplay === "none") lock.release({
+				petId: petId$1,
+				force: true
+			});
+			syncDesktop();
+			return {
+				kind: "json",
+				status: 200,
+				obj: readAllConfig(configPaths)
+			};
+		}
 		if (rest === "reload") {
 			if (method !== "POST") return {
 				kind: "json",
@@ -3199,6 +4590,110 @@ function apply(ctx) {
 				profile: profileNameFrom(PACKAGE_ROOT) ?? ""
 			}
 		};
+		if (rest === "menu/item") {
+			if (method === "DELETE") {
+				const result$1 = menuRegistry.clear(url.searchParams.get("owner") ?? "");
+				if (!result$1.ok) return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: result$1.reason,
+						message: result$1.message
+					}
+				};
+				state.writeSection("menu", { items: menuRegistry.snapshot() });
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: true,
+						removed: result$1.removed
+					}
+				};
+			}
+			if (method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			let parsed;
+			try {
+				parsed = JSON.parse(body ?? "");
+			} catch {
+				return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid JSON body" }
+				};
+			}
+			const result = menuRegistry.register(parsed);
+			if (!result.ok) return {
+				kind: "json",
+				status: 200,
+				obj: {
+					ok: false,
+					reason: result.reason,
+					message: result.message
+				}
+			};
+			state.writeSection("menu", { items: menuRegistry.snapshot() });
+			return {
+				kind: "json",
+				status: 200,
+				obj: { ok: true }
+			};
+		}
+		if (rest === "menu/events") {
+			if (method !== "GET") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			const owner = url.searchParams.get("owner") ?? "";
+			const rawWait = Number(url.searchParams.get("wait") ?? "0");
+			const waitMs = Number.isFinite(rawWait) && rawWait > 0 ? Math.min(rawWait, MENU_WAIT_MAX_MS) : 0;
+			const events = await menuRegistry.poll(owner, waitMs);
+			if (events === null) return {
+				kind: "json",
+				status: 200,
+				obj: {
+					ok: false,
+					reason: "unknown-owner",
+					message: "这个 owner 没有注册，重新注册即可"
+				}
+			};
+			return {
+				kind: "json",
+				status: 200,
+				obj: {
+					ok: true,
+					events
+				}
+			};
+		}
+		if (rest === "menu/click") {
+			if (method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			let parsed;
+			try {
+				parsed = JSON.parse(body ?? "");
+			} catch {
+				return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid JSON body" }
+				};
+			}
+			return {
+				kind: "json",
+				status: 200,
+				obj: menuRegistry.click(parsed)
+			};
+		}
 		if (rest === "models") {
 			if (method !== "GET") return {
 				kind: "json",
@@ -3207,30 +4702,31 @@ function apply(ctx) {
 			};
 			try {
 				const llm = ctx.llm;
-				const named = (id, name) => {
+				const named = (id, name$1) => {
 					const pid = String(id ?? "");
 					return {
 						id: pid,
-						name: String(name ?? "") || pid
+						name: String(name$1 ?? "") || pid
 					};
 				};
 				let providers = (typeof llm?.listProviders === "function" ? llm.listProviders() : []).map((p) => named(p?.id, p?.name));
 				if (providers.length === 0 && typeof llm?.listConfigurableProviders === "function") providers = llm.listConfigurableProviders().map((p) => named(p?.provider, p?.displayName));
 				providers = providers.filter((p) => p.id);
+				const catalog = await Promise.all(providers.map(async (p) => {
+					let models = [];
+					try {
+						const list = await llm?.listModels?.(p.id);
+						models = (Array.isArray(list) ? list : []).map((m) => named(m?.id, m?.name)).filter((m) => m.id);
+					} catch {}
+					return {
+						...p,
+						models
+					};
+				}));
 				return {
 					kind: "json",
 					status: 200,
-					obj: { providers: await Promise.all(providers.map(async (p) => {
-						let models = [];
-						try {
-							const list = await llm?.listModels?.(p.id);
-							models = (Array.isArray(list) ? list : []).map((m) => named(m?.id, m?.name)).filter((m) => m.id);
-						} catch {}
-						return {
-							...p,
-							models
-						};
-					})) }
+					obj: { providers: catalog }
 				};
 			} catch (e) {
 				return {
@@ -3246,11 +4742,118 @@ function apply(ctx) {
 				status: 405,
 				obj: { error: "method not allowed" }
 			};
+			const headers = { "cache-control": "no-cache, no-store" };
+			const parsed = parseStateWaitQuery(url.searchParams.get("since"), url.searchParams.get("timeout"));
+			if (parsed.kind === "error") return {
+				kind: "json",
+				status: 400,
+				obj: { error: parsed.error }
+			};
+			const current = state.read();
+			if (parsed.kind === "none" || current.counter !== parsed.since) return {
+				kind: "json",
+				status: 200,
+				obj: current,
+				headers
+			};
+			const since = parsed.since;
+			return await new Promise((resolveWait) => {
+				let settled = false;
+				/** 收尾：只认第一次（唤醒 / 超时 / 取消 / 调用方断开 都可能先后到达） */
+				const settle = (result) => {
+					if (settled) return;
+					settled = true;
+					resolveWait(result);
+				};
+				const cancel = state.wait({
+					since,
+					timeoutMs: parsed.timeoutMs,
+					onWake: () => settle({
+						kind: "json",
+						status: 200,
+						obj: state.read(),
+						headers
+					})
+				});
+				const onAbort = () => {
+					cancel();
+					settle({ kind: "none" });
+				};
+				if (signal?.aborted) {
+					onAbort();
+					return;
+				}
+				signal?.addEventListener("abort", onAbort, { once: true });
+			});
+		}
+		if (rest === "work-status") {
+			if (method === "DELETE") {
+				if (workStatus.clear(EXTERNAL_WORK_SESSION)) publishWorkStatus();
+				return {
+					kind: "text",
+					status: 204,
+					body: ""
+				};
+			}
+			if (method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			if (Buffer.byteLength(body ?? "", "utf8") > 8 * 1024) return {
+				kind: "json",
+				status: 413,
+				obj: { error: "body too large" }
+			};
+			let parsed;
+			try {
+				parsed = JSON.parse(body ?? "");
+			} catch {
+				return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid JSON body" }
+				};
+			}
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {
+				kind: "json",
+				status: 400,
+				obj: { error: "invalid JSON body" }
+			};
+			const payload = parsed;
+			const state$1 = payload.state;
+			if (typeof state$1 !== "string" || !HOST_WORK_STATUS_STATES.includes(state$1)) return {
+				kind: "json",
+				status: 400,
+				obj: { error: "invalid state" }
+			};
+			let task;
+			if (Object.prototype.hasOwnProperty.call(payload, "task")) if (payload.task === null) task = null;
+			else if (typeof payload.task === "string") {
+				const trimmed = payload.task.trim();
+				if (trimmed === "") task = null;
+				else if (Array.from(trimmed).length > TASK_TEXT_MAX) return {
+					kind: "json",
+					status: 400,
+					obj: { error: `task too long (max ${TASK_TEXT_MAX} code points)` }
+				};
+				else task = trimmed;
+			} else return {
+				kind: "json",
+				status: 400,
+				obj: { error: "invalid task" }
+			};
+			externalWorkSeq += 1;
+			workStatus.setState(EXTERNAL_WORK_SESSION, state$1, externalWorkSeq);
+			if (task !== void 0) workStatus.setTask(EXTERNAL_WORK_SESSION, task);
+			publishWorkStatus();
 			return {
 				kind: "json",
 				status: 200,
-				obj: state.read(),
-				headers: { "cache-control": "no-cache, no-store" }
+				obj: {
+					state: workStatus.stateOf(EXTERNAL_WORK_SESSION) ?? state$1,
+					task: workStatus.taskOf(EXTERNAL_WORK_SESSION)
+				}
 			};
 		}
 		if (rest === "balance") {
@@ -3266,21 +4869,122 @@ function apply(ctx) {
 				obj: { ok: true }
 			};
 		}
+		if (rest === "lock" || rest === "lock/release") {
+			const isRelease = rest === "lock/release";
+			if (method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			let parsed;
+			try {
+				parsed = JSON.parse(body ?? "null");
+			} catch {
+				return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid JSON body" }
+				};
+			}
+			const o = parsed && typeof parsed === "object" ? parsed : {};
+			try {
+				const who = requirePet(url.searchParams, () => readAllConfig(configPaths), { surface: !isRelease });
+				if (!who.ok) return who.res;
+				const petId$1 = who.petId;
+				if (isRelease) {
+					const d$1 = lock.release({
+						petId: petId$1,
+						lockId: o.lockId,
+						force: o.force
+					});
+					if (!d$1.ok) {
+						const obj$1 = {
+							ok: false,
+							reason: d$1.reason,
+							message: d$1.message
+						};
+						if (d$1.reason === "lock-lost") obj$1.cause = d$1.cause;
+						return {
+							kind: "json",
+							status: 200,
+							obj: obj$1
+						};
+					}
+					return {
+						kind: "json",
+						status: 200,
+						obj: { ok: true }
+					};
+				}
+				const d = lock.acquire({
+					petId: petId$1,
+					lockId: o.lockId,
+					ttl: o.ttl
+				});
+				if (!d.ok) {
+					const obj$1 = {
+						ok: false,
+						reason: d.reason,
+						message: d.message
+					};
+					if (d.reason === "locked") obj$1.expiresAt = d.expiresAt;
+					if (d.reason === "lock-lost") obj$1.cause = d.cause;
+					return {
+						kind: "json",
+						status: 200,
+						obj: obj$1
+					};
+				}
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: true,
+						lockId: d.lockId,
+						petId: d.petId,
+						expiresAt: d.expiresAt
+					}
+				};
+			} catch (e) {
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: "generate-error",
+						message: e instanceof Error ? e.message : String(e)
+					}
+				};
+			}
+		}
 		if (rest === "whisper") {
 			if (method !== "POST") return {
 				kind: "json",
 				status: 405,
 				obj: { error: "method not allowed" }
 			};
-			const petId = String(url.searchParams.get("pet") ?? "");
 			try {
+				const who = requirePet(url.searchParams, () => readAllConfig(configPaths), { surface: true });
+				if (!who.ok) return who.res;
+				const r = await publishWhisper(who.petId);
+				if (r.ok) return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: true,
+						text: r.text,
+						...r.image ? { image: r.image } : {}
+					}
+				};
+				const obj$1 = {
+					ok: false,
+					reason: r.reason
+				};
+				if (r.message) obj$1.message = r.message;
 				return {
 					kind: "json",
 					status: 200,
-					obj: await publishWhisper(petId) ? { ok: true } : {
-						ok: false,
-						reason: "generate-error"
-					}
+					obj: obj$1
 				};
 			} catch (e) {
 				return {
@@ -3320,13 +5024,27 @@ function apply(ctx) {
 					message: "text 为空"
 				}
 			};
+			const duration = normalizeBroadcastDuration(o.duration);
+			if (duration === null) return {
+				kind: "json",
+				status: 200,
+				obj: {
+					ok: false,
+					reason: "bad-request",
+					message: "duration 必须是 ≥0 的有限数字（毫秒）"
+				}
+			};
+			const anim = normalizeBroadcastAnim(o.anim);
 			try {
+				const cfg = readAllConfig(configPaths);
 				const d = decideBroadcast({
-					cfg: readAllConfig(configPaths),
+					cfg,
 					requested: String(url.searchParams.get("pet") ?? ""),
-					active: resolveActivePetId(),
 					text: o.text,
 					image: o.image,
+					url: o.url,
+					duration,
+					anim,
 					memeDirs: memeDirsFor
 				});
 				if (!d.ok) return {
@@ -3338,10 +5056,60 @@ function apply(ctx) {
 						message: d.message
 					}
 				};
-				state.writePet(d.petId, "say", d.image ? {
+				const noSurface = surfaceBlocked(cfg, d.petId, url.searchParams);
+				if (noSurface) return noSurface;
+				const blocked = lockBlocked(d.petId, url.searchParams);
+				if (blocked) return blocked;
+				const pic = d.url !== void 0 ? { url: d.url } : d.image !== void 0 ? { image: d.image } : {};
+				state.writePet(d.petId, "say", {
 					text: d.text,
-					image: d.image
-				} : { text: d.text });
+					...pic,
+					duration: d.duration,
+					anim: d.anim
+				});
+				return {
+					kind: "json",
+					status: 200,
+					obj: { ok: true }
+				};
+			} catch (e) {
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: "generate-error",
+						message: e instanceof Error ? e.message : String(e)
+					}
+				};
+			}
+		}
+		if (rest === "bubble/clear") {
+			if (method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			try {
+				const cfg = readAllConfig(configPaths);
+				const d = decideBubbleClear({
+					cfg,
+					requested: String(url.searchParams.get("pet") ?? "")
+				});
+				if (!d.ok) return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: d.reason,
+						message: d.message
+					}
+				};
+				const noSurface = surfaceBlocked(cfg, d.petId, url.searchParams);
+				if (noSurface) return noSurface;
+				const blocked = lockBlocked(d.petId, url.searchParams);
+				if (blocked) return blocked;
+				state.writePet(d.petId, "say", { clear: true });
 				return {
 					kind: "json",
 					status: 200,
@@ -3377,11 +5145,13 @@ function apply(ctx) {
 			}
 			const o = parsed && typeof parsed === "object" ? parsed : {};
 			try {
+				const cfg = readAllConfig(configPaths);
 				const d = decideAnim({
-					cfg: readAllConfig(configPaths),
+					cfg,
 					requested: String(url.searchParams.get("pet") ?? ""),
-					active: resolveActivePetId(),
-					name: o.name
+					name: o.name,
+					url: o.url,
+					facing: o.facing
 				});
 				if (!d.ok) return {
 					kind: "json",
@@ -3392,7 +5162,113 @@ function apply(ctx) {
 						message: d.message
 					}
 				};
-				state.writePet(d.petId, "anim", { name: d.name });
+				const noSurface = surfaceBlocked(cfg, d.petId, url.searchParams);
+				if (noSurface) return noSurface;
+				const blocked = lockBlocked(d.petId, url.searchParams);
+				if (blocked) return blocked;
+				const record = playback.create(d.petId, d.url ?? d.name ?? "");
+				state.writePet(d.petId, "anim", {
+					...d.url !== void 0 ? { url: d.url } : { name: d.name },
+					playbackId: record.playbackId,
+					...d.facing === void 0 ? {} : { facing: d.facing }
+				});
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: true,
+						playbackId: record.playbackId
+					}
+				};
+			} catch (e) {
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: "generate-error",
+						message: e instanceof Error ? e.message : String(e)
+					}
+				};
+			}
+		}
+		if (rest === "position" || rest === "throw") {
+			const isPosition = rest === "position";
+			if (method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			let parsed;
+			try {
+				parsed = JSON.parse(body ?? "null");
+			} catch {
+				return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid JSON body" }
+				};
+			}
+			const o = parsed && typeof parsed === "object" ? parsed : {};
+			try {
+				const cfg = readAllConfig(configPaths);
+				const requested = String(url.searchParams.get("pet") ?? "");
+				if (isPosition) {
+					const d$1 = decidePosition({
+						cfg,
+						requested,
+						x: o.x,
+						y: o.y,
+						mode: o.mode,
+						duration: o.duration
+					});
+					if (!d$1.ok) return {
+						kind: "json",
+						status: 200,
+						obj: {
+							ok: false,
+							reason: d$1.reason,
+							message: d$1.message
+						}
+					};
+					const noSurface$1 = surfaceBlocked(cfg, d$1.petId, url.searchParams);
+					if (noSurface$1) return noSurface$1;
+					const blocked$1 = lockBlocked(d$1.petId, url.searchParams);
+					if (blocked$1) return blocked$1;
+					state.writePet(d$1.petId, "position", positionLeafData(d$1));
+					return {
+						kind: "json",
+						status: 200,
+						obj: {
+							ok: true,
+							x: d$1.x,
+							y: d$1.y
+						}
+					};
+				}
+				const d = decideThrow({
+					cfg,
+					requested,
+					angle: o.angle,
+					power: o.power
+				});
+				if (!d.ok) return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: d.reason,
+						message: d.message
+					}
+				};
+				const noSurface = surfaceBlocked(cfg, d.petId, url.searchParams);
+				if (noSurface) return noSurface;
+				const blocked = lockBlocked(d.petId, url.searchParams);
+				if (blocked) return blocked;
+				state.writePet(d.petId, "throw", {
+					angle: d.angle,
+					power: d.power
+				});
 				return {
 					kind: "json",
 					status: 200,
@@ -3410,19 +5286,241 @@ function apply(ctx) {
 				};
 			}
 		}
-		if (rest === "chat") {
-			const petId = String(url.searchParams.get("pet") ?? "");
+		if (rest === "pose" || rest === "pose/report") {
+			const isReport = rest === "pose/report";
+			if (isReport && method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			if (!isReport && method !== "GET") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			let parsedPose;
+			if (isReport) try {
+				parsedPose = JSON.parse(body ?? "null");
+			} catch {
+				return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid JSON body" }
+				};
+			}
 			try {
+				const who = requirePet(url.searchParams, () => readAllConfig(configPaths));
+				if (!who.ok) return who.res;
+				if (isReport) {
+					const p = normalizePoseInput(parsedPose);
+					if (!p.ok) return {
+						kind: "json",
+						status: 200,
+						obj: {
+							ok: false,
+							reason: p.reason,
+							message: p.message
+						}
+					};
+					pose.set(who.petId, p.pose);
+					return {
+						kind: "json",
+						status: 200,
+						obj: { ok: true }
+					};
+				}
+				const display = String(who.pet.display ?? "");
+				if (!displayCovers("desktop", display)) return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: "pet-not-displayed",
+						message: who.petId + " 的显示模式是 " + display + "；桌面端实况只对 display 含 desktop 的宠物有",
+						display
+					}
+				};
+				const snap = pose.get(who.petId);
+				if (snap === void 0) return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: "pose-unavailable",
+						message: "还没收到过这只宠物的桌面端实况（桌面端没起来，或刚重启还没来得及上报）"
+					}
+				};
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: true,
+						petId: who.petId,
+						...snap
+					}
+				};
+			} catch (e) {
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: "generate-error",
+						message: e instanceof Error ? e.message : String(e)
+					}
+				};
+			}
+		}
+		const playbackPath = rest === "playback" || rest.startsWith("playback/") ? parsePlaybackPath(rest) : void 0;
+		if (playbackPath) {
+			const playbackId = playbackPath.playbackId;
+			if (playbackPath.isReport) {
+				if (method !== "POST") return {
+					kind: "json",
+					status: 405,
+					obj: { error: "method not allowed" }
+				};
+				let reported;
+				try {
+					reported = JSON.parse(body ?? "null");
+				} catch {
+					return {
+						kind: "json",
+						status: 400,
+						obj: { error: "invalid JSON body" }
+					};
+				}
+				const o = reported && typeof reported === "object" ? reported : {};
+				const outcome = playback.report(playbackId, o.status, o.reason);
+				if (outcome === "unknown") return {
+					kind: "json",
+					status: 404,
+					obj: { error: "unknown playback" }
+				};
+				if (outcome === "invalid") return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid status" }
+				};
+				return {
+					kind: "json",
+					status: 200,
+					obj: { ok: true }
+				};
+			}
+			if (method !== "GET") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			const record = playback.get(playbackId);
+			if (!record) return {
+				kind: "json",
+				status: 404,
+				obj: { error: "unknown playback" }
+			};
+			const parsed = parseWaitQuery(url.searchParams.get("wait"), url.searchParams.get("timeout"));
+			if (parsed.kind === "error") return {
+				kind: "json",
+				status: 400,
+				obj: { error: parsed.error }
+			};
+			if (parsed.kind === "none") return {
+				kind: "json",
+				status: 200,
+				obj: {
+					...record,
+					matched: false
+				}
+			};
+			const { wait: waitList, timeoutMs } = parsed;
+			if (waitList.includes(record.status)) return {
+				kind: "json",
+				status: 200,
+				obj: {
+					...record,
+					matched: true
+				}
+			};
+			return await new Promise((resolveWait) => {
+				let settled = false;
+				/** 收尾：只认第一次（唤醒 / 超时 / 取消 / 调用方断开 都可能先后到达） */
+				const settle = (result) => {
+					if (settled) return;
+					settled = true;
+					resolveWait(result);
+				};
+				const cancel = playback.wait({
+					playbackId,
+					wait: waitList,
+					timeoutMs,
+					onWake: (r, matched) => settle({
+						kind: "json",
+						status: 200,
+						obj: {
+							...r,
+							matched
+						}
+					})
+				});
+				if (cancel === void 0) {
+					settle({
+						kind: "json",
+						status: 404,
+						obj: { error: "unknown playback" }
+					});
+					return;
+				}
+				const onAbort = () => {
+					cancel();
+					settle({ kind: "none" });
+				};
+				if (signal?.aborted) {
+					onAbort();
+					return;
+				}
+				signal?.addEventListener("abort", onAbort, { once: true });
+			});
+		}
+		if (rest === "chat") {
+			if (method !== "GET" && method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			try {
+				const roundsRaw = method === "GET" ? url.searchParams.get("rounds") : null;
+				let roundsOverride = null;
+				if (roundsRaw !== null && roundsRaw.trim() !== "") {
+					const n = Number(roundsRaw);
+					if (!Number.isInteger(n) || n < 0 || n > 200) return {
+						kind: "json",
+						status: 200,
+						obj: {
+							ok: false,
+							reason: "bad-request",
+							message: "rounds 必须是 0–200 的整数（不传则用配置）"
+						}
+					};
+					roundsOverride = n;
+				}
+				let cfgCache;
+				const cfg = () => cfgCache ?? (cfgCache = readAllConfig(configPaths));
+				const who = requirePet(url.searchParams, cfg, { surface: method === "POST" });
+				if (!who.ok) return who.res;
+				const petId$1 = who.petId;
 				if (method === "GET") {
-					const cfg = readAllConfig(configPaths);
-					const list = (((await readMemory())[findPetInstance(cfg, petId)?.entry ?? petId] ?? {})[petId]?.messages ?? []).slice();
-					const rounds = memoryRounds(petId, cfg);
+					const mem = await readMemory();
+					const bucket = mem[who.entry] ?? {};
+					const list = (bucket[petId$1]?.messages ?? []).slice();
+					const rounds = roundsOverride ?? memoryRounds(who.conf);
+					const messages = sliceMemoryRounds(list, rounds);
 					return {
 						kind: "json",
 						status: 200,
 						obj: {
 							ok: true,
-							messages: sliceMemoryRounds(list, rounds),
+							messages,
 							rounds
 						}
 					};
@@ -3448,17 +5546,13 @@ function apply(ctx) {
 							message: "消息过长（限 2000 字）"
 						}
 					};
+					const result = await chatWithPet(petId$1, text);
 					return {
 						kind: "json",
 						status: 200,
-						obj: await chatWithPet(petId, text)
+						obj: result
 					};
 				}
-				return {
-					kind: "json",
-					status: 405,
-					obj: { error: "method not allowed" }
-				};
 			} catch (e) {
 				return {
 					kind: "json",
@@ -3473,16 +5567,18 @@ function apply(ctx) {
 		}
 		const [scope, ...restParts] = rest.split("/");
 		if (scope === "font") {
-			const fontFile = resolveExisting(join(PACKAGE_ROOT, "assets", "fonts"), restParts.join("/"));
+			const fontRoot = join(PACKAGE_ROOT, "assets", "fonts");
+			const fontFile = resolveExisting(fontRoot, restParts.join("/"));
 			if (fontFile === void 0) return {
 				kind: "text",
 				status: 404,
 				body: "dsh-pet: font not found"
 			};
+			const ext$1 = fontFile.slice(fontFile.lastIndexOf(".")).toLowerCase();
 			return {
 				kind: "file",
 				file: fontFile,
-				contentType: MIME[fontFile.slice(fontFile.lastIndexOf(".")).toLowerCase()] ?? "application/octet-stream"
+				contentType: MIME[ext$1] ?? "application/octet-stream"
 			};
 		}
 		if (scope === "pic") {
@@ -3496,33 +5592,35 @@ function apply(ctx) {
 					body: "dsh-pet: invalid asset root"
 				};
 				const rel = (scoped ? segs.slice(1) : segs).join("/");
-				let picFile;
+				let picFile$1;
 				for (const dir of memeDirsFor(assetRoot)) {
-					picFile = resolveExisting(dir, rel);
-					if (picFile !== void 0) break;
+					picFile$1 = resolveExisting(dir, rel);
+					if (picFile$1 !== void 0) break;
 				}
-				if (picFile === void 0) return {
+				if (picFile$1 === void 0) return {
 					kind: "text",
 					status: 404,
 					body: "dsh-pet: pic not found"
 				};
-				const ext = picFile.slice(picFile.lastIndexOf(".")).toLowerCase();
+				const ext$2 = picFile$1.slice(picFile$1.lastIndexOf(".")).toLowerCase();
 				return {
 					kind: "file",
-					file: picFile,
-					contentType: MIME[ext] ?? "application/octet-stream"
+					file: picFile$1,
+					contentType: MIME[ext$2] ?? "application/octet-stream"
 				};
 			}
-			const picFile = resolveExisting(join(PACKAGE_ROOT, "assets", "pic"), restParts.join("/"));
+			const picRoot = join(PACKAGE_ROOT, "assets", "pic");
+			const picFile = resolveExisting(picRoot, restParts.join("/"));
 			if (picFile === void 0) return {
 				kind: "text",
 				status: 404,
 				body: "dsh-pet: pic not found"
 			};
+			const ext$1 = picFile.slice(picFile.lastIndexOf(".")).toLowerCase();
 			return {
 				kind: "file",
 				file: picFile,
-				contentType: MIME[picFile.slice(picFile.lastIndexOf(".")).toLowerCase()] ?? "application/octet-stream"
+				contentType: MIME[ext$1] ?? "application/octet-stream"
 			};
 		}
 		if (scope !== "thumb") return {
@@ -3549,7 +5647,20 @@ function apply(ctx) {
 			body: "dsh-pet: unsupported animation format (expected .webm or .mov)"
 		};
 		const extraAnimDir = resolveAsset(petConfigDir, petId + "-animation");
-		const file = extraAnimDir !== void 0 && existsSync(extraAnimDir) ? resolveExisting(extraAnimDir, fileName) : resolveExisting(userRootFor(ext), fileName) ?? resolveExisting(assetRootFor(ext), fileName);
+		/** 按扩展名查同名素材（专属目录优先；否则用户根 → 包内根） */
+		const findAnim = (e) => {
+			const name$1 = fileName.replace(/\.(webm|mov)$/i, "") + e;
+			return extraAnimDir !== void 0 && existsSync(extraAnimDir) ? resolveExisting(extraAnimDir, name$1) : resolveExisting(userRootFor(e), name$1) ?? resolveExisting(assetRootFor(e), name$1);
+		};
+		let file = findAnim(ext);
+		let servedExt = ext;
+		if (file === void 0 && ext === ".mov") {
+			const fb = findAnim(".webm");
+			if (fb !== void 0) {
+				file = fb;
+				servedExt = ".webm";
+			}
+		}
 		if (file === void 0) return {
 			kind: "text",
 			status: 404,
@@ -3558,21 +5669,26 @@ function apply(ctx) {
 		return {
 			kind: "file",
 			file,
-			contentType: MIME[ext] ?? "application/octet-stream"
+			contentType: MIME[servedExt] ?? "application/octet-stream"
 		};
 	};
 	ctx.effect(() => ctx.webServer.register({
 		kind: "prefix",
 		path: ROUTE_PREFIX,
 		handler: async (req, res) => {
+			const abort = new AbortController();
+			const onClose = () => abort.abort();
+			res.on("close", onClose);
 			try {
 				const body = req.method === "PUT" || req.method === "POST" ? await readBody(req) : void 0;
-				const result = await handlePetRoute(req.url ?? "/", req.method ?? "GET", body);
+				const result = await handlePetRoute(req.url ?? "/", req.method ?? "GET", body, abort.signal);
+				res.off("close", onClose);
 				if (result.kind === "json") sendJson(res, result.status, result.obj, result.headers);
 				else if (result.kind === "text") sendText(res, result.status, result.body);
-				else sendFile(res, result.file, result.contentType);
+				else if (result.kind === "none") {} else sendFile(res, result.file, result.contentType);
 			} catch (e) {
-				sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
+				res.off("close", onClose);
+				if (!res.destroyed && !res.writableEnded) sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
 			}
 		}
 	}), "dsh-pet: /dsh-pet-7340 asset route");
@@ -3589,7 +5705,8 @@ function apply(ctx) {
 				return;
 			}
 			if (type === "user/message") {
-				if ((event?.data?.source)?.kind === "goal") {
+				const source = event?.data?.source;
+				if (source?.kind === "goal") {
 					const flags = turnFlags.get(sessionId) ?? {
 						goalRound: false,
 						closing: null
@@ -3607,7 +5724,7 @@ function apply(ctx) {
 				workStatus.setTask(sessionId, null);
 				publishWorkStatus();
 			}
-			if (type === "tool/call" && String(event?.data?.name ?? "") === "update_goal") {
+			if (type === "tool/call" && String(event?.data?.name ?? "") === GOAL_UPDATE_TOOL) {
 				const action = goalUpdateAction(String(event?.data?.arguments ?? ""));
 				if (action) {
 					const flags = turnFlags.get(sessionId) ?? {
@@ -3641,15 +5758,29 @@ function apply(ctx) {
 		};
 	}, "dsh-pet: work-status session events");
 	ctx.effect(() => {
-		const sessionDispose = ctx.on("session/event", (session, event) => {
-			if (!shouldNotifySession(session)) return;
-			const frame = reduceNotifyFrame(event);
-			if (frame) pushNotifyFrame(frame);
-		});
-		const errorDispose = ctx.on("agent/error", (payload) => {
-			pushNotifyFrame(agentErrorFrame(payload?.error));
-		});
+		const sessionDispose = ctx.on(
+			"session/event",
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(session, event) => {
+				if (!shouldNotifySession(session)) return;
+				if (isCompletionTurnEnd(event)) {
+					scheduleCompletionNotify(sessionIdOf(session), event);
+					return;
+				}
+				const frame = reduceNotifyFrame(event);
+				if (frame) pushNotifyFrame(withSessionId(frame, sessionIdOf(session)));
+			}
+);
+		const errorDispose = ctx.on(
+			"agent/error",
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(payload) => {
+				pushNotifyFrame(agentErrorFrame(payload?.error));
+			}
+);
 		return () => {
+			for (const t of notifyActivityTimers.values()) clearTimeout(t);
+			notifyActivityTimers.clear();
 			sessionDispose();
 			errorDispose();
 		};
@@ -3666,10 +5797,10 @@ function apply(ctx) {
 		}
 	}), "dsh-pet: /balance command");
 	ctx.effect(() => {
-		let disposed = false;
+		let disposed$1 = false;
 		let timer = null;
 		function arm(sec) {
-			if (disposed) return;
+			if (disposed$1) return;
 			timer = setTimeout(() => void tick(), Math.max(1e3, sec * 1e3));
 		}
 		async function tick() {
@@ -3685,15 +5816,15 @@ function apply(ctx) {
 		}
 		tick();
 		return () => {
-			disposed = true;
+			disposed$1 = true;
 			if (timer !== null) clearTimeout(timer);
 		};
 	}, "dsh-pet: balance poll");
 	ctx.effect(() => {
-		let disposed = false;
+		let disposed$1 = false;
 		let timer = null;
 		function arm(sec) {
-			if (disposed) return;
+			if (disposed$1) return;
 			timer = setTimeout(() => void tick(), Math.max(1e3, sec * 1e3));
 		}
 		function tick() {
@@ -3704,10 +5835,15 @@ function apply(ctx) {
 				let min = Infinity;
 				for (const pet of flattenPetList(cfg)) {
 					const petId = String(pet.id ?? "");
-					if (!petId || pet.whisperEnabled !== true) continue;
-					const sec = whisperPeriodSec(cfg, petId);
+					if (!petId) continue;
+					const found = findPetInstance(cfg, petId);
+					if (!found) continue;
+					const schedule = automaticWhisperSchedule(ctx.standaloneAi, pet.whisperEnabled === true, whisperPeriodSec(found.conf));
+					if (!schedule.enabled) continue;
+					const sec = schedule.periodSec;
 					min = Math.min(min, sec);
 					if (now - (lastWhisperAt.get(petId) ?? 0) < sec * 1e3) continue;
+					if (lock.locked(petId)) continue;
 					lastWhisperAt.set(petId, now);
 					publishWhisper(petId).catch(() => {});
 				}
@@ -3719,7 +5855,7 @@ function apply(ctx) {
 		}
 		tick();
 		return () => {
-			disposed = true;
+			disposed$1 = true;
 			if (timer !== null) clearTimeout(timer);
 		};
 	}, "dsh-pet: whisper poll");
@@ -3802,9 +5938,17 @@ function apply(ctx) {
 	}), "dsh-pet: /chat command");
 	ctx.effect(() => () => {
 		disposed = true;
+		if (workFlushTimer !== null) {
+			clearTimeout(workFlushTimer);
+			workFlushTimer = null;
+		}
+		lock.releaseAll();
+		playback.cancelAll();
+		state.cancelAll();
 		stopHelper("dsh-host-stop");
 	});
 	startHelper();
 }
+
 //#endregion
 export { apply, inject, name };

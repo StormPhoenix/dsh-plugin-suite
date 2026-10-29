@@ -8,9 +8,18 @@
  *
  * 形状：
  *   {
- *     sections: { balance: {counter,data}, workStatus: {…}, notify: {…} },  // 全局，所有端共享
- *     pets: { <宠物id>: { say: {counter,data} } }                           // 每只宠物各自一份
+ *     counter: 1755000000007,   // 全局写入版本 = 最后一次写入的编号（顶层，不是叶子）
+ *     sections: { balance: {counter,data}, workStatus: {…}, notify: {…}, config: {…} },  // 全局，所有端共享
+ *     pets: { <宠物id>: { say: {…}, anim: {…}, position: {…}, throw: {…}, lock: {…} } } // 每只宠物各自一份
  *   }
+ *
+ * 长轮询（`GET /state?since=&timeout=`）：
+ *   顶层 `counter` 就是"整份 S 的版本"。它**天然等于**最后一次写入的编号（`last`）——所有叶子的
+ *   counter 都出自同一个 `next()`，全局单点递增，所以 `last` 必定是当前最大的那个版本号。
+ *   调用方把它回传成 `since`：与当前不同 → 有东西变了，立刻返回；相同 → 挂起，等到变化或超时。
+ *   于是前端不必再 1s 空转（叶子一变立刻收到），而**空闲时的请求率与改造前一致**。
+ *   等待者只挂在"任意叶子被写过"这一个条件上，所以是**全局集合**：一次写入唤醒所有人
+ *   （桌面是一窗一宠、各自一个轮询循环，因此这里是 N 倍放大——有意为之，换的是实现的简单）。
  *
  * counter 语义（整个设计的地基，改之前先读完这段）：
  *   - **每次写入都必须更新 counter**，前端靠"counter 变了"判断要不要渲染；
@@ -28,30 +37,77 @@ export interface StateLeaf {
     counter: number;
     data: unknown;
 }
-/** 全局段（所有端共享一份） */
-export type SectionName = 'balance' | 'workStatus' | 'notify';
-/** 每宠物段（say = 要说的话；anim = 要播的动画名） */
-export type PetLeafName = 'say' | 'anim';
-/** S 的完整形态（GET /state 的响应体） */
+/** 全局段（所有端共享一份）。
+ *  `config` 是**纯信号叶子**：`data` 恒为 `{}`，只看 `counter`——它变了就说明配置被写过，
+ *  消费端据此重拉 `GET /config`（配置本体太大，不能塞进每秒一次的 /state）。
+ *  当前只有 `POST /pet-display` 写它：那是唯一一个**不是发起页面自己**的配置改动
+ *  （桌面端右键改显示位置），浏览器端只能靠这个信号知道。
+ *  保存 / 同步配置（PUT / POST /config）**不写**——它们的调用方自己就拿到了成品聚合。 */
+export type SectionName = 'balance' | 'workStatus' | 'notify' | 'config' | 'menu';
+/** 每宠物段（say = 要说的话；anim = 要播的动画名；position = 要挪到的位置；throw = 要给的初速度；
+ *  lock = 占用锁状态）。
+ *  中间两个是**指令**（host → 前端），与 say/anim 同族：前端读到即执行，不往它们写任何东西。
+ *  `lock` 不一样，它是**状态**不是指令：前端读它来决定"要不要冻结自己"（随机链不掷骰、暂停自播），
+ *  并**按叶子里的 expiresAt 自己解除**——宿主侧没有定时器（见 ./lock 的第 4 条边界）。 */
+export type PetLeafName = 'say' | 'anim' | 'position' | 'throw' | 'lock';
+/** S 的完整形态（GET /state 的响应体）。
+ *  `counter` = 整份 S 的版本号，就是"最后一次写入的编号"（见类里的 `last`）。
+ *  它是**顶层的**、不是叶子：调用方拿它当 `?since=` 回传，用来表达"我手里这份是哪个版本"。 */
 export interface PollState {
+    counter: number;
     sections: Record<SectionName, StateLeaf>;
     pets: Record<string, Record<PetLeafName, StateLeaf>>;
 }
+/**
+ * `?timeout=` 上限（ms）：挂起等待的封顶时长，防止调用方把连接挂死。
+ * 与 ./playback 的 `MAX_PLAYBACK_WAIT_MS` **同值同因**：DSH WebServer 是否对长期持有的响应
+ * 设了空闲超时**尚未核实**，先压在 10s。核实后两处一起调。
+ */
+export declare const MAX_STATE_WAIT_MS: number;
+/** `?since=&timeout=` 的解析结论 */
+export type StateWaitParse = 
+/** 两者都没传 → 立刻返回（= 改造前的语义，完全兼容） */
+{
+    kind: 'none';
+}
+/** 挂起等待 */
+ | {
+    kind: 'ok';
+    since: number;
+    timeoutMs: number;
+}
+/** 参数非法 → 路由回 400（附明确原因，不静默兜底） */
+ | {
+    kind: 'error';
+    error: string;
+};
+/**
+ * 解析 `?since=<版本号>` + `?timeout=<ms>`。
+ *
+ * - **成对必填**：只填 since 会无限挂住，只填 timeout 等于没说要等什么——都显式报错
+ *   （与 `GET /playback/{id}` 的 `wait`/`timeout` 同一套约定）。
+ * - `since` 是**非负整数**（`0` 合法 = "我手里什么都没有"，首次接入的调用方这么用）。
+ * - `timeout` 只接受 `0..MAX_STATE_WAIT_MS` 的**非负整数**；`0` 合法（下一拍立刻返回）。
+ *   负数 / 小数 / 非数字 / 超上限一律非法。
+ */
+export declare function parseStateWaitQuery(sinceRaw: string | null, timeoutRaw: string | null): StateWaitParse;
 /** 轮询统一状态存储（一个插件实例一个；进程内内存态，重启即空） */
 export declare class PollStateStore {
     /** 严格递增的计数器种子（保证同一毫秒内连写两次也拿到不同的 counter） */
     private last;
     private readonly sections;
     private readonly pets;
+    /** 挂起的等待者。**全局集合**：任意叶子被写过都唤醒他们（见文件头的放大效应说明） */
+    private readonly waiters;
     constructor();
     /** 下一个 counter：`Date.now()` 与「上一个 +1」取大——单调、不回退、同毫秒不重复 */
     private next;
     /**
-     * 写一个全局叶子（余额 / 工作状态 / 通知）。
+     * 写一个全局叶子（余额 / 工作状态 / 通知 / 配置变更信号）。
      * 每次都整体替换叶子对象（不原地改字段），保证 `read()` 拿到的引用不会半新半旧。
      */
     writeSection(name: SectionName, data: unknown): void;
-    /** 写一只宠物的叶子（宠物条目不存在则自动建立，两个槽位一起建好，形状恒定） */
+    /** 写一只宠物的叶子（宠物条目不存在则自动建立，**所有槽位一起建好**，形状恒定） */
     writePet(petId: string, leaf: PetLeafName, data: unknown): void;
     /**
      * 当前 S（GET /state 的响应体）。
@@ -59,4 +115,34 @@ export declare class PollStateStore {
      * 所以消费端不会读到写了一半的叶子。
      */
     read(): PollState;
+    /**
+     * 挂起一个等待者：直到 `last` 变得不等于 `since`、或超时、或调用方取消。
+     *
+     * 三种收尾对调用方是同一件事（去 `read()` 拿最新状态），所以回调不带参数——
+     * 需要区分"等到了"还是"超时了"的场景并不存在。
+     *
+     * **唤醒发生在写入落定之后**（见两个 write 方法里 `wakeWaiters()` 的位置）：如果放在
+     * `next()` 里，回调会先于 `this.sections[name] = …` 执行，调用方读到的就是**旧状态**。
+     *
+     * @returns 取消函数（清掉超时定时器并摘掉等待者）
+     */
+    wait(args: {
+        since: number;
+        timeoutMs: number;
+        onWake: () => void;
+    }): () => void;
+    /**
+     * 结束**所有**挂起的等待（插件卸载 / 宿主退出路径）。
+     * 唤醒时不给区分标志：调用方据此立刻收尾，而不是留一个悬挂的响应。
+     */
+    cancelAll(): void;
+    /** 当前等待者数（测试 / 观测用：验证不泄漏） */
+    waiterCount(): number;
+    /**
+     * 唤醒所有**已经过期**的等待者（唯一调用点是两个 write 方法，且必须在叶子写定之后）。
+     * `since === this.last` 的跳过：那种等待者是"已经是最新"的，叫醒它等于空转。
+     */
+    private wakeWaiters;
+    /** 摘掉一个等待者（清定时器 + 从集合移除） */
+    private dropWaiter;
 }

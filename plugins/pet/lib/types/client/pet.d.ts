@@ -1,9 +1,3 @@
-/** 容器注册的「立刻拉一拍 /state」钩子：前端动作（右键菜单 / 对话弹窗）完成后调用——
- *  数据只从 S 来（动作端点不回数据），但叫醒一拍就能 0 延迟看到结果，不用等下一个 1s。
- *  未注册（容器还没挂）时是空操作，调用方不需要判空。 */
-export declare const statePoller: {
-    now: () => void;
-};
 import type { Animations, Pet, PhysicsParams, Weights } from '../shared/types';
 import type * as ReactNS from 'react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';

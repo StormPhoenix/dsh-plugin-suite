@@ -40,12 +40,26 @@ export interface RegisteredRoute {
   handler: (req: IncomingMessage, res: ServerResponse) => unknown;
 }
 
+export interface StandaloneModelService {
+  currentSelection(): { provider: string; model: string };
+  listProviders(): unknown[];
+  listModels(provider: string): Promise<unknown[]>;
+  resolveModelInfo(provider?: string, model?: string, signal?: AbortSignal): Promise<unknown>;
+  stream(options: unknown): AsyncIterable<unknown>;
+  isReady(): boolean;
+  canWhisper(): boolean;
+  getSettings(): { whisperIntervalSec: number };
+  dispose(): void;
+}
+
 export interface StandaloneContextOptions {
   /** 插件用它拼桌面 Helper 的 `DSH_PET_CONFIG_URL`；传函数可拿到"监听后才确定"的端口 */
   port: number | (() => number);
   logger: StandaloneLogger;
   /** 注入路由收集数组（独立模式先起服务拿到端口，再 `apply`，两者共用同一个数组） */
   routes?: RegisteredRoute[];
+  ai?: StandaloneModelService;
+  authenticatedUrl?: (baseUrl: string) => string;
 }
 
 export interface StandaloneContext {
@@ -81,11 +95,13 @@ export function createStandaloneLogger(): StandaloneLogger {
  * @returns 伪 ctx、路由列表、初始化失败记录与释放函数
  */
 export function createStandaloneContext(options: StandaloneContextOptions): StandaloneContext {
-  const { logger } = options;
+  const { logger, ai } = options;
   const routes = options.routes ?? [];
   const failures: string[] = [];
   /** effect 释放函数（后注册先释放，与 Cordis 的逆序释放一致） */
   const disposers: Array<() => unknown> = [];
+  /** 插件通过 ctx.provide 挂出去的服务（独立模式没有其他插件，通常为空） */
+  const services = new Map<string, unknown>();
   let disposed = false;
 
   const portOf = (): number => (typeof options.port === 'function' ? options.port() : options.port);
@@ -122,56 +138,86 @@ export function createStandaloneContext(options: StandaloneContextOptions): Stan
         return undefined;
       }
     },
+    /** 对外服务注册（Cordis 的 ctx.provide 语义）：存起来供 get 读取，返回释放函数 */
+    provide(name: string, value: unknown): () => void {
+      services.set(name, value);
+      return () => {
+        if (services.get(name) === value) services.delete(name);
+      };
+    },
+    /** 服务查找（Cordis 的 ctx.get 语义）：独立模式没有别的插件，通常拿不到 */
+    get(name: string): unknown {
+      return services.get(name);
+    },
     /** 独立模式没有 DSH 会话事件：不订阅，工作状态保持空闲 */
     on(): () => void {
       return () => {};
     },
     logger,
     webServer,
+    connection: { authenticatedUrl: options.authenticatedUrl ?? ((baseUrl: string): string => baseUrl) },
+    ...(ai
+      ? {
+          standaloneAi: {
+            isReady: () => ai.isReady(),
+            canWhisper: () => ai.canWhisper(),
+            whisperIntervalSec: () => ai.getSettings().whisperIntervalSec,
+          },
+        }
+      : {}),
     commands: { register: (): (() => void) => () => {} },
     agentDefaultModel: {
-      currentSelection: (): { provider: string; model: string } => ({ provider: STANDALONE_PROVIDER, model: '' }),
+      currentSelection: (): { provider: string; model: string } =>
+        ai?.currentSelection() ?? { provider: STANDALONE_PROVIDER, model: '' },
     },
     credentials: { resolve: async (): Promise<undefined> => undefined },
-    llm: {
-      listProviders: (): unknown[] => [],
-      listModels: async (): Promise<unknown[]> => [],
-      /**
-       * 模型元数据查询。DSH 的契约是
-       * `resolveModelInfo(provider, model, signal?): Promise<LlmResolvedModelInfo>` —— **异步**。
-       * 替身必须同样返回 Promise：同步返回 undefined 时，任何 `.then()` 或不带 `?.` 的取值
-       * 都会立刻炸（与 stream 同一类形状错误）。
-       *
-       * 目前唯一消费方 `supportsReasoningOff` 用 `await` + `?.` + try/catch 包着，所以不炸——
-       * 但那是靠消费方防御，不是靠形状正确。形状对不上，就不该指望下一个消费方也这么写。
-       */
-      resolveModelInfo: async (): Promise<undefined> => undefined,
-      /**
-       * 生成入口：独立模式没有模型后端。
-       *
-       * 必须是 **AsyncIterable**——DSH 的契约是 `stream(options): AsyncIterable<StreamChunk>`，
-       * 调用方一律 `for await (const chunk of llm.stream(...))` 消费。错误在首次 `next()` 时抛出，
-       * 正好落在调用方已有的 try/catch 里，转成 `ok:false / generate-error` 的结构化失败。
-       *
-       * **不能**写成 `async () => { throw ... }`：那返回 Promise 而非 AsyncIterable，
-       * `for await` 会立刻抛 TypeError（文案由 V8 生成，形如 "llm.stream(...) is not a function
-       * or its return value is not async iterable"），同时那个 rejected promise 无人接管，
-       * 以 unhandled rejection **直接终止进程**。0.3.4 的崩溃根因即此：配置里设了
-       * whisperModel/chatModel 就必崩，因为只有配了模型才会真的走到这里。
-       */
-      // 不用 `async function*`：一个只有 throw、没有 yield 的生成器会被 eslint 的
-      // require-yield 拦下；而这里恰恰不该 yield 任何东西（独立模式没有模型后端）。
-      // 显式给出 AsyncIterable 的形状，也是对契约最直接的表达。
-      stream: (): AsyncIterable<never> => ({
-        [Symbol.asyncIterator](): AsyncIterator<never> {
-          return {
-            next: async (): Promise<IteratorResult<never>> => {
-              throw new Error('dsh-pet standalone: 独立模式未接入模型（碎碎念/对话不可用）');
+    llm: ai
+      ? {
+          listProviders: () => ai.listProviders(),
+          listModels: (provider: string) => ai.listModels(provider),
+          resolveModelInfo: (provider?: string, model?: string, signal?: AbortSignal) =>
+            ai.resolveModelInfo(provider, model, signal),
+          stream: (request: unknown) => ai.stream(request),
+        }
+      : {
+          listProviders: (): unknown[] => [],
+          listModels: async (): Promise<unknown[]> => [],
+          /**
+           * 模型元数据查询。DSH 的契约是
+           * `resolveModelInfo(provider, model, signal?): Promise<LlmResolvedModelInfo>` —— **异步**。
+           * 替身必须同样返回 Promise：同步返回 undefined 时，任何 `.then()` 或不带 `?.` 的取值
+           * 都会立刻炸（与 stream 同一类形状错误）。
+           *
+           * 目前唯一消费方 `supportsReasoningOff` 用 `await` + `?.` + try/catch 包着，所以不炸——
+           * 但那是靠消费方防御，不是靠形状正确。形状对不上，就不该指望下一个消费方也这么写。
+           */
+          resolveModelInfo: async (): Promise<undefined> => undefined,
+          /**
+           * 生成入口：独立模式没有模型后端。
+           *
+           * 必须是 **AsyncIterable**——DSH 的契约是 `stream(options): AsyncIterable<StreamChunk>`，
+           * 调用方一律 `for await (const chunk of llm.stream(...))` 消费。错误在首次 `next()` 时抛出，
+           * 正好落在调用方已有的 try/catch 里，转成 `ok:false / generate-error` 的结构化失败。
+           *
+           * **不能**写成 `async () => { throw ... }`：那返回 Promise 而非 AsyncIterable，
+           * `for await` 会立刻抛 TypeError（文案由 V8 生成，形如 "llm.stream(...) is not a function
+           * or its return value is not async iterable"），同时那个 rejected promise 无人接管，
+           * 以 unhandled rejection **直接终止进程**。0.3.4 的崩溃根因即此：配置里设了
+           * whisperModel/chatModel 就必崩，因为只有配了模型才会真的走到这里。
+           */
+          // 不用 `async function*`：一个只有 throw、没有 yield 的生成器会被 eslint 的
+          // require-yield 拦下；而这里恰恰不该 yield 任何东西（独立模式没有模型后端）。
+          // 显式给出 AsyncIterable 的形状，也是对契约最直接的表达。
+          stream: (): AsyncIterable<never> => ({
+            [Symbol.asyncIterator](): AsyncIterator<never> {
+              return {
+                next: async (): Promise<IteratorResult<never>> => {
+                  throw new Error('dsh-pet standalone: 独立模式未接入模型（碎碎念/对话不可用）');
+                },
+              };
             },
-          };
+          }),
         },
-      }),
-    },
   };
 
   return {
@@ -181,6 +227,7 @@ export function createStandaloneContext(options: StandaloneContextOptions): Stan
     async dispose(): Promise<void> {
       if (disposed) return;
       disposed = true;
+      ai?.dispose();
       for (const dispose of disposers.splice(0).reverse()) {
         try {
           await dispose();

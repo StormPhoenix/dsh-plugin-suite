@@ -7,6 +7,26 @@ export declare const NOTIFY_ICONS: {
     readonly question: string;
     readonly test: string;
 };
+/**
+ * 会话跳转器：由 app.ts 装配时注入（包装 DSH 客户端的 `uiWorkspace.openSession`）。
+ * 抽成接口是为了让本模块不 direct 依赖 DSH 服务类型，取不到服务时天然退化成"不跳会话"。
+ */
+export interface SessionNavigator {
+    openSession(sessionId: string): void;
+}
+/**
+ * 点通知 → 切到那条会话 + 聚焦页面 + 请桌面壳把主窗口叫回前台。
+ *
+ * 1. `openSession(sessionId)`：**页内**切会话。只改前端状态，窗口还在后台也能切——先切再叫窗口，
+ *    用户看到窗口的那一刻就是目标会话，不会先闪一下旧对话；
+ * 2. `window.focus()`：浏览器宿主下由浏览器把页签带到前台；
+ * 3. 隐藏 iframe 导航 `dsh://open`：页面只能聚焦自己这一层，恢复不了**最小化**的宿主窗口
+ *    （那是 Electron 主进程的事）→ 协议 → 第二实例锁 → `focusPrimaryWindow()`。零子进程、零新接口。
+ *    只在 Electron 宿主里发：浏览器里导航 `dsh://` 会弹拦截框，而浏览器点通知本来就会带前页签。
+ *
+ * `sessionId` 缺失（旧版宿主 / 拿不到会话位置的事件）时跳过第 1 步，其余照旧。
+ */
+export declare function wireNotificationClick(n: Notification, sessionId?: string): void;
 /** 申请浏览器通知权限的结果：ok=true 已授予；ok=false 带失败原因（供设置页红字展示） */
 export type PermissionResult = {
     ok: true;
@@ -28,8 +48,9 @@ export declare function reloadNotifications(): Promise<void>;
  */
 export declare function notifyFromFrame(frame: unknown): void;
 /**
- * 初始化系统通知引擎（**不做轮询**）：读总开关 + 兜底申请权限 + 跟踪页面聚焦。
+ * 初始化系统通知引擎（**不做轮询**）：读总开关 + 兜底申请权限 + 跟踪页面聚焦 + 记住会话跳转器。
  * 帧的消费改为容器统一轮询 /state 后调 notifyFromFrame（见 pet.ts 的分发）。
  * 返回释放函数（摘掉聚焦监听），由 ctx.effect 在插件卸载时调用。
+ * @param navigator 会话跳转器（app.ts 包装 DSH 的 uiWorkspace）；不传 = 点击只叫窗口、不跳会话
  */
-export declare function initNotify(): () => void;
+export declare function initNotify(navigator?: SessionNavigator): () => void;

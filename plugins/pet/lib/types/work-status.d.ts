@@ -11,8 +11,9 @@
  * 档位与 animations.events.workStatus 数组索引严格一致（顺序勿在中间插入）：
  *   0 thinking / 1 working / 2 result / 3 waiting / 4 success / 5 error
  */
-/** 工作状态档位（数组索引 = events.workStatus 档位） */
-export type HostWorkStatusState = 'thinking' | 'working' | 'result' | 'waiting' | 'success' | 'error';
+/** 工作状态档位（数组索引 = events.workStatus 档位；顺序与 shared/work-status.ts 一致） */
+export declare const HOST_WORK_STATUS_STATES: readonly ["thinking", "working", "result", "waiting", "success", "error"];
+export type HostWorkStatusState = (typeof HOST_WORK_STATUS_STATES)[number];
 /** update_goal 工具名：目标工具，action=complete/blocked = 本轮是该目标任务的收尾轮 */
 export declare const GOAL_UPDATE_TOOL = "update_goal";
 /** 本 turn 的 turn 级标志（goal 续跑轮判定；不参与展示，由 index.ts 维护） */
@@ -100,6 +101,8 @@ export declare class WorkStatusStore {
     has(sessionId: string): boolean;
     /** 该会话当前档位（无条目 / 已清 → undefined） */
     stateOf(sessionId: string): HostWorkStatusState | undefined;
+    /** 该会话当前任务详情（无条目 → null） */
+    taskOf(sessionId: string): string | null;
     /** 写会话状态（保留该会话已有的 task）；同状态且 seq 不更新 → 无变化返回 false（防刷屏） */
     setState(sessionId: string, state: HostWorkStatusState, seq?: number): boolean;
     /** 写该会话的任务详情（null = 清空）；会话无活动条目 → 不动（它不会被展示） */

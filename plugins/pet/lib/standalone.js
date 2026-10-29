@@ -1,14 +1,18 @@
 #!/usr/bin/env node
-import { createReadStream, existsSync, fstatSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants, createReadStream, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, normalize, resolve, sep } from "node:path";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { downloadArtifact } from "@electron/get";
-import extract from "@electron-internal/extract-zip";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
+import { Readable } from "node:stream";
+import { z } from "zod";
+import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 
 //#region src/host/config.ts
 /** 位置角落白名单 */
@@ -19,7 +23,8 @@ const CORNERS = [
 	"bottom-right"
 ];
 const CORNER_SET = new Set(CORNERS);
-/** display 白名单 */
+/** display 白名单（导出：宿主路由 POST /pet-display 写单只宠物的显示位置时复用同一份枚举，
+*  读写两侧必须同一份规则，不在路由里另写一个 Set） */
 const PET_DISPLAYS = [
 	"web",
 	"desktop",
@@ -27,6 +32,21 @@ const PET_DISPLAYS = [
 	"none"
 ];
 const PET_DISPLAY_SET = new Set(PET_DISPLAYS);
+/** font.family 白名单（预设 id）——**必须与 src/shared/fonts.ts 的 FONT_PRESETS 保持一致**：
+*  host 不能 import src/shared（见文件头注释的 DSH 单文件加载约束），这里是那份清单的自包含副本，
+*  所以加/删字体预设时两边都要改。 */
+const FONT_FAMILY_SET = new Set([
+	"candy",
+	"yahei",
+	"youyuan",
+	"kaiti",
+	"simsun",
+	"comic",
+	"system"
+]);
+/** font.size 合法区间（px，含端点）——与 src/shared/fonts.ts 的 FONT_SIZE_MIN / FONT_SIZE_MAX 同一口径 */
+const FONT_SIZE_MIN = 4;
+const FONT_SIZE_MAX = 200;
 const ID_FORBIDDEN = /[\\/:\x00-\x1f]/;
 /**
 * 「全局默认 + 种类可覆盖」的顶层字段白名单 —— 用户层（main-config.jsonc）里写下的值会成为
@@ -43,13 +63,20 @@ const ID_FORBIDDEN = /[\\/:\x00-\x1f]/;
 *   - `physics`：拖拽抛掷手感；`petCollision` 更是**跨宠物**行为（相撞按动量守恒弹开），
 *     按种类分在语义上站不住：两只不同种类的宠物相撞时用谁的系数？
 *   - `confineToScreen`：多屏是用户环境 / 使用习惯，不是宠物属性
+*   - `font`：字体种类 / 字号 / 是否随宠物缩放是**看的人**的偏好，不是某个种类的属性——
+*     同一套字体偏好用在所有宠物（含 pet pack）才符合预期
 *
 * 不在名单里的顶层字段基座仍是**内置默认**：`whisperPrompt`（人设）、`memes`（表情包）、
 * `animations` / `animationWeights`（与素材根绑定）、`workStatusTexts`（文案）——一个种类一份
 * 动画池 / 一份人设 / 一个表情包目录，各写一份才是 pet pack 的意义。
+*
+* 例外：**人设有实例级覆盖**。`pets[].whisperPrompt`（可选）写了就取代所属条目顶层那一份，
+* 没写则回落条目——回落本身由消费端做（./persona 的 petPersona），合并不填生效值（见 petPersonaField 注释）。
+* 其余实例级字段仍是固定白名单（id/name/size/4 个开关/display/position + whisperPrompt）。
 */
 const GLOBAL_DEFAULT_KEYS = [
 	"physics",
+	"font",
 	"confineToScreen",
 	"whisperImageEnabled",
 	"chatImageEnabled",
@@ -118,6 +145,13 @@ function scanPetFiles(petDir) {
 		path: join(petDir, name)
 	}));
 }
+function readPetConfigEntry(paths, entry) {
+	const hit = scanPetFiles(paths.petDir).find((f) => f.prefix === entry);
+	return hit ? {
+		path: hit.path,
+		raw: readJsonc(hit.path)
+	} : void 0;
+}
 /** animations 段完整性校验（与旧 assertAnimationsHost 同一套规则；不 throw，非法返回 false） */
 function animationsValid(a) {
 	if (!a || typeof a !== "object") return false;
@@ -171,6 +205,17 @@ function physicsValid(value) {
 	const tp = Number(p.throwPower);
 	return Number.isFinite(g) && g >= 0 && Number.isFinite(r) && r >= 0 && r <= 1 && Number.isFinite(f) && f >= 0 && typeof p.ceilingBounce === "boolean" && Number.isFinite(tp) && tp > 0 && typeof p.petCollision === "boolean";
 }
+/** font 段校验：family ∈ 预设白名单、size 为区间内的有限数字、followPet 为布尔。
+*  与 physics 同口径：**整段校验**——任一子键缺失/非法即整段非法（告警 + 取默认），
+*  不做「缺子键逐个补默认」；对象字段一律整段替换（见文件头合并规则）。 */
+function fontValid(value) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const f = value;
+	if (typeof f.family !== "string" || !FONT_FAMILY_SET.has(f.family)) return false;
+	const size = Number(f.size);
+	if (!Number.isFinite(size) || size < FONT_SIZE_MIN || size > FONT_SIZE_MAX) return false;
+	return typeof f.followPet === "boolean";
+}
 /** whisperModel / chatModel 段校验：{ provider, model } 两个字符串，
 *  **要么都留空（= 跟随当前对话的模型）要么都非空**——只填一半（选了服务商没选模型，或反之）
 *  会拼出"用 A 家的模型名去问 B 家"这种必然失败的组合，按非法处理（告警 + 取默认）。 */
@@ -209,6 +254,7 @@ function topFieldValid(key, value) {
 		case "animationWeights": return weightsValid(value);
 		case "eventsRefreshSec": return eventsRefreshSecValid(value);
 		case "physics": return physicsValid(value);
+		case "font": return fontValid(value);
 		case "whisperModel":
 		case "chatModel": return modelSelectionValid(value);
 		case "workStatusTexts": return workStatusTextsValid(value);
@@ -337,8 +383,18 @@ function mergePet(base, raw, label, seenIds) {
 			corner: petEnum(ownPos.corner, CORNER_SET, basePos.corner, label, "position.corner", id),
 			marginX: petNumber(ownPos.marginX, basePos.marginX, -Infinity, label, "position.marginX", id),
 			marginY: petNumber(ownPos.marginY, basePos.marginY, -Infinity, label, "position.marginY", id)
-		}
+		},
+		...petPersonaField(p.whisperPrompt, label, id)
 	};
+}
+/**
+* 实例级 whisperPrompt 的合并：写了非空字符串 → 原样带出；否则返回空对象（该键不出现）。
+* 显式写了非字符串（数字/对象/布尔）才算配置错误 → 告警一次并忽略（回落条目），与 petNumber 同口径。
+*/
+function petPersonaField(own, label, id) {
+	if (typeof own === "string") return own.trim() === "" ? {} : { whisperPrompt: own };
+	if (own !== void 0 && own !== null) warnOnce(`${label}:whisperPrompt:${id}`, `宠物「${id}」的 whisperPrompt 非法，已忽略（回落所属条目人设）`);
+	return {};
 }
 function readAllConfig(paths) {
 	const base = readJsonc(paths.defaultFile);
@@ -411,7 +467,10 @@ function saveUserConfig(raw, existing) {
 		const marginX = Number(pos.marginX);
 		const marginY = Number(pos.marginY);
 		if (!Number.isFinite(marginX) || !Number.isFinite(marginY)) return null;
-		out.push({
+		const rawPersona = pp.whisperPrompt;
+		if (rawPersona !== void 0 && rawPersona !== null && typeof rawPersona !== "string") return null;
+		const persona = typeof rawPersona === "string" ? rawPersona.trim() : "";
+		const pet = {
 			id,
 			name,
 			size,
@@ -425,7 +484,9 @@ function saveUserConfig(raw, existing) {
 				marginX,
 				marginY
 			}
-		});
+		};
+		if (persona) pet.whisperPrompt = persona;
+		out.push(pet);
 	}
 	const ne = o.notificationsEnabled;
 	if (ne !== void 0 && typeof ne !== "boolean") return null;
@@ -437,6 +498,8 @@ function saveUserConfig(raw, existing) {
 	if (cts !== void 0 && typeof cts !== "boolean") return null;
 	const ph = o.physics;
 	if (ph !== void 0 && !physicsValid(ph)) return null;
+	const fo = o.font;
+	if (fo !== void 0 && !fontValid(fo)) return null;
 	const wm = o.whisperModel;
 	if (wm !== void 0 && !modelSelectionValid(wm)) return null;
 	const cm = o.chatModel;
@@ -455,6 +518,7 @@ function saveUserConfig(raw, existing) {
 	if (cie !== void 0) outConfig.chatImageEnabled = cie;
 	if (cts !== void 0) outConfig.confineToScreen = cts;
 	if (ph !== void 0) outConfig.physics = ph;
+	if (fo !== void 0) outConfig.font = fo;
 	if (wm !== void 0) outConfig.whisperModel = cleanModel(wm);
 	if (cm !== void 0) outConfig.chatModel = cleanModel(cm);
 	if (cmr !== void 0) outConfig.chatMemoryRounds = Number(cmr);
@@ -465,6 +529,7 @@ function saveUserConfig(raw, existing) {
 	if (cie !== void 0) bodyOwned.add("chatImageEnabled");
 	if (cts !== void 0) bodyOwned.add("confineToScreen");
 	if (ph !== void 0) bodyOwned.add("physics");
+	if (fo !== void 0) bodyOwned.add("font");
 	if (wm !== void 0) bodyOwned.add("whisperModel");
 	if (cm !== void 0) bodyOwned.add("chatModel");
 	if (cmr !== void 0) bodyOwned.add("chatMemoryRounds");
@@ -538,8 +603,8 @@ async function ensureElectronDownload(options = {}) {
 	const warn = (message) => console.warn(`[dsh-pet] ${message}`);
 	const startedAt = Date.now();
 	log(`Electron not found, downloading v${version} (${PLAT}-${process.arch}) ...`);
-	mkdirSync(targetDir, { recursive: true });
 	try {
+		mkdirSync(targetDir, { recursive: true });
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(new Error(`Electron download timed out after ${timeoutMs}ms`)), timeoutMs);
 		timer.unref?.();
@@ -562,6 +627,7 @@ async function ensureElectronDownload(options = {}) {
 			});
 			const seconds = ((Date.now() - startedAt) / 1e3).toFixed(1);
 			log(`download complete (${seconds}s), extracting to ${targetDir} ...`);
+			const { default: extract } = await import("@electron-internal/extract-zip");
 			await extract(zipPath, { dir: targetDir });
 			if (!existsSync(exe)) throw new Error(`Electron zip extracted, but ${ELECTRON_REL} not found`);
 			const readySeconds = ((Date.now() - startedAt) / 1e3).toFixed(1);
@@ -617,8 +683,10 @@ var HelperProcess = class {
 		} : defaultLaunch(this.options);
 		const command = launch.command;
 		const args = this.options.args || launch.args;
+		const cwd = this.options.cwd || dshHomeDir();
+		mkdirSync(cwd, { recursive: true });
 		const child = spawn(command, args, {
-			cwd: this.options.cwd || packageRoot,
+			cwd,
 			env: helperSpawnEnv(process.pid, this.options.env),
 			stdio: [
 				"pipe",
@@ -630,6 +698,10 @@ var HelperProcess = class {
 		this.child = child;
 		child.once("error", (error) => {
 			this.logger.error?.(`dsh-pet desktop helper failed to start: ${error.message}`);
+			if (child.pid === void 0 && this.child === child) {
+				this.child = void 0;
+				this.scheduleRestart();
+			}
 		});
 		child.once("exit", (code, signal) => {
 			if (this.child !== child) return;
@@ -965,7 +1037,7 @@ function parseCommandCode(creditsBody, subscriptionBody, summaryBody, provider) 
 	};
 }
 const commandCode = {
-	ids: ["commandcode"],
+	id: "commandcode",
 	credential: {
 		mode: "ref",
 		ref: "COMMANDCODE_API_KEY"
@@ -992,7 +1064,13 @@ const commandCode = {
 
 //#endregion
 //#region src/host/balance/deepseek-common.ts
-const DEEPSEEK_FULL_BALANCE = "20";
+const DEEPSEEK_FULL_BALANCE = {
+	CNY: "20",
+	USD: "5"
+};
+function deepseekFullBalance(currency) {
+	return DEEPSEEK_FULL_BALANCE[currency];
+}
 function deepseekPricingTier(now = new Date()) {
 	const parts = new Intl.DateTimeFormat("en-US", {
 		timeZone: "Asia/Shanghai",
@@ -1014,28 +1092,47 @@ function parseAccountBalance(snapshot, provider) {
 	if (snapshot.status !== "ready") throw new Error("dsh-pet: 账号余额查询失败");
 	const wallets = Array.isArray(snapshot.value) ? snapshot.value : [];
 	if (wallets.length === 0) throw new Error("dsh-pet: 账号没有充值钱包余额");
-	const first = obj(wallets[0]);
-	if (!first) throw new Error("dsh-pet: 账号钱包结构非法");
-	const currency = typeof first.currency === "string" && first.currency.length > 0 ? first.currency : "CNY";
-	const toppedUp = money(first.balance, "balance");
-	const bonus = (Array.isArray(snapshot.bonusWallets) ? snapshot.bonusWallets : []).map((w) => obj(w)).find((w) => w !== void 0 && w.currency === currency);
-	const granted = bonus ? money(bonus.balance, "bonus balance") : "0.00";
+	const candidates = wallets.map((w) => obj(w)).filter((w) => w !== void 0);
+	if (candidates.length === 0) throw new Error("dsh-pet: 账号钱包结构非法");
+	const toppedUpBy = new Map();
+	for (const w of candidates) {
+		const currency = typeof w.currency === "string" && w.currency.length > 0 ? w.currency : "CNY";
+		const amount = money(w.balance, "balance");
+		const prev = toppedUpBy.get(currency);
+		toppedUpBy.set(currency, prev === void 0 ? amount : sumMoney(prev, amount));
+	}
+	const grantedBy = new Map();
+	for (const raw of Array.isArray(snapshot.bonusWallets) ? snapshot.bonusWallets : []) {
+		const w = obj(raw);
+		if (!w || typeof w.currency !== "string" || w.currency.length === 0) continue;
+		const amount = money(w.balance, "bonus balance");
+		const prev = grantedBy.get(w.currency);
+		grantedBy.set(w.currency, prev === void 0 ? amount : sumMoney(prev, amount));
+	}
+	for (const currency of grantedBy.keys()) if (!toppedUpBy.has(currency)) toppedUpBy.set(currency, "0.00");
+	const walletsOut = [...toppedUpBy.entries()].map(([currency, toppedUp]) => {
+		const granted = grantedBy.get(currency) ?? "0.00";
+		const fullBalance = deepseekFullBalance(currency);
+		return {
+			currency,
+			total: sumMoney(granted, toppedUp),
+			granted,
+			toppedUp,
+			...fullBalance === void 0 ? {} : { fullBalance }
+		};
+	});
 	return {
 		ok: true,
 		provider,
 		shape: "money",
 		data: {
-			currency,
-			total: sumMoney(granted, toppedUp),
-			granted,
-			toppedUp,
-			fullBalance: DEEPSEEK_FULL_BALANCE,
+			wallets: walletsOut,
 			tier: deepseekPricingTier()
 		}
 	};
 }
 const deepseekAccount = {
-	ids: ["deepseek-account"],
+	id: "deepseek-account",
 	credential: { mode: "none" },
 	async fetch({ provider, resolveAccount }) {
 		if (!resolveAccount) throw new Error("dsh-pet: 缺少账号服务（" + provider + "）");
@@ -1046,7 +1143,7 @@ const deepseekAccount = {
 //#endregion
 //#region src/host/balance/providers/deepseek-official.ts
 const deepseekOfficial = {
-	ids: ["deepseek-official"],
+	id: "deepseek-official",
 	credential: {
 		mode: "ref",
 		ref: "DEEPSEEK_API_KEY"
@@ -1057,17 +1154,24 @@ const deepseekOfficial = {
 		const body = await res.json();
 		const infos = body?.balance_infos;
 		if (!Array.isArray(infos) || infos.length === 0) throw new Error("dsh-pet: deepseek balance 响应缺少 balance_infos");
-		const first = infos[0];
+		const wallets = infos.map((raw) => {
+			const w = obj(raw) ?? {};
+			const currency = str(w.currency, "currency");
+			const fullBalance = deepseekFullBalance(currency);
+			return {
+				currency,
+				total: str(w.total_balance, "total_balance"),
+				granted: str(w.granted_balance, "granted_balance"),
+				toppedUp: str(w.topped_up_balance, "topped_up_balance"),
+				...fullBalance === void 0 ? {} : { fullBalance }
+			};
+		});
 		return {
 			ok: true,
 			provider,
 			shape: "money",
 			data: {
-				currency: str(first.currency, "currency"),
-				total: str(first.total_balance, "total_balance"),
-				granted: str(first.granted_balance, "granted_balance"),
-				toppedUp: str(first.topped_up_balance, "topped_up_balance"),
-				fullBalance: DEEPSEEK_FULL_BALANCE,
+				wallets,
 				tier: deepseekPricingTier()
 			}
 		};
@@ -1085,7 +1189,7 @@ const QUOTA_USD = {
 /** 滚动窗时长（展示名）：本服务商是 5 小时 */
 const ROLLING_LABEL = "5h";
 const opencodeGo = {
-	ids: ["opencode-go"],
+	id: "opencode-go",
 	credential: {
 		mode: "ref",
 		ref: "OPENCODE_GO_API_KEY"
@@ -1120,16 +1224,38 @@ const opencodeGo = {
 };
 
 //#endregion
-//#region src/host/balance/index.ts
-const BALANCE_PROVIDERS = [
+//#region src/host/balance/registry.ts
+const BUILTIN_PROVIDERS = [
 	opencodeGo,
 	commandCode,
 	deepseekOfficial,
 	deepseekAccount
 ];
-function matchBalanceProvider(provider) {
-	return BALANCE_PROVIDERS.find((p) => p.ids.includes(provider));
+/** 第三方运行时注册：provider id → 定义。 */
+const external = new Map();
+function registerBalanceProvider(def) {
+	if (!def || typeof def !== "object") throw new TypeError("provider 定义必须是对象");
+	if (typeof def.id !== "string" || def.id.length === 0) throw new TypeError("id 必须是非空字符串");
+	if (typeof def.fetch !== "function") throw new TypeError("fetch 必须是函数");
+	if (BUILTIN_PROVIDERS.some((p) => p.id === def.id)) throw new Error("不能覆盖内置服务商: " + def.id);
+	if (external.has(def.id)) throw new Error("该服务商 id 已被注册: " + def.id);
+	external.set(def.id, def);
+	return () => {
+		if (external.get(def.id) === def) external.delete(def.id);
+	};
 }
+function listBalanceProviders() {
+	return {
+		builtin: BUILTIN_PROVIDERS.map((p) => p.id),
+		external: [...external.keys()]
+	};
+}
+function matchBalanceProvider(provider) {
+	return BUILTIN_PROVIDERS.find((p) => p.id === provider) ?? external.get(provider);
+}
+
+//#endregion
+//#region src/host/balance/index.ts
 /**
 * 失败结果（三种 reason 一个出口，避免各处手写字段）。
 * `message` 缺省时**不写这个键** —— 叶子的形状是对外契约，多一个 `undefined` 键会让
@@ -1147,9 +1273,18 @@ function failed(provider, reason, message) {
 		message
 	};
 }
+/** provider 取数抛错 → 统一的 `fetch-error` 结果（内置与第三方同一口径）。 */
+function fetchFailed(provider, e) {
+	return failed(provider, "fetch-error", e instanceof Error ? e.message : String(e));
+}
 async function queryBalance(provider, resolveKey, resolveAccount) {
 	const def = matchBalanceProvider(provider);
 	if (!def) return failed(provider, "unsupported");
+	if (!("credential" in def)) try {
+		return await def.fetch({ provider });
+	} catch (e) {
+		return fetchFailed(provider, e);
+	}
 	let key = "";
 	if (def.credential.mode === "ref") {
 		const resolved = await resolveKey(def.credential.ref);
@@ -1163,7 +1298,7 @@ async function queryBalance(provider, resolveKey, resolveAccount) {
 			resolveAccount
 		});
 	} catch (e) {
-		return failed(provider, "fetch-error", e instanceof Error ? e.message : String(e));
+		return fetchFailed(provider, e);
 	}
 }
 
@@ -1203,6 +1338,20 @@ var BlockAssembler = class {
 };
 function ReasoningEffortId(id) {
 	return id;
+}
+
+//#endregion
+//#region src/host/llm-call.ts
+const PET_CALL_IDENTITY = "dsh-pet";
+function noTextReason(finish) {
+	const { kind, failure } = finish ?? {};
+	if (kind === "aborted") return "生成已取消";
+	if (kind === "max-tokens") return "输出达到上限，未产出正文";
+	if (kind !== "error") return "模型未返回文本";
+	const { message, code } = failure ?? {};
+	if (typeof message === "string" && message.trim() !== "") return message;
+	if (typeof code === "string" && code.trim() !== "") return code;
+	return "未提供失败原因";
 }
 
 //#endregion
@@ -1287,7 +1436,7 @@ async function generateWhisper(ctx, system, meme, preferred) {
 	let last = {
 		ok: false,
 		reason: "generate-error",
-		message: "模型未返回文本"
+		message: noTextReason(void 0)
 	};
 	for (const [i, sel] of candidates.entries()) {
 		const result = await generateWith$1(ctx, llm, sel, system, meme);
@@ -1304,6 +1453,7 @@ async function generateWith$1(ctx, llm, sel, system, meme) {
 	const options = {
 		provider: sel.provider,
 		model: sel.model,
+		sessionId: PET_CALL_IDENTITY,
 		messages: [createUserMessage({
 			content: [{
 				type: "text",
@@ -1330,7 +1480,7 @@ async function generateWith$1(ctx, llm, sel, system, meme) {
 	if (!text) return {
 		ok: false,
 		reason: "generate-error",
-		message: "模型未返回文本"
+		message: noTextReason(assembler.finish)
 	};
 	return meme ? {
 		ok: true,
@@ -1339,6 +1489,20 @@ async function generateWith$1(ctx, llm, sel, system, meme) {
 	} : {
 		ok: true,
 		text
+	};
+}
+
+//#endregion
+//#region src/host/whisper-policy.ts
+function automaticWhisperSchedule(policy, petEnabled, configuredPeriodSec) {
+	if (!policy) return {
+		enabled: petEnabled,
+		periodSec: configuredPeriodSec
+	};
+	const period = policy.whisperIntervalSec();
+	return {
+		enabled: petEnabled && policy.isReady() && policy.canWhisper(),
+		periodSec: Number.isFinite(period) ? Math.max(60, period) : 300
 	};
 }
 
@@ -1414,7 +1578,7 @@ async function generateChat(ctx, system, history, userText, pool = [], preferred
 	let last = {
 		ok: false,
 		reason: "generate-error",
-		message: "模型未返回文本"
+		message: noTextReason(void 0)
 	};
 	for (const [i, sel] of candidates.entries()) {
 		const result = await generateWith(ctx, llm, sel, system, history, userText, pool);
@@ -1448,6 +1612,7 @@ async function generateWith(ctx, llm, sel, system, history, userText, pool) {
 	const options = {
 		provider: sel.provider,
 		model: sel.model,
+		sessionId: PET_CALL_IDENTITY,
 		messages: [...historyMessages, createUserMessage({
 			content: [{
 				type: "text",
@@ -1474,7 +1639,7 @@ async function generateWith(ctx, llm, sel, system, history, userText, pool) {
 	if (!text) return {
 		ok: false,
 		reason: "generate-error",
-		message: "模型未返回文本"
+		message: noTextReason(assembler.finish)
 	};
 	if (!wantImage) return {
 		ok: true,
@@ -1492,52 +1657,13 @@ async function generateWith(ctx, llm, sel, system, history, userText, pool) {
 }
 
 //#endregion
-//#region src/host/broadcast.ts
-function normalizeBroadcastText(text) {
-	return typeof text === "string" ? text.trim() : "";
-}
-function decideBroadcast(args) {
-	const { cfg, requested, active, memeDirs } = args;
-	const text = normalizeBroadcastText(args.text);
-	if (!text) return {
-		ok: false,
-		reason: "bad-request",
-		message: "text 为空"
-	};
-	const petId = String(requested || active || "main");
-	if (!flattenPetList(cfg).some((p) => String(p.id) === petId)) return {
-		ok: false,
-		reason: "unknown-pet",
-		message: "没有这只桌宠：" + petId
-	};
-	const rawImage = typeof args.image === "string" ? args.image.trim() : "";
-	if (!rawImage) return {
-		ok: true,
-		petId,
-		text
-	};
-	const found = findPetInstance(cfg, petId);
-	const conf = found ? found.conf : cfg.main ?? {};
-	const hit = matchMeme(readMemePool(conf.memes, memeDirs(found ? found.entry : "main")), rawImage);
-	if (!hit) return {
-		ok: false,
-		reason: "unknown-image",
-		message: "配图不在表情包池内：" + rawImage
-	};
-	return {
-		ok: true,
-		petId,
-		text,
-		image: hit.name
-	};
-}
-
-//#endregion
 //#region src/host/anim.ts
 /** 字符串数组收窄（配置里的池子；非数组/空串 → 空数组） */
 function strings(v) {
 	return Array.isArray(v) ? v.filter((x) => typeof x === "string" && x !== "") : [];
 }
+/** 朝向收窄：只认两个字面量（大小写、空白、非字符串一律不算），不认识返回 `null` */
+const petFacing = (v) => v === "left" || v === "right" ? v : null;
 function animationNames(animations) {
 	const a = animations && typeof animations === "object" ? animations : {};
 	const out = [];
@@ -1564,22 +1690,70 @@ function animationNames(animations) {
 	}
 	return out;
 }
+function normalizeHttpUrl(v) {
+	if (typeof v !== "string") return null;
+	const raw = v.trim();
+	if (!raw) return null;
+	let parsed;
+	try {
+		parsed = new URL(raw);
+	} catch {
+		return null;
+	}
+	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+	return raw;
+}
 function decideAnim(args) {
-	const { cfg, requested, active } = args;
+	const { cfg, requested } = args;
 	const name = typeof args.name === "string" ? args.name.trim() : "";
-	if (!name) return {
+	const rawUrl = typeof args.url === "string" ? args.url.trim() : "";
+	if (name && rawUrl) return {
 		ok: false,
 		reason: "bad-request",
-		message: "name 为空"
+		message: "name 与 url 只能给一个"
 	};
-	const petId = String(requested || active || "main");
-	if (!flattenPetList(cfg).some((p) => String(p.id) === petId)) return {
+	if (!name && !rawUrl) return {
+		ok: false,
+		reason: "bad-request",
+		message: "name 或 url 必须给一个"
+	};
+	let facing;
+	if (args.facing !== void 0 && args.facing !== null) {
+		const f = petFacing(args.facing);
+		if (f === null) return {
+			ok: false,
+			reason: "bad-request",
+			message: "facing 必须是 left / right"
+		};
+		facing = f;
+	}
+	const petId = String(requested ?? "").trim();
+	if (!petId) return {
+		ok: false,
+		reason: "pet-required",
+		message: "pet 必填：要指定操作哪只桌宠"
+	};
+	const found = findPetInstance(cfg, petId);
+	if (!found) return {
 		ok: false,
 		reason: "unknown-pet",
 		message: "没有这只桌宠：" + petId
 	};
-	const conf = (findPetInstance(cfg, petId) ?? { conf: cfg.main ?? {} }).conf;
-	const allowed = animationNames(conf.animations);
+	if (rawUrl) {
+		const url = normalizeHttpUrl(rawUrl);
+		if (url === null) return {
+			ok: false,
+			reason: "bad-request",
+			message: "url 必须是 http/https 的完整地址"
+		};
+		return {
+			ok: true,
+			petId,
+			url,
+			facing
+		};
+	}
+	const allowed = animationNames(found.conf.animations);
 	if (!allowed.includes(name)) return {
 		ok: false,
 		reason: "unknown-animation",
@@ -1588,12 +1762,1001 @@ function decideAnim(args) {
 	return {
 		ok: true,
 		petId,
-		name
+		name,
+		facing
 	};
 }
 
 //#endregion
+//#region src/host/broadcast.ts
+/** 气泡默认显示时长（ms）——与两端消费侧的常量同值（host 不得 import src/shared，只能各写一份）。
+*  这个值只用于**把缺省解析成显式值**写进叶子，让 /state 里能看到实际生效的时长。 */
+const DEFAULT_BUBBLE_DURATION_MS = 10 * 1e3;
+function normalizeBroadcastText(text) {
+	return typeof text === "string" ? text.trim() : "";
+}
+function normalizeBroadcastDuration(duration) {
+	if (duration === void 0 || duration === null) return DEFAULT_BUBBLE_DURATION_MS;
+	if (typeof duration !== "number" || !Number.isFinite(duration) || duration < 0) return null;
+	return duration;
+}
+function normalizeBroadcastAnim(anim) {
+	return anim !== false;
+}
+/**
+* `?pet=` → 实际落点（与 ./anim、./motion-cue 同一口径）：**必填**且必须真实存在。
+*
+* 两种失败分开报（issue #122 第 1 条「绝不默认退到列表第一只」）：没给 → `pet-required`；
+* 给了但配置里没有 → `unknown-pet`。收紧前这里是 `requested || active || 'main'`——`active`
+* 是"当前桌宠" = **有效宠物列表第一只**，落点随用户 /pet 操作而变，第三方无从预期，故整条删除。
+*/
+function resolvePetId(cfg, requested) {
+	const petId = String(requested ?? "").trim();
+	if (!petId) return {
+		ok: false,
+		reason: "pet-required",
+		message: "pet 必填：要指定操作哪只桌宠"
+	};
+	const found = findPetInstance(cfg, petId);
+	if (!found) return {
+		ok: false,
+		reason: "unknown-pet",
+		message: "没有这只桌宠：" + petId
+	};
+	return {
+		ok: true,
+		petId,
+		entry: found.entry,
+		conf: found.conf
+	};
+}
+function decideBroadcast(args) {
+	const { cfg, requested, memeDirs } = args;
+	const text = normalizeBroadcastText(args.text);
+	if (!text) return {
+		ok: false,
+		reason: "bad-request",
+		message: "text 为空"
+	};
+	const who = resolvePetId(cfg, requested);
+	if (!who.ok) return {
+		ok: false,
+		reason: who.reason,
+		message: who.message
+	};
+	const petId = who.petId;
+	const rawImage = typeof args.image === "string" ? args.image.trim() : "";
+	const rawUrl = typeof args.url === "string" ? args.url.trim() : "";
+	if (rawImage && rawUrl) return {
+		ok: false,
+		reason: "bad-request",
+		message: "image 与 url 只能给一个"
+	};
+	if (!rawImage && !rawUrl) return {
+		ok: true,
+		petId,
+		text,
+		duration: args.duration,
+		anim: args.anim
+	};
+	if (rawUrl) {
+		const url = normalizeHttpUrl(rawUrl);
+		if (url === null) return {
+			ok: false,
+			reason: "bad-request",
+			message: "url 必须是 http/https 的完整地址"
+		};
+		return {
+			ok: true,
+			petId,
+			text,
+			url,
+			duration: args.duration,
+			anim: args.anim
+		};
+	}
+	const hit = matchMeme(readMemePool(who.conf.memes, memeDirs(who.entry)), rawImage);
+	if (!hit) return {
+		ok: false,
+		reason: "unknown-image",
+		message: "配图不在表情包池内：" + rawImage
+	};
+	return {
+		ok: true,
+		petId,
+		text,
+		image: hit.name,
+		duration: args.duration,
+		anim: args.anim
+	};
+}
+function decideBubbleClear(args) {
+	const who = resolvePetId(args.cfg, args.requested);
+	if (!who.ok) return {
+		ok: false,
+		reason: who.reason,
+		message: who.message
+	};
+	return {
+		ok: true,
+		petId: who.petId
+	};
+}
+
+//#endregion
+//#region src/host/lock.ts
+const LOCK_DEFAULT_TTL_MS = 2 * 60 * 1e3;
+const LOCK_MIN_TTL_MS = 1 * 1e3;
+const LOCK_MAX_TTL_MS = 30 * 60 * 1e3;
+/** cause → 给人看的一句话（回执里的 message；reason 才是机器读的那个） */
+const CAUSE_TEXT = {
+	expired: "占用已过期（没有及时续期）",
+	released: "占用已被释放",
+	preempted: "占用已被用户接管（拖拽/点击/隐藏/关闭）",
+	unknown: "lock 不是当前生效的占用编号"
+};
+/** ttl 合法性说明（路由与决策层共用同一条规则，免得两处走样） */
+const TTL_TEXT = `ttl 必须是 ${LOCK_MIN_TTL_MS}~${LOCK_MAX_TTL_MS} 之间的有限数字（毫秒）`;
+function normalizeLockTtl(ttl, fallback) {
+	if (ttl === void 0 || ttl === null) return fallback;
+	if (typeof ttl !== "number" || !Number.isFinite(ttl)) return null;
+	if (ttl < LOCK_MIN_TTL_MS || ttl > LOCK_MAX_TTL_MS) return null;
+	return ttl;
+}
+/**
+* lockId 规范化：缺省 / null → 空串（= "没给"，走新建那条路）；字符串 → trim 后原样；
+* **非字符串 → null（非法）**。空串按"没给"处理是有意的（与 `image`/`url` 的宽松口径一致）。
+*/
+function normalizeLockId(v) {
+	if (v === void 0 || v === null) return "";
+	if (typeof v !== "string") return null;
+	return v.trim();
+}
+var LockStore = class {
+	constructor(opts) {
+		this.locks = new Map();
+		this.tombstones = new Map();
+		this.seq = 0;
+		this.now = opts?.now ?? Date.now;
+		this.onChange = opts?.onChange ?? (() => {});
+	}
+	/**
+	* 当前占用（**懒判过期**）。到点即视为没有：清记录、记墓碑、同步一次叶子。
+	*
+	* 这里会写叶子（读方法带一次副作用）是有意的：叶子是渲染端唯一能看到的信号，
+	* 而宿主这一侧没有任何定时器。任一动作端点或内部来源调一次本方法，过期的锁就会被清掉并
+	* 如实写进 S；即便一次都没人调，渲染端也会按叶子里的 `expiresAt` **自己**解除静止。
+	*/
+	current(petId) {
+		const rec = this.locks.get(petId);
+		if (rec === void 0) return null;
+		if (this.now() < rec.expiresAt) return rec;
+		this.drop(petId, rec, "expired");
+		return null;
+	}
+	/** 这只宠物此刻是否被占用（宿主内部自动来源用它决定跳过；同样懒判过期） */
+	locked(petId) {
+		return this.current(petId) !== null;
+	}
+	/**
+	* 当前是否有**任意**宠物被占用（测试 / 观测用，同 ./state 的 `waiterCount()`）。
+	*
+	* **生产路径上没有人调它**：占用期间要挡的两个**全局段**（`sections.balance` /
+	* `sections.workStatus`）是**所有宠物共用一份**，宿主"跳过写入"会连带静音别的宠物
+	* （issue #122 要的是"只控制指定 main"），所以那两处改由**渲染端按宠物忽略**——
+	* 叶子照常推进，被占用那只自己不看（见 src/client/pet.ts 的冻结判定与
+	* runtime/electron-helper/events.js 里同一处判断）。宿主侧只挡 per-pet 的碎碎念周期。
+	*/
+	anyLocked() {
+		for (const petId of [...this.locks.keys()]) if (this.current(petId) !== null) return true;
+		return false;
+	}
+	/**
+	* 动作端点的门禁（`/anim`、`/broadcast`、`/position`、`/throw`、`/bubble/clear` 共用）。
+	*
+	* 无锁时按「有没有带编号」分两条：
+	*   - **没带 `lock`** → 放行。没有占用的常态下，既有调用方一个字都不用改。
+	*   - **带了 `lock` 但查不到锁** → `lock-lost`。带了编号就说明调用方以为自己还持有；这时放行
+	*     等于把「你把锁丢了」悄悄抹掉，它会以为演出还在继续。`cause` 从墓碑里取，从没建过锁就是
+	*     `unknown`（issue #122 第 4 点：旧租约不能继续执行迟到请求）。
+	*/
+	gate(petId, provided) {
+		const rec = this.current(petId);
+		if (rec !== null) {
+			if (provided && provided === rec.lockId) return { ok: true };
+			if (!provided) return {
+				ok: false,
+				reason: "lock-required",
+				message: "这只桌宠正被占用，必须带 lock=<lockId>"
+			};
+			return {
+				ok: false,
+				reason: "lock-lost",
+				cause: "unknown",
+				message: CAUSE_TEXT.unknown
+			};
+		}
+		if (!provided) return { ok: true };
+		const cause = this.causeOf(petId, provided);
+		return {
+			ok: false,
+			reason: "lock-lost",
+			cause,
+			message: CAUSE_TEXT[cause]
+		};
+	}
+	/**
+	* 取锁 / 续期（**二合一**：`lockId` 给了就是续期，没给就是新建）。
+	*
+	* 真值表（每一格都有确定结论，不替调用方猜）：
+	*   | body       | 当前锁       | 结论 |
+	*   | 无 lockId  | 无锁         | 新建 |
+	*   | 无 lockId  | 有锁         | `locked` + `expiresAt` |
+	*   | 有 lockId  | 一致         | 续期 |
+	*   | 有 lockId  | 有锁但不一致 | `lock-lost` / `unknown` |
+	*   | 有 lockId  | 无锁         | `lock-lost` / 墓碑里的 cause |
+	*
+	* **「有 id + 当前无锁」一律报错，不复活**：过期/被释放/被抢占之后拿旧编号来续期，
+	* 不能借这条路把锁重新建起来——否则「我丢了锁」这件事会被悄悄抹掉，持锁者会以为演出还在继续。
+	*/
+	acquire(args) {
+		const { petId } = args;
+		const renewId = normalizeLockId(args.lockId);
+		if (renewId === null) return {
+			ok: false,
+			reason: "bad-request",
+			message: "lockId 必须是字符串"
+		};
+		const rec = this.current(petId);
+		if (renewId) {
+			if (rec === null || rec.lockId !== renewId) {
+				const cause = rec === null ? this.causeOf(petId, renewId) : "unknown";
+				return {
+					ok: false,
+					reason: "lock-lost",
+					cause,
+					message: CAUSE_TEXT[cause]
+				};
+			}
+			const ttl$1 = normalizeLockTtl(args.ttl, rec.ttl);
+			if (ttl$1 === null) return {
+				ok: false,
+				reason: "bad-request",
+				message: TTL_TEXT
+			};
+			rec.ttl = ttl$1;
+			rec.expiresAt = this.now() + ttl$1;
+			this.onChange(petId, {
+				locked: true,
+				expiresAt: rec.expiresAt
+			});
+			return {
+				ok: true,
+				petId,
+				lockId: rec.lockId,
+				expiresAt: rec.expiresAt,
+				renewed: true
+			};
+		}
+		if (rec !== null) return {
+			ok: false,
+			reason: "locked",
+			expiresAt: rec.expiresAt,
+			message: "这只桌宠已被占用"
+		};
+		const ttl = normalizeLockTtl(args.ttl, LOCK_DEFAULT_TTL_MS);
+		if (ttl === null) return {
+			ok: false,
+			reason: "bad-request",
+			message: TTL_TEXT
+		};
+		const record = {
+			lockId: this.newId(),
+			ttl,
+			expiresAt: this.now() + ttl
+		};
+		this.locks.set(petId, record);
+		this.tombstones.delete(petId);
+		this.onChange(petId, {
+			locked: true,
+			expiresAt: record.expiresAt
+		});
+		return {
+			ok: true,
+			petId,
+			lockId: record.lockId,
+			expiresAt: record.expiresAt,
+			renewed: false
+		};
+	}
+	/**
+	* 释放。两种形态**二选一**：
+	*   - `lockId`：持锁者收工 → `cause: released`
+	*   - `force: true`：**渲染端**在用户拖拽/点击/隐藏/关闭时调 → `cause: preempted`
+	*
+	* 幂等：当前没有锁时回 `ok:true`（`released: false`）——"让锁消失"这个意图在空状态下已经成立。
+	* 但有锁而 `lockId` 不匹配时**必须报错**（不许误放别人的锁）：这是唯一一条"释放也会失败"的路。
+	*
+	* `force` 只认**严格 `true`**（宽松口径会把误传当真，代价是撤掉别人的锁——宁可严格）。
+	*/
+	release(args) {
+		const { petId } = args;
+		const force = args.force === true;
+		const releaseId = normalizeLockId(args.lockId);
+		if (releaseId === null) return {
+			ok: false,
+			reason: "bad-request",
+			message: "lockId 必须是字符串"
+		};
+		if (force && releaseId) return {
+			ok: false,
+			reason: "bad-request",
+			message: "lockId 与 force 只能给一个"
+		};
+		if (!force && !releaseId) return {
+			ok: false,
+			reason: "bad-request",
+			message: "lockId 或 force 必须给一个"
+		};
+		const rec = this.current(petId);
+		if (rec === null) return {
+			ok: true,
+			petId,
+			released: false
+		};
+		if (!force && rec.lockId !== releaseId) return {
+			ok: false,
+			reason: "lock-lost",
+			cause: "unknown",
+			message: CAUSE_TEXT.unknown
+		};
+		this.drop(petId, rec, force ? "preempted" : "released");
+		return {
+			ok: true,
+			petId,
+			released: true
+		};
+	}
+	/** 撤掉全部占用（插件卸载路径）：不这样做的话，渲染端要等 TTL 到点才解除静止 */
+	releaseAll() {
+		for (const petId of [...this.locks.keys()]) {
+			const rec = this.locks.get(petId);
+			if (rec !== void 0) this.drop(petId, rec, "released");
+		}
+	}
+	/** 撤锁并记墓碑（唯一改状态的出口：释放/抢占/过期都走它，保证叶子与墓碑不漏写） */
+	drop(petId, rec, cause) {
+		this.locks.delete(petId);
+		this.tombstones.set(petId, {
+			lockId: rec.lockId,
+			cause
+		});
+		this.onChange(petId, { locked: false });
+	}
+	/** 墓碑查询：编号对得上就回它当初的 cause，否则 unknown（拿错编号 / 从来没有过） */
+	causeOf(petId, lockId) {
+		const stone = this.tombstones.get(petId);
+		return stone !== void 0 && stone.lockId === lockId ? stone.cause : "unknown";
+	}
+	/** 新编号：`lk-<时间36>-<自增36>`（与 ./playback 的 playbackId 同一套，只保证一次运行内唯一） */
+	newId() {
+		return "lk-" + this.now().toString(36) + "-" + (++this.seq).toString(36);
+	}
+};
+
+//#endregion
+//#region src/host/menu.ts
+/**
+* 第三方右键菜单注册表（进程内存态，DSH 重启即清空；不落盘）。
+*
+* 用途：别的插件想在桌宠右键菜单里加自己的入口，就走这里注册；用户点了之后，注册方用它自己的
+* owner 去查"我这一项被点了没有、是哪只宠物上点的"。
+*
+* 数据形状（两层，没有第三层）：
+*
+*   owners: Map<owner, Map<label, petId | null>>
+*           键 = owner（身份键，同时也是一级分组名）
+*           值 = label → 触发它的宠物 id；null = 没点过
+*
+* 语义要点（实现前先读完，都是刻意的）：
+*  - **注册 = 整体覆盖**：该 owner 的菜单项 = 本次 labels 事件（不在列表里的项连同触发标记一起
+*    丢弃）。没有单独的删除接口——注销就再注册一个空列表？不，空列表按非法处理（400），
+*    所以"不想要了"只能注册一份新的（或等进程重启）。这是有意的：菜单项生命周期与插件一致。
+*  - **同 owner 内 label 唯一**：重复 label 去重（保留第一次出现的顺序）。
+*  - **点击是闩锁不是队列**：同一项连点两次，查询只看到"点过"一次；不计数、不排序。
+*  - **查询即清空**（读取即消费）：返回后把这些标记全部清成 null。没有确认、没有重投——
+*    查询方没处理完就崩了，这次触发就丢了（对"用户点了一下菜单"这种一次性触发是合理取舍）。
+*  - **一个 owner 只该有一个消费者**：两个进程同时查会互抢（谁先返回谁拿到标记）。
+*
+* 限额（防本机进程把菜单/内存刷爆）：
+*  - owner ≤ 64 字符、label ≤ 32 字符（都允许中文，trim 后非空，禁控制字符）
+*  - 每 owner ≤ 20 项、全局 ≤ 32 个 owner
+*/
+/** owner 长度上限 */
+const OWNER_MAX = 64;
+/** 单个菜单项 label 长度上限（面板宽 150–240px，再长会被省略号截断） */
+const LABEL_MAX = 32;
+/** 每 owner 菜单项上限 */
+const ITEMS_MAX = 20;
+/** 全局 owner 上限 */
+const OWNERS_MAX = 32;
+const MENU_WAIT_MAX_MS = 1e4;
+/** 控制字符（换行/制表等会把菜单布局搞炸，一律拒绝） */
+const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
+/** 校验一个显示用字符串：必须是 string、trim 后非空、不超长、无控制字符 */
+function displayText(value, max) {
+	if (typeof value !== "string") return null;
+	const text = value.trim();
+	if (text === "" || text.length > max || CONTROL_CHARS.test(text)) return null;
+	return text;
+}
+var MenuRegistry = class {
+	constructor() {
+		this.owners = new Map();
+		this.waiters = new Map();
+	}
+	/**
+	* 注册（整体覆盖）：`{ owner, labels: string[] }`。
+	*
+	* 覆盖的粒度是 **owner 的全部菜单项**，不是逐项 upsert：这样注册方每次都能用一份完整列表
+	* 描述"我现在有什么"，不必关心上次注册了什么，也不会留下已下线的僵尸项。
+	*/
+	register(raw) {
+		if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {
+			ok: false,
+			reason: "bad-request",
+			message: "body 必须是 { owner, labels }"
+		};
+		const body = raw;
+		const owner = displayText(body.owner, OWNER_MAX);
+		if (owner === null) return {
+			ok: false,
+			reason: "invalid-owner",
+			message: `owner 必须是 1–${OWNER_MAX} 字符的字符串（禁控制字符）`
+		};
+		const rawLabels = body.labels;
+		if (!Array.isArray(rawLabels) || rawLabels.length === 0) return {
+			ok: false,
+			reason: "invalid-labels",
+			message: "labels 必须是非空数组"
+		};
+		if (rawLabels.length > ITEMS_MAX) return {
+			ok: false,
+			reason: "too-many-items",
+			message: `每个 owner 最多 ${ITEMS_MAX} 项`
+		};
+		const labels = [];
+		for (const rawLabel of rawLabels) {
+			const label = displayText(rawLabel, LABEL_MAX);
+			if (label === null) return {
+				ok: false,
+				reason: "invalid-label",
+				message: `每个 label 必须是 1–${LABEL_MAX} 字符的字符串（禁控制字符）`
+			};
+			if (!labels.includes(label)) labels.push(label);
+		}
+		if (!this.owners.has(owner) && this.owners.size >= OWNERS_MAX) return {
+			ok: false,
+			reason: "too-many-owners",
+			message: `最多 ${OWNERS_MAX} 个 owner`
+		};
+		this.owners.set(owner, new Map(labels.map((label) => [label, null])));
+		return { ok: true };
+	}
+	/**
+	* 清掉一个 owner 的全部菜单项（连它上面未取走的触发标记一起丢）。
+	*
+	* 幂等：owner 本来就不存在 → `removed: 0`，仍算成功——调用方重试注销时不该看到错误。
+	* 挂在该 owner 上的长轮询会被叫醒，醒来后查不到 owner → `null`（路由回 `ok:false` +
+	* `unknown-owner`），调用方据此知道要重新注册。
+	*/
+	clear(rawOwner) {
+		const owner = displayText(rawOwner, OWNER_MAX);
+		if (owner === null) return {
+			ok: false,
+			reason: "invalid-owner",
+			message: `owner 必须是 1–${OWNER_MAX} 字符的字符串（禁控制字符）`
+		};
+		const items = this.owners.get(owner);
+		if (!items) return {
+			ok: true,
+			removed: 0
+		};
+		const removed = items.size;
+		this.owners.delete(owner);
+		const waiters = this.waiters.get(owner);
+		this.waiters.delete(owner);
+		if (waiters) for (const wake of [...waiters]) wake();
+		return {
+			ok: true,
+			removed
+		};
+	}
+	/** 全量快照（写进 state；顺序 = 注册顺序 + 列表顺序，两端渲染顺序与它一致） */
+	snapshot() {
+		const out = [];
+		for (const [owner, items] of this.owners) for (const label of items.keys()) out.push({
+			owner,
+			label
+		});
+		return out;
+	}
+	/**
+	* 渲染端上报一次点击：把该项标成"被 petId 点了"，并叫醒该 owner 上挂着的长轮询。
+	*
+	* `delivered = false`（项不存在：菜单刚好被覆盖/还没注册）**不算错误**——渲染端拿着的是
+	* 上一拍 /state 的快照，这一拍菜单已经变了，属于正常竞态，路由仍回 200。
+	*/
+	click(raw) {
+		const body = raw && typeof raw === "object" ? raw : {};
+		const owner = typeof body.owner === "string" ? body.owner : "";
+		const label = typeof body.label === "string" ? body.label : "";
+		const pet = typeof body.pet === "string" ? body.pet.trim() : "";
+		const items = this.owners.get(owner);
+		if (!items || !items.has(label) || pet === "") return {
+			ok: true,
+			delivered: false
+		};
+		items.set(label, pet);
+		const waiters = this.waiters.get(owner);
+		if (waiters) for (const wake of [...waiters]) wake();
+		return {
+			ok: true,
+			delivered: true
+		};
+	}
+	/**
+	* 查询触发：返回 `{ label: petId | null }` 全量映射，**返回即清空**这些标记。
+	*
+	* `waitMs > 0` 且当下没有任何触发 → 挂起等待（该 owner 被点/超时/被覆盖都会唤醒），
+	* 超时后照常返回全 null 的映射。owner 不存在 → null（路由回 404，调用方据此知道要重新注册）。
+	*/
+	async poll(owner, waitMs) {
+		const items = this.owners.get(owner);
+		if (!items) return null;
+		if (waitMs > 0 && !hasFired(items)) await new Promise((resolve$1) => {
+			const set = this.waiters.get(owner) ?? new Set();
+			this.waiters.set(owner, set);
+			const hold = {};
+			let settled = false;
+			const finish = () => {
+				if (settled) return;
+				settled = true;
+				if (hold.timer !== void 0) clearTimeout(hold.timer);
+				set.delete(finish);
+				if (set.size === 0 && this.waiters.get(owner) === set) this.waiters.delete(owner);
+				resolve$1();
+			};
+			hold.timer = setTimeout(finish, Math.min(waitMs, MENU_WAIT_MAX_MS));
+			set.add(finish);
+		});
+		const current = this.owners.get(owner);
+		if (!current) return null;
+		const out = {};
+		for (const [label, pet] of current) {
+			out[label] = pet;
+			current.set(label, null);
+		}
+		return out;
+	}
+};
+/** 该 owner 当前有没有任意一项被点过 */
+function hasFired(items) {
+	for (const pet of items.values()) if (pet !== null) return true;
+	return false;
+}
+
+//#endregion
+//#region src/host/motion-cue.ts
+const POSITION_MODES = [
+	"instant",
+	"spring",
+	"line"
+];
+/** 夹到 0~1：归一化坐标的合法范围，**越界夹取而不是拒绝**（调用方拿响应里的实际值即可） */
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+/** 有限数字收窄：字符串 / 布尔 / NaN / Infinity 一律不算（配置里也这么判） */
+const finite = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
+/** 模式收窄：只认三个字面量（大小写、空白、非字符串一律不算），不认识返回 `null` */
+const positionMode = (v) => typeof v === "string" && POSITION_MODES.includes(v) ? v : null;
+/**
+* 目标宠物解析（与 ./anim、./broadcast 同一口径）：`?pet=` **必填**且必须真实存在。
+*
+* 两种失败分开报（issue #122 第 1 条「绝不默认退到列表第一只」）：
+* 没给 → `pet-required`；给了但配置里没有 → `unknown-pet`。
+*
+* 收紧前这里是 `requested || active || 'main'`：`active` 是"当前桌宠" = **有效宠物列表第一只**，
+* 而那个落点是用户 /pet 操作的函数——同一句不带 pet 的调用，落点会随用户操作而变，调用方无从
+* 预期。所以整条缺省链已删除，pet 与 /pet-display 的 `id` 一样是必填项。
+*/
+function resolvePet(cfg, requested) {
+	const petId = String(requested ?? "").trim();
+	if (!petId) return {
+		ok: false,
+		reason: "pet-required",
+		message: "pet 必填：要指定操作哪只桌宠"
+	};
+	if (!flattenPetList(cfg).some((p) => String(p.id) === petId)) return {
+		ok: false,
+		reason: "unknown-pet",
+		message: "没有这只桌宠：" + petId
+	};
+	return {
+		ok: true,
+		petId
+	};
+}
+function decidePosition(args) {
+	const x = finite(args.x);
+	if (x === null) return {
+		ok: false,
+		reason: "bad-request",
+		message: "x 必须是有限数字"
+	};
+	const y = finite(args.y);
+	if (y === null) return {
+		ok: false,
+		reason: "bad-request",
+		message: "y 必须是有限数字"
+	};
+	const mode = positionMode(args.mode);
+	if (mode === null) return {
+		ok: false,
+		reason: "bad-request",
+		message: "mode 必须是 instant / spring / line"
+	};
+	let duration = null;
+	if (mode === "line") {
+		const d = finite(args.duration);
+		if (d === null || d < 0) return {
+			ok: false,
+			reason: "bad-request",
+			message: "line 模式的 duration 必须是非负有限数字（毫秒）"
+		};
+		duration = d;
+	}
+	const pet = resolvePet(args.cfg, args.requested);
+	if (!pet.ok) return pet;
+	return {
+		ok: true,
+		petId: pet.petId,
+		x: clamp01(x),
+		y: clamp01(y),
+		mode,
+		duration
+	};
+}
+const positionLeafData = (d) => d.duration === null ? {
+	x: d.x,
+	y: d.y,
+	mode: d.mode
+} : {
+	x: d.x,
+	y: d.y,
+	mode: d.mode,
+	duration: d.duration
+};
+function decideThrow(args) {
+	const angle = finite(args.angle);
+	if (angle === null) return {
+		ok: false,
+		reason: "bad-request",
+		message: "angle 必须是有限数字"
+	};
+	const power = finite(args.power);
+	if (power === null || power <= 0) return {
+		ok: false,
+		reason: "bad-request",
+		message: "power 必须是大于 0 的有限数字"
+	};
+	const pet = resolvePet(args.cfg, args.requested);
+	if (!pet.ok) return pet;
+	return {
+		ok: true,
+		petId: pet.petId,
+		angle,
+		power
+	};
+}
+
+//#endregion
+//#region src/host/playback.ts
+const TERMINAL_STATUSES = [
+	"ended",
+	"failed",
+	"cancelled"
+];
+const REPORTABLE_STATUSES = [
+	"playing",
+	"ended",
+	"failed",
+	"cancelled"
+];
+const PLAYBACK_KEEP_MS = 60 * 1e3;
+const MAX_PLAYBACK_WAIT_MS = 10 * 1e3;
+/** 终态判定用集合 */
+const TERMINAL = new Set(TERMINAL_STATUSES);
+/** 可上报判定用集合 */
+const REPORTABLE = new Set(REPORTABLE_STATUSES);
+const isTerminalStatus = (s) => TERMINAL.has(s);
+const isPlaybackStatus = (s) => s === "accepted" || REPORTABLE.has(s);
+const isReportableStatus = (s) => REPORTABLE.has(s);
+function parsePlaybackPath(rest) {
+	const m = /^playback\/([^/]+)(\/report)?$/.exec(rest);
+	if (!m) return void 0;
+	return {
+		playbackId: m[1] ?? "",
+		isReport: m[2] === "/report"
+	};
+}
+function parseWaitQuery(waitRaw, timeoutRaw) {
+	if (waitRaw === null && timeoutRaw === null) return { kind: "none" };
+	if (waitRaw === null || timeoutRaw === null) return {
+		kind: "error",
+		error: "wait and timeout must be used together"
+	};
+	const wait = waitRaw.split(",").map((s) => s.trim()).filter((s) => s !== "");
+	const bad = wait.find((s) => !isPlaybackStatus(s));
+	if (wait.length === 0 || bad !== void 0) return {
+		kind: "error",
+		error: `invalid wait status: ${bad ?? waitRaw}`
+	};
+	if (!/^\d+$/.test(timeoutRaw)) return {
+		kind: "error",
+		error: `invalid timeout (expect 0..${MAX_PLAYBACK_WAIT_MS})`
+	};
+	const timeoutMs = Number(timeoutRaw);
+	if (!Number.isFinite(timeoutMs) || timeoutMs > MAX_PLAYBACK_WAIT_MS) return {
+		kind: "error",
+		error: `invalid timeout (expect 0..${MAX_PLAYBACK_WAIT_MS})`
+	};
+	return {
+		kind: "ok",
+		wait,
+		timeoutMs
+	};
+}
+var PlaybackStore = class {
+	constructor() {
+		this.records = new Map();
+		this.waiters = new Map();
+		this.activeByPet = new Map();
+		this.seq = 0;
+	}
+	/**
+	* 受理一次点播：建记录（accepted），并把该宠物上一场（若仍在非终态）标为 cancelled/superseded。
+	* @returns 新建的记录（调用方取 playbackId 下发给调用方）
+	*/
+	create(petId, name) {
+		this.sweep();
+		const prev = this.activeByPet.get(petId);
+		if (prev !== void 0) this.finish(prev, "cancelled", "superseded");
+		const now = Date.now();
+		const record = {
+			playbackId: "pb-" + now.toString(36) + "-" + (++this.seq).toString(36),
+			petId,
+			name,
+			status: "accepted",
+			createdAt: now,
+			updatedAt: now
+		};
+		this.records.set(record.playbackId, record);
+		this.activeByPet.set(petId, record.playbackId);
+		return record;
+	}
+	/** 查记录；不存在 / 已过期 → undefined（路由回 404） */
+	get(playbackId) {
+		this.sweep();
+		return this.records.get(playbackId);
+	}
+	/**
+	* 渲染端上报一次状态。
+	*
+	* 幂等与终态保护：**终态之后的上报一律 ignored**（迟到的 ended 不许覆盖 cancelled），
+	* 与当前状态相同的上报同样 ignored。两种情况路由都回 200——对上报方来说"已经这样了"就是成功。
+	*/
+	report(playbackId, status, reason) {
+		this.sweep();
+		const record = this.records.get(playbackId);
+		if (!record) return "unknown";
+		const next = typeof status === "string" ? status : "";
+		if (!isReportableStatus(next)) return "invalid";
+		if (isTerminalStatus(record.status) || record.status === next) return "ignored";
+		const why = typeof reason === "string" && reason !== "" ? reason : void 0;
+		this.finish(playbackId, next, why);
+		return "ok";
+	}
+	/**
+	* 挂起一个等待者。
+	* @returns 取消函数；编号不存在时返回 **undefined**（路由据此立刻回 404，不挂）
+	*/
+	wait(args) {
+		this.sweep();
+		const record = this.records.get(args.playbackId);
+		if (!record) return void 0;
+		const waiter = {
+			wait: new Set(args.wait),
+			onWake: args.onWake,
+			record,
+			timer: void 0
+		};
+		let set = this.waiters.get(args.playbackId);
+		if (!set) {
+			set = new Set();
+			this.waiters.set(args.playbackId, set);
+		}
+		set.add(waiter);
+		waiter.timer = setTimeout(() => {
+			this.dropWaiter(args.playbackId, waiter);
+			waiter.onWake(waiter.record, false);
+		}, Math.max(0, args.timeoutMs));
+		waiter.timer.unref?.();
+		return () => this.dropWaiter(args.playbackId, waiter);
+	}
+	/**
+	* 结束**所有**挂起的等待（插件卸载 / 宿主退出路径）。
+	* 唤醒时 matched=false：调用方据此立刻收尾，而不是留一个悬挂的响应。
+	*/
+	cancelAll() {
+		for (const [playbackId, set] of [...this.waiters]) for (const waiter of [...set]) {
+			this.dropWaiter(playbackId, waiter);
+			waiter.onWake(waiter.record, false);
+		}
+	}
+	/**
+	* 清理过期终态记录（惰性调用：create / get / report 各调一次，记录数很少，成本可忽略）。
+	*
+	* **必须先把还在等它的人叫醒**：等待上限（10s）通常远小于保留时长（60s），但调用方完全可以在
+	* 一条终态记录的保留窗口末尾注册一个等"别的状态"的等待者——那种情况下记录会被清理，
+	* 不唤醒就成了永远等不到的悬挂等待者。
+	*
+	* @param now 注入时间（单测用；缺省取当前时刻）
+	*/
+	sweep(now = Date.now()) {
+		for (const [playbackId, record] of this.records) {
+			if (!isTerminalStatus(record.status)) continue;
+			if (now - record.updatedAt < PLAYBACK_KEEP_MS) continue;
+			const set = this.waiters.get(playbackId);
+			if (set) for (const waiter of [...set]) {
+				this.dropWaiter(playbackId, waiter);
+				waiter.onWake(waiter.record, false);
+			}
+			this.records.delete(playbackId);
+		}
+	}
+	/** 当前记录数（测试 / 观测用） */
+	count() {
+		return this.records.size;
+	}
+	/** 当前等待者数（测试 / 观测用：验证不泄漏） */
+	waiterCount() {
+		let n = 0;
+		for (const set of this.waiters.values()) n += set.size;
+		return n;
+	}
+	/**
+	* 落到一个终态：写状态、更新时间、摘掉"当前活跃"、唤醒在等这个状态的人。
+	* 唯一的状态写入点——等待者唤醒只在这里发生（不需要 diff、不需要比对）。
+	*/
+	finish(playbackId, status, reason) {
+		const record = this.records.get(playbackId);
+		if (!record) return;
+		record.status = status;
+		record.updatedAt = Date.now();
+		if (status === "ended") record.endedAt = record.updatedAt;
+		if (reason !== void 0) record.reason = reason;
+		if (this.activeByPet.get(record.petId) === playbackId) this.activeByPet.delete(record.petId);
+		const set = this.waiters.get(playbackId);
+		if (!set) return;
+		for (const waiter of [...set]) {
+			if (!waiter.wait.has(status)) continue;
+			this.dropWaiter(playbackId, waiter);
+			waiter.onWake(waiter.record, true);
+		}
+	}
+	/** 摘掉一个等待者（清定时器 + 从集合移除 + 空集合回收） */
+	dropWaiter(playbackId, waiter) {
+		if (waiter.timer !== void 0) {
+			clearTimeout(waiter.timer);
+			waiter.timer = void 0;
+		}
+		const set = this.waiters.get(playbackId);
+		if (!set) return;
+		set.delete(waiter);
+		if (set.size === 0) this.waiters.delete(playbackId);
+	}
+};
+
+//#endregion
+//#region src/host/pose.ts
+function normalizePoseInput(raw) {
+	const o = raw && typeof raw === "object" ? raw : null;
+	if (!o) return {
+		ok: false,
+		reason: "bad-request",
+		message: "请求体必须是对象：{ x, y, facing }"
+	};
+	if (typeof o.x !== "number" || !Number.isFinite(o.x)) return {
+		ok: false,
+		reason: "bad-request",
+		message: "x 必须是有限数字（归一化横坐标）"
+	};
+	if (typeof o.y !== "number" || !Number.isFinite(o.y)) return {
+		ok: false,
+		reason: "bad-request",
+		message: "y 必须是有限数字（归一化纵坐标）"
+	};
+	if (o.facing !== "left" && o.facing !== "right") return {
+		ok: false,
+		reason: "bad-request",
+		message: "facing 必须是 left / right"
+	};
+	return {
+		ok: true,
+		pose: {
+			x: o.x,
+			y: o.y,
+			facing: o.facing
+		}
+	};
+}
+var PoseStore = class {
+	constructor(opts) {
+		this.byPet = new Map();
+		this.now = opts?.now ?? Date.now;
+	}
+	/** 覆盖一只宠物的实况（返回落定的快照，方便调用方断言） */
+	set(petId, pose) {
+		const snap = {
+			x: pose.x,
+			y: pose.y,
+			facing: pose.facing,
+			updatedAt: this.now()
+		};
+		this.byPet.set(petId, snap);
+		return snap;
+	}
+	/** 读最近一次实况；从没上报过 → undefined（路由回 `pose-unavailable`） */
+	get(petId) {
+		return this.byPet.get(petId);
+	}
+	/** 当前快照数（测试 / 观测用） */
+	count() {
+		return this.byPet.size;
+	}
+};
+
+//#endregion
+//#region src/host/surface.ts
+const SURFACES = [
+	"web",
+	"desktop",
+	"both",
+	"any"
+];
+const SURFACE_TEXT = "surface 必填：web / desktop / both / any";
+function normalizeSurface(v) {
+	return typeof v === "string" && SURFACES.includes(v) ? v : null;
+}
+function displayCovers(want, display) {
+	switch (want) {
+		case "any": return display === "web" || display === "desktop" || display === "both";
+		case "web": return display === "web" || display === "both";
+		case "desktop": return display === "desktop" || display === "both";
+		case "both": return display === "both";
+	}
+}
+
+//#endregion
 //#region src/host/work-status.ts
+const HOST_WORK_STATUS_STATES = [
+	"thinking",
+	"working",
+	"result",
+	"waiting",
+	"success",
+	"error"
+];
 /**
 * turn/end reason.kind → 状态：
 *   completed → success、错误系（error/max-tokens/timeout）→ error、blocked → waiting（回合被阻塞，等用户确认）；
@@ -1681,6 +2844,10 @@ var WorkStatusStore = class {
 	stateOf(sessionId) {
 		return this.sessions.get(sessionId)?.state;
 	}
+	/** 该会话当前任务详情（无条目 → null） */
+	taskOf(sessionId) {
+		return this.sessions.get(sessionId)?.task ?? null;
+	}
 	/** 写会话状态（保留该会话已有的 task）；同状态且 seq 不更新 → 无变化返回 false（防刷屏） */
 	setState(sessionId, state, seq = 0) {
 		const prev = this.sessions.get(sessionId);
@@ -1735,6 +2902,28 @@ function shouldNotifySession(session) {
 	const depth = header.delegationDepth;
 	if (typeof depth === "number" && Number.isFinite(depth) && depth > 0) return false;
 	return true;
+}
+function sessionIdOf(session) {
+	const s = session;
+	return String(s?.header?.id ?? s?.id ?? "unknown");
+}
+function withSessionId(frame, sessionId) {
+	return sessionId === "unknown" ? frame : {
+		...frame,
+		sessionId
+	};
+}
+function isCompletionTurnEnd(event) {
+	const e = event;
+	return e?.type === "turn/end" && e.data?.reason?.kind === "completed";
+}
+function hasBlockingActivity(activity) {
+	if (!Array.isArray(activity)) return false;
+	for (const item of activity) {
+		const kind = item?.kind;
+		if (kind === "job" || kind === "subagent" || kind === "schedule") return true;
+	}
+	return false;
 }
 function turnEndNotifyKind(kind) {
 	if (kind === "completed") return "completed";
@@ -1864,6 +3053,37 @@ function profileNameFrom(packageRoot$1) {
 
 //#endregion
 //#region src/host/state.ts
+const MAX_STATE_WAIT_MS = 10 * 1e3;
+function parseStateWaitQuery(sinceRaw, timeoutRaw) {
+	if (sinceRaw === null && timeoutRaw === null) return { kind: "none" };
+	if (sinceRaw === null || timeoutRaw === null) return {
+		kind: "error",
+		error: "since and timeout must be used together"
+	};
+	if (!/^\d+$/.test(sinceRaw)) return {
+		kind: "error",
+		error: "invalid since (expect a non-negative integer)"
+	};
+	if (!/^\d+$/.test(timeoutRaw)) return {
+		kind: "error",
+		error: `invalid timeout (expect 0..${MAX_STATE_WAIT_MS})`
+	};
+	const since = Number(sinceRaw);
+	const timeoutMs = Number(timeoutRaw);
+	if (!Number.isFinite(since)) return {
+		kind: "error",
+		error: "invalid since (expect a non-negative integer)"
+	};
+	if (!Number.isFinite(timeoutMs) || timeoutMs > MAX_STATE_WAIT_MS) return {
+		kind: "error",
+		error: `invalid timeout (expect 0..${MAX_STATE_WAIT_MS})`
+	};
+	return {
+		kind: "ok",
+		since,
+		timeoutMs
+	};
+}
 /** 空叶子：counter=0 表示"从未写过"——前端首拉把它当基线，之后 counter 变化才渲染 */
 const emptyLeaf = () => ({
 	counter: 0,
@@ -1875,9 +3095,12 @@ var PollStateStore = class {
 		this.sections = {
 			balance: emptyLeaf(),
 			workStatus: emptyLeaf(),
-			notify: emptyLeaf()
+			notify: emptyLeaf(),
+			config: emptyLeaf(),
+			menu: emptyLeaf()
 		};
 		this.pets = new Map();
+		this.waiters = new Set();
 	}
 	/** 下一个 counter：`Date.now()` 与「上一个 +1」取大——单调、不回退、同毫秒不重复 */
 	next() {
@@ -1885,7 +3108,7 @@ var PollStateStore = class {
 		return this.last;
 	}
 	/**
-	* 写一个全局叶子（余额 / 工作状态 / 通知）。
+	* 写一个全局叶子（余额 / 工作状态 / 通知 / 配置变更信号）。
 	* 每次都整体替换叶子对象（不原地改字段），保证 `read()` 拿到的引用不会半新半旧。
 	*/
 	writeSection(name, data) {
@@ -1893,14 +3116,18 @@ var PollStateStore = class {
 			counter: this.next(),
 			data
 		};
+		this.wakeWaiters();
 	}
-	/** 写一只宠物的叶子（宠物条目不存在则自动建立，两个槽位一起建好，形状恒定） */
+	/** 写一只宠物的叶子（宠物条目不存在则自动建立，**所有槽位一起建好**，形状恒定） */
 	writePet(petId, leaf, data) {
 		let entry = this.pets.get(petId);
 		if (!entry) {
 			entry = {
 				say: emptyLeaf(),
-				anim: emptyLeaf()
+				anim: emptyLeaf(),
+				position: emptyLeaf(),
+				throw: emptyLeaf(),
+				lock: emptyLeaf()
 			};
 			this.pets.set(petId, entry);
 		}
@@ -1908,6 +3135,7 @@ var PollStateStore = class {
 			counter: this.next(),
 			data
 		};
+		this.wakeWaiters();
 	}
 	/**
 	* 当前 S（GET /state 的响应体）。
@@ -1916,11 +3144,516 @@ var PollStateStore = class {
 	*/
 	read() {
 		return {
+			counter: this.last,
 			sections: { ...this.sections },
 			pets: Object.fromEntries(this.pets)
 		};
 	}
+	/**
+	* 挂起一个等待者：直到 `last` 变得不等于 `since`、或超时、或调用方取消。
+	*
+	* 三种收尾对调用方是同一件事（去 `read()` 拿最新状态），所以回调不带参数——
+	* 需要区分"等到了"还是"超时了"的场景并不存在。
+	*
+	* **唤醒发生在写入落定之后**（见两个 write 方法里 `wakeWaiters()` 的位置）：如果放在
+	* `next()` 里，回调会先于 `this.sections[name] = …` 执行，调用方读到的就是**旧状态**。
+	*
+	* @returns 取消函数（清掉超时定时器并摘掉等待者）
+	*/
+	wait(args) {
+		const waiter = {
+			since: args.since,
+			onWake: args.onWake,
+			timer: void 0
+		};
+		this.waiters.add(waiter);
+		waiter.timer = setTimeout(() => {
+			this.dropWaiter(waiter);
+			waiter.onWake();
+		}, Math.max(0, args.timeoutMs));
+		if (process.env.NODE_TEST_CONTEXT === void 0) waiter.timer.unref?.();
+		return () => this.dropWaiter(waiter);
+	}
+	/**
+	* 结束**所有**挂起的等待（插件卸载 / 宿主退出路径）。
+	* 唤醒时不给区分标志：调用方据此立刻收尾，而不是留一个悬挂的响应。
+	*/
+	cancelAll() {
+		for (const waiter of [...this.waiters]) {
+			this.dropWaiter(waiter);
+			waiter.onWake();
+		}
+	}
+	/** 当前等待者数（测试 / 观测用：验证不泄漏） */
+	waiterCount() {
+		return this.waiters.size;
+	}
+	/**
+	* 唤醒所有**已经过期**的等待者（唯一调用点是两个 write 方法，且必须在叶子写定之后）。
+	* `since === this.last` 的跳过：那种等待者是"已经是最新"的，叫醒它等于空转。
+	*/
+	wakeWaiters() {
+		if (this.waiters.size === 0) return;
+		for (const waiter of [...this.waiters]) {
+			if (waiter.since === this.last) continue;
+			this.dropWaiter(waiter);
+			waiter.onWake();
+		}
+	}
+	/** 摘掉一个等待者（清定时器 + 从集合移除） */
+	dropWaiter(waiter) {
+		if (waiter.timer !== void 0) {
+			clearTimeout(waiter.timer);
+			waiter.timer = void 0;
+		}
+		this.waiters.delete(waiter);
+	}
 };
+
+//#endregion
+//#region src/host/time-context.ts
+/**
+* 时段划分表：[起始小时, 时段]，**按起始小时从晚到早**排列——匹配时取第一个不超过当前小时的档。
+* 口径（含起始小时，0–23 全覆盖、不重叠）：
+*   凌晨 0–4 / 清晨 5–6 / 早上 7–8 / 上午 9–10 / 中午 11–12 / 下午 13–16 / 傍晚 17–18 / 晚上 19–22 / 深夜 23
+*/
+const SLOTS = [
+	[23, "深夜"],
+	[19, "晚上"],
+	[17, "傍晚"],
+	[13, "下午"],
+	[11, "中午"],
+	[9, "上午"],
+	[7, "早上"],
+	[5, "清晨"],
+	[0, "凌晨"]
+];
+/** 星期文案：索引 = Date.getDay()（0 = 周日） */
+const WEEKDAYS = [
+	"星期日",
+	"星期一",
+	"星期二",
+	"星期三",
+	"星期四",
+	"星期五",
+	"星期六"
+];
+/** 一天毫秒数（日期算术用 UTC 毫秒，避开本地时区） */
+const DAY_MS = 864e5;
+/** 缺省窗口：提前 3 天预热、本身 1 天、过后 3 天回味 */
+const DEFAULT_AHEAD = 3;
+const DEFAULT_SPAN = 1;
+const DEFAULT_AFTER = 3;
+/** 假期区间的窗口：提前 3 天预热、末尾 3 天说「快结束了」、结束后 3 天回味 */
+const SEASON_AHEAD = 3;
+const SEASON_ENDING_AHEAD = 3;
+const SEASON_AFTER = 3;
+/** 两位补零（只用于时分；月/日刻意不补零——中文日期写「2月17日」比「02月17日」自然） */
+function pad2(n) {
+	return String(n).padStart(2, "0");
+}
+function timeSlotOf(hour) {
+	for (const [start, slot] of SLOTS) if (hour >= start) return slot;
+	return "凌晨";
+}
+function dayKindOf(day) {
+	return day === 0 || day === 6 ? "周末" : "工作日";
+}
+/**
+* ★ 顺序 = 优先级（靠前的先说话）。编排口径：
+*   ① 只有「当天」值得说、且会被邻座节日窗口挤掉的小节（情人节 / 跨年夜 / 愚人节 / 青年节）排在各自邻座之前，
+*      并用 after: 0 掐掉回味，免得反过来压住邻座的当天；
+*   ② 除夕、元宵必须排在春节之前：否则 2/16 会说「明天就是春节」、3/3 会说「春节假期最后一天」，
+*      而不是「今天是除夕」「今天是元宵节」；
+*   ③ 大节与家庭假期（春节 / 中秋 / 国庆 / 元旦 / 端午 / 清明 / 劳动节 / 寒暑假）在中段，
+*      传统节日（七夕 / 中元 / 龙抬头 / 重阳 / 腊八 / 小年）紧随其后并**排在寒暑假之前**——
+*      所以暑假里的七夕、寒假里的小年照常由节日说话；
+*   ④ 纪念日类（妇女节 / 教师节 / 建党节 / 建军节 / 万圣夜 / 平安夜 / 圣诞节）排在最后，
+*      因此暑假期间的建党节（7/1）、建军节（8/1）会让位给「正在放暑假」。
+*   ⑤ 寒暑假区间放在中段之后、纪念日之前：7/1 既是建党节又是暑假首日，按本顺序由「暑假开始了」说话。
+*/
+const PRIORITY = [
+	{
+		kind: "solar",
+		key: "2-14",
+		name: "情人节",
+		after: 0
+	},
+	{
+		kind: "solar",
+		key: "12-31",
+		name: "跨年夜",
+		after: 0
+	},
+	{
+		kind: "solar",
+		key: "4-1",
+		name: "愚人节",
+		after: 0
+	},
+	{
+		kind: "solar",
+		key: "5-4",
+		name: "青年节",
+		ahead: 0,
+		after: 0
+	},
+	{
+		kind: "lunarEve",
+		name: "除夕",
+		ahead: 1,
+		after: 0
+	},
+	{
+		kind: "lunar",
+		key: "1-15",
+		name: "元宵节"
+	},
+	{
+		kind: "lunar",
+		key: "1-1",
+		name: "春节",
+		spoken: "大年初一",
+		span: 15
+	},
+	{
+		kind: "lunar",
+		key: "8-15",
+		name: "中秋节",
+		span: 3,
+		after: 2
+	},
+	{
+		kind: "solar",
+		key: "10-1",
+		name: "国庆节",
+		span: 7
+	},
+	{
+		kind: "solar",
+		key: "1-1",
+		name: "元旦",
+		spoken: "新年第一天",
+		span: 3
+	},
+	{
+		kind: "lunar",
+		key: "5-5",
+		name: "端午节",
+		span: 3
+	},
+	{
+		kind: "solar",
+		key: "4-4",
+		name: "清明节",
+		span: 3,
+		ahead: 1
+	},
+	{
+		kind: "solar",
+		key: "5-1",
+		name: "劳动节",
+		span: 3
+	},
+	{
+		kind: "solar",
+		key: "6-1",
+		name: "儿童节"
+	},
+	{
+		kind: "lunar",
+		key: "7-7",
+		name: "七夕"
+	},
+	{
+		kind: "lunar",
+		key: "7-15",
+		name: "中元节"
+	},
+	{
+		kind: "lunar",
+		key: "2-2",
+		name: "龙抬头"
+	},
+	{
+		kind: "lunar",
+		key: "9-9",
+		name: "重阳节"
+	},
+	{
+		kind: "lunar",
+		key: "12-8",
+		name: "腊八节"
+	},
+	{
+		kind: "lunar",
+		key: "12-23",
+		name: "小年"
+	},
+	{
+		kind: "season",
+		from: "1-20",
+		to: "2-18",
+		name: "寒假"
+	},
+	{
+		kind: "season",
+		from: "7-1",
+		to: "8-29",
+		name: "暑假"
+	},
+	{
+		kind: "solar",
+		key: "3-8",
+		name: "妇女节"
+	},
+	{
+		kind: "solar",
+		key: "9-10",
+		name: "教师节"
+	},
+	{
+		kind: "solar",
+		key: "7-1",
+		name: "建党节"
+	},
+	{
+		kind: "solar",
+		key: "8-1",
+		name: "建军节"
+	},
+	{
+		kind: "solar",
+		key: "10-31",
+		name: "万圣夜"
+	},
+	{
+		kind: "solar",
+		key: "12-24",
+		name: "平安夜",
+		after: 0
+	},
+	{
+		kind: "solar",
+		key: "12-25",
+		name: "圣诞节"
+	}
+];
+/** 公历 / 农历 / 除夕 / 假期区间的索引（模块加载时按 PRIORITY 建一次） */
+const SOLAR_INDEX = new Map();
+const LUNAR_INDEX = new Map();
+const SEASON_ENTRIES = [];
+let LUNAR_EVE;
+PRIORITY.forEach((entry, priority) => {
+	if (entry.kind === "solar") SOLAR_INDEX.set(entry.key, {
+		entry,
+		priority
+	});
+	else if (entry.kind === "lunar") LUNAR_INDEX.set(entry.key, {
+		entry,
+		priority
+	});
+	else if (entry.kind === "lunarEve") LUNAR_EVE = {
+		entry,
+		priority
+	};
+	else SEASON_ENTRIES.push({
+		entry,
+		priority,
+		from: entry.from,
+		to: entry.to
+	});
+});
+/** ICU 中国农历格式器；null = 已判定本环境不可用（不重试、不抛错） */
+let lunarFormatter;
+/**
+* 取 ICU 农历格式器。
+* Intl 在缺少该日历时**不会抛错**，而是静默退回公历——那会让每个月都被当成农历同月同日，
+* 所以这里用 resolvedOptions().calendar 确认它真的解析成了 'chinese'，否则一律判不可用。
+*/
+function getLunarFormatter() {
+	if (lunarFormatter === null) return void 0;
+	if (!lunarFormatter) {
+		const fmt = new Intl.DateTimeFormat("en-u-ca-chinese", {
+			month: "numeric",
+			day: "numeric",
+			year: "numeric"
+		});
+		lunarFormatter = fmt.resolvedOptions().calendar === "chinese" ? fmt : null;
+	}
+	return lunarFormatter ?? void 0;
+}
+/** 年内日序号（0 起，按 UTC 计算，闰年自然正确）——假期区间比较用它 */
+function dayOfYear(date) {
+	return (Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - Date.UTC(date.getFullYear(), 0, 1)) / DAY_MS;
+}
+/** '月-日' → 该年内的日序号（0 起） */
+function dayOfYearOf(year, monthDay) {
+	const [month, day] = monthDay.split("-").map(Number);
+	return (Date.UTC(year, (month ?? 1) - 1, day ?? 1) - Date.UTC(year, 0, 1)) / DAY_MS;
+}
+/**
+* 公历日期 → 农历月日。
+* @returns 农历月/日（闰月 month 为负）；环境不支持农历、取不到月日，或**农历年与公历年不吻合**
+*   （自洽校验，合理范围：公历年或公历年 − 1，用于挡住 ICU 退化时把公历当农历返回）→ undefined。
+*/
+function lunarPartsOf(date) {
+	const fmt = getLunarFormatter();
+	if (!fmt) return void 0;
+	const parts = fmt.formatToParts(date);
+	const pick = (type) => parts.find((p) => p.type === type)?.value;
+	const rawMonth = pick("month");
+	const rawDay = pick("day");
+	const rawYear = pick("relatedYear") ?? pick("year");
+	if (!rawMonth || !rawDay || !rawYear) return void 0;
+	const month = Number.parseInt(rawMonth, 10);
+	const day = Number.parseInt(rawDay, 10);
+	const year = Number.parseInt(rawYear, 10);
+	if (!Number.isFinite(month) || !Number.isFinite(day) || !Number.isFinite(year)) return void 0;
+	const gregorianYear = date.getFullYear();
+	if (year !== gregorianYear && year !== gregorianYear - 1) return void 0;
+	return {
+		month: /bis/i.test(rawMonth) ? -month : month,
+		day
+	};
+}
+/** 当天是否是除夕（腊月最后一天：次日为正月初一即成立，廿九/三十都能认） */
+function isLunarEve(date) {
+	const today = lunarPartsOf(date);
+	if (!today || today.month !== 12) return false;
+	const next = lunarPartsOf(new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1));
+	return Boolean(next && next.month === 1 && next.day === 1);
+}
+/** 某一天命中的全部条目（公历、农历、除夕三类；假期区间不按天查，另行处理） */
+function entriesAt(date) {
+	const out = [];
+	const solar = SOLAR_INDEX.get(date.getMonth() + 1 + "-" + date.getDate());
+	if (solar) out.push(solar);
+	const lunar = lunarPartsOf(date);
+	if (lunar && lunar.month > 0) {
+		const hit = LUNAR_INDEX.get(lunar.month + "-" + lunar.day);
+		if (hit) out.push(hit);
+	}
+	if (LUNAR_EVE && isLunarEve(date)) out.push(LUNAR_EVE);
+	return out;
+}
+/**
+* 相位 → 从句措辞。
+* @param delta 相对**节日起始日**的天数：> 0 = 还有这么多天；0 = 起始当天；< 0 = 已在节期内或过后
+*/
+function phraseOf(entry, delta) {
+	const span = entry.span ?? DEFAULT_SPAN;
+	if (delta > 0) return delta === 1 ? "明天就是" + entry.name : "快要过" + entry.name + "了";
+	if (delta === 0) return "今天是" + (entry.spoken ?? entry.name);
+	const daysIn = -delta;
+	if (daysIn < span) return span - daysIn === 1 ? entry.name + "假期最后一天了" : "还在" + entry.name + "假期里";
+	const rest = daysIn - span;
+	return rest <= 1 ? entry.name + "刚过完" : entry.name + "这么快就过完了";
+}
+/**
+* 条目 → 候选从句（不在自身窗口内则返回 undefined）。
+* @param delta 相对节日起始日的天数
+*/
+function candidateOf(ranked, delta) {
+	const { entry, priority } = ranked;
+	const ahead = entry.ahead ?? DEFAULT_AHEAD;
+	const span = entry.span ?? DEFAULT_SPAN;
+	const after = entry.after ?? DEFAULT_AFTER;
+	const daysIn = -delta;
+	if (delta > 0) {
+		if (delta > ahead) return void 0;
+	} else if (delta < 0) {
+		if (daysIn >= span + after) return void 0;
+	}
+	return {
+		clause: phraseOf(entry, delta),
+		priority
+	};
+}
+/** 假期区间 → 候选从句（不在窗口内返回 undefined） */
+function seasonCandidateOf(date) {
+	const year = date.getFullYear();
+	const today = dayOfYear(date);
+	for (const ranked of SEASON_ENTRIES) {
+		const { entry, priority, from: fromMd, to: toMd } = ranked;
+		const name = entry.name;
+		const from = dayOfYearOf(year, fromMd);
+		const to = dayOfYearOf(year, toMd);
+		if (today < from) {
+			const ahead = from - today;
+			if (ahead > SEASON_AHEAD) continue;
+			return {
+				clause: ahead === 1 ? "明天就放" + name + "了" : "快要放" + name + "了",
+				priority
+			};
+		}
+		if (today <= to) {
+			if (today === from) return {
+				clause: name + "开始了",
+				priority
+			};
+			if (to - today < SEASON_ENDING_AHEAD) return {
+				clause: name + "快结束了",
+				priority
+			};
+			return {
+				clause: "正在放" + name,
+				priority
+			};
+		}
+		const rest = today - to - 1;
+		if (rest >= SEASON_AFTER) continue;
+		return {
+			clause: rest <= 1 ? name + "刚结束" : name + "这么快就过完了",
+			priority
+		};
+	}
+	return void 0;
+}
+/** 条目里最长的预热天数与回看距离（长假 15 天 + 回味 3 天），据此决定扫描窗口 */
+const HOLIDAY_ENTRIES = PRIORITY.filter((e) => e.kind !== "season");
+const MAX_AHEAD = Math.max(...HOLIDAY_ENTRIES.map((e) => e.ahead ?? DEFAULT_AHEAD));
+const MAX_LOOKBACK = Math.max(...HOLIDAY_ENTRIES.map((e) => (e.span ?? DEFAULT_SPAN) - 1 + (e.after ?? DEFAULT_AFTER)));
+/**
+* 节日从句：扫描窗口内枚举每一天命中的条目、算出各自相位与措辞，取**优先级最小**（数组里最靠前）的那个。
+* @returns 如「今天是大年初一」「快要过国庆节了」「还在春节假期里」「正在放暑假」；无节日时 ''
+*/
+function holidayClauseOf(date) {
+	let best;
+	const keep = (candidate) => {
+		if (candidate && (!best || candidate.priority < best.priority)) best = candidate;
+	};
+	for (let delta = -MAX_LOOKBACK; delta <= MAX_AHEAD; delta++) {
+		const day = new Date(date.getFullYear(), date.getMonth(), date.getDate() + delta);
+		for (const ranked of entriesAt(day)) keep(candidateOf(ranked, delta));
+	}
+	keep(seasonCandidateOf(date));
+	return best ? best.clause : "";
+}
+function timeContextOf(date) {
+	if (Number.isNaN(date.getTime())) return "";
+	const day = date.getDay();
+	const hour = date.getHours();
+	const holiday = holidayClauseOf(date);
+	return "【当下】现在是" + date.getFullYear() + "年" + (date.getMonth() + 1) + "月" + date.getDate() + "日" + (WEEKDAYS[day] ?? "星期?") + " " + pad2(hour) + ":" + pad2(date.getMinutes()) + "，" + timeSlotOf(hour) + "，" + dayKindOf(day) + (holiday ? "，" + holiday : "") + "。这只是背景，不必刻意报时，也别句句都提节日——多数时候正常说话就好，真贴切时才顺口带一句。";
+}
+
+//#endregion
+//#region src/host/persona.ts
+function petPersona(conf, pet) {
+	const own = pet.whisperPrompt;
+	if (typeof own === "string" && own.trim() !== "") return own;
+	const entry = conf.whisperPrompt;
+	return typeof entry === "string" ? entry : "";
+}
+function composeSystemPrompt(parts) {
+	const name = String(parts.name || parts.id);
+	const nameLine = name ? "你的名字是“" + name + "”。" : "";
+	const lines = [parts.prompt, nameLine].filter((line) => line !== "");
+	const time = timeContextOf(parts.now);
+	if (time) lines.push(time);
+	return lines.join("\n");
+}
 
 //#endregion
 //#region src/host/index.ts
@@ -1932,6 +3665,14 @@ const PACKAGE_ROOT_ASSETS = join(PACKAGE_ROOT, "assets");
 const PACKAGE_MEMES_DIR = join(PACKAGE_ROOT_ASSETS, "memes");
 /** 路由前缀 */
 const ROUTE_PREFIX = "/dsh-pet-7340";
+/**
+* 宿主是不是 **DSH 桌面应用**（Electron 宿主）。
+*
+* 判据只用 `process.versions.electron`：桌面应用以 `ELECTRON_RUN_AS_NODE=1` 跑宿主（见 dsh.cmd），
+* 该字段照样在；而 `dsh web` / 独立模式都是纯 Node 进程，取不到它。据此把「打开网站」自动分派：
+* 桌面宿主 → 唤起桌面应用窗口（helper 走 `dsh://open`），其余 → 浏览器打开站点。
+*/
+const isDesktopHost = () => Boolean(process.versions.electron);
 /** 不同扩展名对应的 Content-Type 映射 */
 const MIME = {
 	".webm": "video/webm",
@@ -2006,7 +3747,7 @@ function sendJson$1(res, status, obj$1, headers = {}) {
 	res.end(body);
 }
 /** 发送纯文本响应（素材 404/400 等显式错误文案） */
-function sendText$1(res, status, body) {
+function sendText(res, status, body) {
 	res.writeHead(status, { "content-type": "text/plain; charset=utf-8" });
 	res.end(body);
 }
@@ -2051,17 +3792,200 @@ function apply(ctx) {
 		return [memesUserRoot, PACKAGE_MEMES_DIR];
 	};
 	const state = new PollStateStore();
+	const menuRegistry = new MenuRegistry();
+	ctx.provide("petApi7340", { balance: {
+		register: registerBalanceProvider,
+		list: listBalanceProviders
+	} });
+	const playback = new PlaybackStore();
 	const workStatus = new WorkStatusStore();
+	/** 外部写入槽：固定会话 id，最后写入者生效；不做多写者仲裁/租约/会话管理 */
+	const EXTERNAL_WORK_SESSION = "api";
+	let externalWorkSeq = 0;
+	const WORK_STATE_GAP_MS = 5e3;
+	/** 忙碌档：只有这两个档位之间的互切算"抖动"，其余档位变化一律立即写 */
+	const isBusyTier = (s) => s === "working" || s === "result";
 	let publishedWork = "\0";
+	let publishedState = null;
+	let publishedTask = null;
+	let publishedWorkAt = 0;
+	let workFlushTimer = null;
 	const publishWorkStatus = () => {
 		const snap = workStatus.snapshot();
 		const key = String(snap.state) + "\0" + String(snap.task);
 		if (key === publishedWork) return;
+		const churn = snap.task === publishedTask && isBusyTier(publishedState) && isBusyTier(snap.state);
+		const wait = WORK_STATE_GAP_MS - (Date.now() - publishedWorkAt);
+		if (churn && wait > 0) {
+			workFlushTimer ??= setTimeout(() => {
+				workFlushTimer = null;
+				publishWorkStatus();
+			}, wait);
+			return;
+		}
+		if (workFlushTimer !== null) {
+			clearTimeout(workFlushTimer);
+			workFlushTimer = null;
+		}
 		publishedWork = key;
+		publishedState = snap.state;
+		publishedTask = snap.task;
+		publishedWorkAt = Date.now();
 		state.writeSection("workStatus", {
 			state: snap.state,
 			task: snap.task
 		});
+	};
+	const lock = new LockStore({ onChange: (petId, data) => state.writePet(petId, "lock", data) });
+	const pose = new PoseStore();
+	/**
+	* `?surface=` 的**参数级**校验（缺省 / 非法 → `bad-request`）。放在读盘之前：必然失败的请求
+	* 不碰磁盘（与 pet 空串同一处境）。通过则给出收窄后的取值。
+	*/
+	const surfaceParam = (params) => {
+		const want = normalizeSurface(params.get("surface"));
+		if (want !== null) return {
+			ok: true,
+			want
+		};
+		return {
+			ok: false,
+			res: {
+				kind: "json",
+				status: 200,
+				obj: {
+					ok: false,
+					reason: "bad-request",
+					message: SURFACE_TEXT
+				}
+			}
+		};
+	};
+	/**
+	* `?surface=` 与该宠物 `display` 的对齐校验（issue #122 第 1 条）：不满足 → `pet-not-displayed`
+	* + **实际 display 原样回给调用方**（调用方据此一眼知道该怎么办），放行回 null。
+	*
+	* 这是**前置校验**，不是按面分发——指令照旧写进同一个叶子、两端内容照旧完全一致
+	* （要"网页播 A、桌面播 B"用两只宠物表达，见 ./surface 的第 1 条边界）。
+	*/
+	const surfaceMismatch = (pet, petId, want) => {
+		const display = String(pet.display ?? "");
+		if (displayCovers(want, display)) return null;
+		return {
+			kind: "json",
+			status: 200,
+			obj: {
+				ok: false,
+				reason: "pet-not-displayed",
+				message: petId + " 的显示模式是 " + display + "，不满足 surface=" + want,
+				display
+			}
+		};
+	};
+	/**
+	* 决策函数**之后**的 surface 校验（`/anim`、`/broadcast`、`/bubble/clear`、`/position`、
+	* `/throw` 共用）：这五条的 pet 解析住在各自的决策模块里，所以这里按 `petId` 再查一次实例取
+	* `display`（配置已在手，成本可忽略）。放行回 null。
+	*
+	* 位置与 `lockBlocked` 一致——都在决策函数之后、任何副作用之前，所以校验顺序是
+	* 「body → pet → surface → 锁」。
+	*/
+	const surfaceBlocked = (cfg, petId, params) => {
+		const p = surfaceParam(params);
+		if (!p.ok) return p.res;
+		return surfaceMismatch(findPetInstance(cfg, petId)?.pet ?? {}, petId, p.want);
+	};
+	/**
+	* 路由层的 pet 参数解析（`/lock`、`/lock/release`、`/whisper`、`/chat` 用——这四条没有独立决策层；
+	* `/anim`、`/broadcast`、`/bubble/clear`、`/position`、`/throw` 的同一套校验住在各自的决策模块里，
+	* 口径与这里逐字一致）：**必填**且必须真实存在。
+	*
+	* 两种失败分开报（issue #122 第 1 条「绝不默认退到列表第一只」）：
+	* 没给 / 空串 → `pet-required`；给了但配置里没有 → `unknown-pet`。
+	*
+	* 收紧前这四条是 `get('pet') || resolveActivePetId() || 'main'`：缺省会落到"当前桌宠"
+	* = **有效宠物列表第一只**（`/whisper`、`/chat` 更彻底——`?? ''` 直接空串：人设按 main 条目取、
+	* 生成结果写进没人消费的 `pets[""].say`，还回 ok:true——钱花了、话丢了、调用方以为成功）。
+	* 落点随用户 /pet 操作而变、失败也不报，第三方无从预期，故整条缺省链已删除：
+	* pet 与 `/pet-display` 的 `id` 一样是必填项。
+	*
+	* `cfg` 传**惰性读取**：pet 空串时不必碰磁盘（与 /broadcast 的 text/duration 同一处境，
+	* routes.test.ts 里"配置不可达"那一组断言正是靠这个顺序钉住的）。
+	*
+	* `opts.surface` = 是否同时校验 `?surface=`。**只对会产生渲染端可见效果的端点开**：
+	* `/lock`、`/whisper`、`/chat` 的 POST。`/lock/release` 与 `/chat` 的 GET 不开——
+	* 释放必须永远能成功（否则宠物中途被隐藏就撤不掉锁），读记忆与显示在哪一端无关。
+	*/
+	const requirePet = (params, cfg, opts) => {
+		const fail$1 = (reason, message) => ({
+			ok: false,
+			res: {
+				kind: "json",
+				status: 200,
+				obj: {
+					ok: false,
+					reason,
+					message
+				}
+			}
+		});
+		const petId = String(params.get("pet") ?? "").trim();
+		if (!petId) return fail$1("pet-required", "pet 必填：要指定操作哪只桌宠");
+		let want = null;
+		if (opts?.surface === true) {
+			const p = surfaceParam(params);
+			if (!p.ok) return {
+				ok: false,
+				res: p.res
+			};
+			want = p.want;
+		}
+		const found = findPetInstance(cfg(), petId);
+		if (!found) return fail$1("unknown-pet", "没有这只桌宠：" + petId);
+		if (want !== null) {
+			const mismatch = surfaceMismatch(found.pet, petId, want);
+			if (mismatch) return {
+				ok: false,
+				res: mismatch
+			};
+		}
+		return {
+			ok: true,
+			petId,
+			entry: found.entry,
+			conf: found.conf,
+			pet: found.pet
+		};
+	};
+	/**
+	* 动作端点的占用门禁（`/anim`、`/broadcast`、`/position`、`/throw`、`/bubble/clear` 共用）：
+	* 放行回 null，否则直接给出路由应答。抽成一个函数，是为了让"哪些接口受占用约束"只有一处可查。
+	*
+	* **无锁时按「有没有带 `lock`」分流**：没带 → 返回 null（既有调用方一个字都不用改）；
+	* 带了但查不到锁 → `lock-lost`，旧租约不能继续执行迟到请求。
+	* 没带这一支就是「不传 lock = 现状零变化」（issue #122 最重要的边界）的落点。
+	*
+	* 位置放在决策函数**之后**：`petId` 要先解析出来才知道问哪只宠物的锁，而这时还没有任何副作用
+	* （没写叶子、没建播放记录、没调模型）。所以"先判锁再干活"这个意图是满足的，只是与
+	* body 校验的先后为「body → pet → 锁」——两者都不合法时报的是 body 的错。
+	*/
+	const lockBlocked = (petId, params) => {
+		const g = lock.gate(petId, String(params.get("lock") ?? ""));
+		if (g.ok) return null;
+		return {
+			kind: "json",
+			status: 200,
+			obj: g.reason === "lock-lost" ? {
+				ok: false,
+				reason: g.reason,
+				cause: g.cause,
+				message: g.message
+			} : {
+				ok: false,
+				reason: g.reason,
+				message: g.message
+			}
+		};
 	};
 	const pushNotifyFrame = (frame) => {
 		state.writeSection("notify", frame);
@@ -2090,6 +4014,33 @@ function apply(ctx) {
 			}
 		}, TERMINAL_KEEP_MS);
 		terminalTimers.set(sessionId, t);
+	};
+	const NOTIFY_ACTIVITY_DELAY_MS = 1500;
+	/** 每会话一个待查定时器（同会话连续收尾只保留最后一次：后到覆盖先到，与单槽帧同语义） */
+	const notifyActivityTimers = new Map();
+	/** 这条会话是否还有在跑的活；判据不可用一律 false＝放行 */
+	const sessionHasRunningWork = async (sessionId) => {
+		const waterfall = ctx.waterfall;
+		if (typeof waterfall !== "function") return false;
+		try {
+			const activity = await waterfall.call(ctx, "workspace/session-activity", { sessionId }, () => Promise.resolve([]));
+			return hasBlockingActivity(activity);
+		} catch {
+			return false;
+		}
+	};
+	/** 排一个活动门定时器：到点确认空闲才推这一帧 */
+	const scheduleCompletionNotify = (sessionId, event) => {
+		const prev = notifyActivityTimers.get(sessionId);
+		if (prev !== void 0) clearTimeout(prev);
+		notifyActivityTimers.set(sessionId, setTimeout(() => {
+			notifyActivityTimers.delete(sessionId);
+			(async () => {
+				if (await sessionHasRunningWork(sessionId)) return;
+				const frame = reduceNotifyFrame(event);
+				if (frame) pushNotifyFrame(withSessionId(frame, sessionId));
+			})();
+		}, NOTIFY_ACTIVITY_DELAY_MS));
 	};
 	let activePetId = "";
 	const lastWhisperAt = new Map();
@@ -2126,62 +4077,80 @@ function apply(ctx) {
 		chatQueue = run$1.then(() => void 0, () => void 0);
 		return run$1;
 	};
-	/** 某宠物的最终人设 system：所属条目（非文件宠物 → main 条目）的 whisperPrompt（合并器已填默认）
-	*  + 无条件追加一句名字声明（name，缺失已按 id）——碎碎念与对话共用同一拼装。 */
-	const petSystemPrompt = (petId, cfg) => {
-		const found = findPetInstance(cfg, petId);
-		const conf = found ? found.conf : cfg.main ?? {};
-		const prompt = typeof conf.whisperPrompt === "string" ? conf.whisperPrompt : "";
-		const name = found ? String(found.pet.name || found.pet.id || petId) : petId;
-		const nameLine = "你的名字是“" + name + "”。";
-		return prompt ? prompt + "\n" + nameLine : nameLine;
-	};
-	/** 对话记忆轮数（1 轮 = 1 问 1 答）：所属条目/主条目的 chatMemoryRounds（合并器已填默认非负数字） */
-	const memoryRounds = (petId, cfg) => {
-		const found = findPetInstance(cfg, petId);
-		const v = Number(found?.conf.chatMemoryRounds ?? cfg.main?.chatMemoryRounds);
+	/** 某宠物的最终人设 system：**实例级** `pets[].whisperPrompt` 优先，没写回落到所属条目
+	*  （写在该条目 `pets` 里的实例 → 那个条目；主配置的实例 → `main`）的 whisperPrompt（合并器已填默认）。
+	*  拼装本身在 ./persona（纯函数、有单测）：人设正文 + 一句名字声明（name，缺失已按 id）+ 一行时间背景
+	*  （日期/星期/时刻/时段/工作日或周末/节日）——碎碎念与对话共用同一份拼装。
+	*  时间每次现算（这里传 new Date()），所以拿到的永远是**当前**时刻，不需要额外的刷新机制。
+	*
+	*  收 `findPetInstance` 的**命中结果**而不是 `(petId, cfg)`：两个调用方都已经解析过了，这里再查一次
+	*  只会多出一处"查不到就兜底 main"的不可达分支。 */
+	const petSystemPrompt = (found) => composeSystemPrompt({
+		prompt: petPersona(found.conf, found.pet),
+		name: String(found.pet.name ?? ""),
+		id: String(found.pet.id ?? ""),
+		now: new Date()
+	});
+	/** 对话记忆轮数（1 轮 = 1 问 1 答）：该宠物**所属条目**的 chatMemoryRounds（合并器已填默认非负数字）。
+	*  同样收**已解析的条目配置**：两个调用方都已经拿到 `findPetInstance` 的结果。 */
+	const memoryRounds = (conf) => {
+		const v = Number(conf.chatMemoryRounds);
 		return Number.isFinite(v) && v >= 0 ? Math.floor(v) : 5;
 	};
 	/** 生成/返回某宠物的一句碎碎念（周期 GET 与菜单手动触发共用的同一逻辑）：
-	*  每只宠物独立生成（所属条目的人设）。生成成功就写进 S 的 pets.<id>.say——
+	*  每只宠物独立生成（人设 = 它自己的 whisperPrompt，没写回落到所属条目）。生成成功就写进 S 的 pets.<id>.say——
 	*  碎碎念 / 命令气泡 / 对话回复在前端本来就是**同一条展示链路**（同一个 triggerWhisper、
 	*  同一个气泡槽、同一批 events.whisper 动画），所以合并成同一个叶子；"周期内不重复"由
 	*  调度侧的 lastWhisperAt 保证，不再需要一份 whisperCache（多端共享也由 S 天然保证）。
-	*  配图（whisperImageEnabled 开启时）：从表情包池**随机抽 1 张**，把描述注入指令并随文本一起写。 */
+	*  配图（whisperImageEnabled 开启时）：从表情包池**随机抽 1 张**，把描述注入指令并随文本一起写。
+	*
+	*  失败**带回真实 reason**（含 `unknown-pet`：目标宠物在"校验那次读"与这里之间被删掉了）。
+	*  成功**带回生成的文本**（与同时写进叶子的那份完全相同）——调用方拿到就不必再拉一拍 /state。 */
 	const publishWhisper = async (petId) => {
 		const cfg = readAllConfig(configPaths);
 		const found = findPetInstance(cfg, petId);
-		const conf = found ? found.conf : cfg.main ?? {};
-		const entry = found ? found.entry : "main";
-		const system = petSystemPrompt(petId, cfg);
-		const meme = conf.whisperImageEnabled === true ? pickMeme(readMemePool(conf.memes, memeDirsFor(entry))) : void 0;
-		const result = await generateWhisper(ctx, system, meme, configuredModel(conf, "whisperModel"));
+		if (!found) return {
+			ok: false,
+			reason: "unknown-pet",
+			message: "没有这只桌宠：" + petId
+		};
+		const system = petSystemPrompt(found);
+		const meme = found.conf.whisperImageEnabled === true ? pickMeme(readMemePool(found.conf.memes, memeDirsFor(found.entry))) : void 0;
+		const result = await generateWhisper(ctx, system, meme, configuredModel(found.conf, "whisperModel"));
 		if (!result.ok) {
 			console.warn("[dsh-pet] 碎碎念生成失败 pet=" + petId + " reason=" + result.reason + (result.message ? " " + result.message : ""));
-			return false;
+			return result;
 		}
 		state.writePet(petId, "say", result.image ? {
 			text: result.text,
 			image: result.image
 		} : { text: result.text });
-		return true;
+		return {
+			ok: true,
+			text: result.text,
+			...result.image ? { image: result.image } : {}
+		};
 	};
 	/** 与某只宠物对话：截取最近记忆 → 生成回复 → 写入记忆 → 把回复写进 S 的 pets.<id>.say。
 	*  供 POST /chat（动作端点）与 /chat 命令共用同一条路径（锁内读写，防两端交错写盘）。
-	*  配图（chatImageEnabled 开启时）：把表情包清单交给模型按语境选一张，命中池内才随回复写回。 */
+	*  配图（chatImageEnabled 开启时）：把表情包清单交给模型按语境选一张，命中池内才随回复写回。
+	*  成功**带回回复文本**（与同时写进叶子的那份完全相同）——调用方拿到就不必再拉一拍 /state。 */
 	const chatWithPet = async (petId, text) => withMemoryLock(async () => {
 		const cfg = readAllConfig(configPaths);
-		const rounds = memoryRounds(petId, cfg);
 		const found = findPetInstance(cfg, petId);
-		const conf = (found ?? { conf: cfg.main ?? {} }).conf;
-		const system = petSystemPrompt(petId, cfg);
-		const pool = conf.chatImageEnabled === true ? limitPool(readMemePool(conf.memes, memeDirsFor(found?.entry ?? "main")), Number(conf.chatImageLimit)) : [];
+		if (!found) return {
+			ok: false,
+			reason: "unknown-pet",
+			message: "没有这只桌宠：" + petId
+		};
+		const rounds = memoryRounds(found.conf);
+		const system = petSystemPrompt(found);
+		const pool = found.conf.chatImageEnabled === true ? limitPool(readMemePool(found.conf.memes, memeDirsFor(found.entry)), Number(found.conf.chatImageLimit)) : [];
 		const mem = await readMemory();
-		const bucketKey = found?.entry ?? petId;
-		const bucket = mem[bucketKey] ??= {};
+		const bucket = mem[found.entry] ??= {};
 		const entry = bucket[petId] ??= { messages: [] };
 		const list = sliceMemoryRounds(entry.messages, rounds);
-		const generated = await generateChat(ctx, system, list, text, pool, configuredModel(conf, "chatModel"));
+		const generated = await generateChat(ctx, system, list, text, pool, configuredModel(found.conf, "chatModel"));
 		if (!generated.ok) return generated;
 		const now = Date.now();
 		entry.messages.push({
@@ -2199,7 +4168,11 @@ function apply(ctx) {
 			text: generated.text,
 			image: generated.image
 		} : { text: generated.text });
-		return { ok: true };
+		return {
+			ok: true,
+			text: generated.text,
+			...generated.image ? { image: generated.image } : {}
+		};
 	});
 	/**
 	* 当前生效宠物列表 = readAllConfig 成品拍平（main + 文件宠物全部条目；合并器已保证 id 唯一、
@@ -2212,9 +4185,10 @@ function apply(ctx) {
 		const n = Number(ers?.balance);
 		return Number.isFinite(n) && n > 0 ? n : 1800;
 	};
-	/** 碎碎念周期（秒）：该宠物**所属条目**的 eventsRefreshSec.whisper（合并器已填默认；非法兜底 300） */
-	const whisperPeriodSec = (cfg, petId) => {
-		const conf = (findPetInstance(cfg, petId) ?? { conf: cfg.main ?? {} }).conf;
+	/** 碎碎念周期（秒）：该宠物**所属条目**的 eventsRefreshSec.whisper（合并器已填默认；非法兜底 300）。
+	*  收**已解析的条目配置**：唯一调用方是周期调度，而它的 `petId` 就是从**同一份 cfg** 拍平出来的，
+	*  所以这里再查一次只会多出一处"查不到就兜底 main"的不可达分支。 */
+	const whisperPeriodSec = (conf) => {
 		const ers = conf.eventsRefreshSec;
 		const n = Number(ers?.whisper);
 		return Number.isFinite(n) && n > 0 ? n : 300;
@@ -2301,6 +4275,14 @@ function apply(ctx) {
 		return n || String(pet.id ?? "");
 	};
 	let hasDesktopPet = false;
+	/**
+	* 桌面模式是否**曾经**成功启动过（粘性，仅本插件生命周期内有效）。
+	* 把「没有桌面宠物就不启动」放宽成「从来没有过桌面宠物才不启动」：桌面宠物被全部改成
+	* web/none 之后，Helper 仍会带着空宠物列表重启并常驻——因为托盘（桌面端显示开关）是此时
+	* 唯一还能把宠物切回桌面的入口，Helper 一退它就没了。
+	* 纯浏览器用户（从未有过桌面宠物）不受影响：照旧不探测、不下载、不拉起 Electron。
+	*/
+	let desktopModeEverActive = false;
 	const refreshDesktop = () => {
 		hasDesktopPet = false;
 		try {
@@ -2330,7 +4312,7 @@ function apply(ctx) {
 	/** 用已确认存在的 Electron 路径拉起桌面 Helper（每只桌面宠物一个局部小窗口）。 */
 	const launchHelper = (electronPath) => {
 		if (helper || disposed) return;
-		if (!hasDesktopPet) return;
+		if (!hasDesktopPet && !desktopModeEverActive) return;
 		const port = typeof ctx.webServer?.port === "number" ? ctx.webServer.port : 0;
 		if (!port || port <= 0) {
 			if (!startRetryTimer) {
@@ -2343,13 +4325,15 @@ function apply(ctx) {
 			return;
 		}
 		const origin = `http://127.0.0.1:${port}`;
+		const siteUrl = ctx.connection.authenticatedUrl(origin);
 		const configUrl = `${origin}${ROUTE_PREFIX}/config`;
 		helper = new HelperProcess({
 			electronPath,
 			env: {
 				DSH_PET_CONFIG_URL: configUrl,
+				DSH_PET_SITE_URL: siteUrl,
+				DSH_PET_OPEN_TARGET: isDesktopHost() ? "desktop" : "site",
 				DSH_PET_SCALE: "1",
-				DSH_PET_HOST_EXECUTABLE: process.execPath,
 				DSH_PET_BRIDGE: "1",
 				DSH_PET_PETS: JSON.stringify(desktopPetList())
 			},
@@ -2367,6 +4351,12 @@ function apply(ctx) {
 					contentType: "text/plain; charset=utf-8",
 					body: result.body
 				};
+				if (result.kind === "none") return {
+					id: req.id,
+					status: 204,
+					contentType: "text/plain; charset=utf-8",
+					body: ""
+				};
 				return {
 					id: req.id,
 					status: result.status,
@@ -2377,6 +4367,7 @@ function apply(ctx) {
 		}, ctx.logger ?? console);
 		try {
 			helper.start();
+			desktopModeEverActive = true;
 			ctx.logger?.info?.(`dsh-pet desktop helper started (config: ${configUrl})`);
 		} catch (e) {
 			ctx.logger?.warn?.(`dsh-pet desktop helper start failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -2387,7 +4378,7 @@ function apply(ctx) {
 	*  （不 spawn 子进程，CLI node 与 DSH Desktop 均适用），下载完成后自动拉起。 */
 	const startHelper = () => {
 		if (helper || electronEnsure || disposed) return;
-		if (!hasDesktopPet) return;
+		if (!hasDesktopPet && !desktopModeEverActive) return;
 		if (!hasGraphicalDisplay()) {
 			if (!displayWarned) {
 				displayWarned = true;
@@ -2454,8 +4445,10 @@ function apply(ctx) {
 	const userRootFor = (ext) => join(thumbUserRoot, animSubdirFor(ext));
 	/** 单次业务路由(WebServer 注册 → HTTP 落盘 / 桌面 Helper 管道 → scheme 应答,共用同一份实现):
 	*  输入只需 rawUrl(/dsh-pet-7340/... + 查询) + method + body 文本;返回 RouteResult(JSON/文本/文件),
-	*  消费方各自落盘——业务逻辑只有一份,两端天然一致(硬契约:浏览器/桌面行为严格对齐)。 */
-	const handlePetRoute = async (rawUrl, method, body) => {
+	*  消费方各自落盘——业务逻辑只有一份,两端天然一致(硬契约:浏览器/桌面行为严格对齐)。
+	*  signal（可选）：调用方断开时**中止挂起等待**（只有 /playback 的 wait 分支会用到）。
+	*  管道侧不传——桌面渲染端不查 /playback；HTTP 侧由注册处按 res 的 close 触发。 */
+	const handlePetRoute = async (rawUrl, method, body, signal) => {
 		const url = new URL(rawUrl, "http://localhost");
 		const rest = decodeURIComponent(url.pathname.slice(ROUTE_PREFIX.length + 1));
 		if (rest === "config") {
@@ -2463,7 +4456,8 @@ function apply(ctx) {
 				return {
 					kind: "json",
 					status: 200,
-					obj: readAllConfig(configPaths)
+					obj: readAllConfig(configPaths),
+					headers: { "cache-control": "no-cache, no-store" }
 				};
 			} catch (e) {
 				return {
@@ -2528,6 +4522,82 @@ function apply(ctx) {
 				obj: { error: "method not allowed" }
 			};
 		}
+		if (rest === "pet-display") {
+			if (method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			const fail$1 = (reason, message) => ({
+				kind: "json",
+				status: 200,
+				obj: {
+					ok: false,
+					reason,
+					message
+				}
+			});
+			let payload;
+			try {
+				payload = JSON.parse(body ?? "");
+			} catch {
+				return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid JSON body" }
+				};
+			}
+			const petId$1 = typeof payload.id === "string" ? payload.id.trim() : "";
+			const nextDisplay = String(payload.display ?? "");
+			if (!petId$1) return fail$1("pet-required", "pet 必填：要指定操作哪只桌宠");
+			if (!PET_DISPLAY_SET.has(nextDisplay)) return fail$1("bad-request", `display 必须是 web / desktop / both / none：${nextDisplay}`);
+			let merged;
+			try {
+				merged = readAllConfig(configPaths);
+			} catch (e) {
+				return fail$1("generate-error", e instanceof Error ? e.message : String(e));
+			}
+			const hit = findPetInstance(merged, petId$1);
+			if (!hit) return fail$1("unknown-pet", `没有这只桌宠：${petId$1}`);
+			let layerPath;
+			let layerDir;
+			let existing;
+			if (hit.entry === "main") {
+				layerPath = userConfigPath;
+				layerDir = userRoot;
+				existing = readUserConfig(configPaths);
+			} else {
+				const file$1 = readPetConfigEntry(configPaths, hit.entry);
+				if (!file$1) return fail$1("generate-error", `宠物条目配置文件找不到：${hit.entry}`);
+				layerPath = file$1.path;
+				layerDir = petConfigDir;
+				existing = file$1.raw;
+			}
+			const layerPets = Array.isArray(hit.conf.pets) ? hit.conf.pets : [];
+			const pets = layerPets.map((p) => String(p.id) === petId$1 ? {
+				...p,
+				display: nextDisplay
+			} : p);
+			const clean = saveUserConfig({ pets }, existing);
+			if (!clean) return fail$1("bad-request", "宠物配置非法");
+			try {
+				await mkdir(layerDir, { recursive: true });
+				await writeFile(layerPath, JSON.stringify(clean, null, 2), "utf8");
+			} catch (e) {
+				return fail$1("generate-error", e instanceof Error ? e.message : String(e));
+			}
+			state.writeSection("config", {});
+			if (nextDisplay === "none") lock.release({
+				petId: petId$1,
+				force: true
+			});
+			syncDesktop();
+			return {
+				kind: "json",
+				status: 200,
+				obj: readAllConfig(configPaths)
+			};
+		}
 		if (rest === "reload") {
 			if (method !== "POST") return {
 				kind: "json",
@@ -2558,6 +4628,110 @@ function apply(ctx) {
 				profile: profileNameFrom(PACKAGE_ROOT) ?? ""
 			}
 		};
+		if (rest === "menu/item") {
+			if (method === "DELETE") {
+				const result$1 = menuRegistry.clear(url.searchParams.get("owner") ?? "");
+				if (!result$1.ok) return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: result$1.reason,
+						message: result$1.message
+					}
+				};
+				state.writeSection("menu", { items: menuRegistry.snapshot() });
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: true,
+						removed: result$1.removed
+					}
+				};
+			}
+			if (method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			let parsed;
+			try {
+				parsed = JSON.parse(body ?? "");
+			} catch {
+				return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid JSON body" }
+				};
+			}
+			const result = menuRegistry.register(parsed);
+			if (!result.ok) return {
+				kind: "json",
+				status: 200,
+				obj: {
+					ok: false,
+					reason: result.reason,
+					message: result.message
+				}
+			};
+			state.writeSection("menu", { items: menuRegistry.snapshot() });
+			return {
+				kind: "json",
+				status: 200,
+				obj: { ok: true }
+			};
+		}
+		if (rest === "menu/events") {
+			if (method !== "GET") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			const owner = url.searchParams.get("owner") ?? "";
+			const rawWait = Number(url.searchParams.get("wait") ?? "0");
+			const waitMs = Number.isFinite(rawWait) && rawWait > 0 ? Math.min(rawWait, MENU_WAIT_MAX_MS) : 0;
+			const events = await menuRegistry.poll(owner, waitMs);
+			if (events === null) return {
+				kind: "json",
+				status: 200,
+				obj: {
+					ok: false,
+					reason: "unknown-owner",
+					message: "这个 owner 没有注册，重新注册即可"
+				}
+			};
+			return {
+				kind: "json",
+				status: 200,
+				obj: {
+					ok: true,
+					events
+				}
+			};
+		}
+		if (rest === "menu/click") {
+			if (method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			let parsed;
+			try {
+				parsed = JSON.parse(body ?? "");
+			} catch {
+				return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid JSON body" }
+				};
+			}
+			return {
+				kind: "json",
+				status: 200,
+				obj: menuRegistry.click(parsed)
+			};
+		}
 		if (rest === "models") {
 			if (method !== "GET") return {
 				kind: "json",
@@ -2606,11 +4780,118 @@ function apply(ctx) {
 				status: 405,
 				obj: { error: "method not allowed" }
 			};
+			const headers = { "cache-control": "no-cache, no-store" };
+			const parsed = parseStateWaitQuery(url.searchParams.get("since"), url.searchParams.get("timeout"));
+			if (parsed.kind === "error") return {
+				kind: "json",
+				status: 400,
+				obj: { error: parsed.error }
+			};
+			const current = state.read();
+			if (parsed.kind === "none" || current.counter !== parsed.since) return {
+				kind: "json",
+				status: 200,
+				obj: current,
+				headers
+			};
+			const since = parsed.since;
+			return await new Promise((resolveWait) => {
+				let settled = false;
+				/** 收尾：只认第一次（唤醒 / 超时 / 取消 / 调用方断开 都可能先后到达） */
+				const settle = (result) => {
+					if (settled) return;
+					settled = true;
+					resolveWait(result);
+				};
+				const cancel = state.wait({
+					since,
+					timeoutMs: parsed.timeoutMs,
+					onWake: () => settle({
+						kind: "json",
+						status: 200,
+						obj: state.read(),
+						headers
+					})
+				});
+				const onAbort = () => {
+					cancel();
+					settle({ kind: "none" });
+				};
+				if (signal?.aborted) {
+					onAbort();
+					return;
+				}
+				signal?.addEventListener("abort", onAbort, { once: true });
+			});
+		}
+		if (rest === "work-status") {
+			if (method === "DELETE") {
+				if (workStatus.clear(EXTERNAL_WORK_SESSION)) publishWorkStatus();
+				return {
+					kind: "text",
+					status: 204,
+					body: ""
+				};
+			}
+			if (method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			if (Buffer.byteLength(body ?? "", "utf8") > 8 * 1024) return {
+				kind: "json",
+				status: 413,
+				obj: { error: "body too large" }
+			};
+			let parsed;
+			try {
+				parsed = JSON.parse(body ?? "");
+			} catch {
+				return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid JSON body" }
+				};
+			}
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {
+				kind: "json",
+				status: 400,
+				obj: { error: "invalid JSON body" }
+			};
+			const payload = parsed;
+			const state$1 = payload.state;
+			if (typeof state$1 !== "string" || !HOST_WORK_STATUS_STATES.includes(state$1)) return {
+				kind: "json",
+				status: 400,
+				obj: { error: "invalid state" }
+			};
+			let task;
+			if (Object.prototype.hasOwnProperty.call(payload, "task")) if (payload.task === null) task = null;
+			else if (typeof payload.task === "string") {
+				const trimmed = payload.task.trim();
+				if (trimmed === "") task = null;
+				else if (Array.from(trimmed).length > TASK_TEXT_MAX) return {
+					kind: "json",
+					status: 400,
+					obj: { error: `task too long (max ${TASK_TEXT_MAX} code points)` }
+				};
+				else task = trimmed;
+			} else return {
+				kind: "json",
+				status: 400,
+				obj: { error: "invalid task" }
+			};
+			externalWorkSeq += 1;
+			workStatus.setState(EXTERNAL_WORK_SESSION, state$1, externalWorkSeq);
+			if (task !== void 0) workStatus.setTask(EXTERNAL_WORK_SESSION, task);
+			publishWorkStatus();
 			return {
 				kind: "json",
 				status: 200,
-				obj: state.read(),
-				headers: { "cache-control": "no-cache, no-store" }
+				obj: {
+					state: workStatus.stateOf(EXTERNAL_WORK_SESSION) ?? state$1,
+					task: workStatus.taskOf(EXTERNAL_WORK_SESSION)
+				}
 			};
 		}
 		if (rest === "balance") {
@@ -2626,22 +4907,122 @@ function apply(ctx) {
 				obj: { ok: true }
 			};
 		}
+		if (rest === "lock" || rest === "lock/release") {
+			const isRelease = rest === "lock/release";
+			if (method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			let parsed;
+			try {
+				parsed = JSON.parse(body ?? "null");
+			} catch {
+				return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid JSON body" }
+				};
+			}
+			const o = parsed && typeof parsed === "object" ? parsed : {};
+			try {
+				const who = requirePet(url.searchParams, () => readAllConfig(configPaths), { surface: !isRelease });
+				if (!who.ok) return who.res;
+				const petId$1 = who.petId;
+				if (isRelease) {
+					const d$1 = lock.release({
+						petId: petId$1,
+						lockId: o.lockId,
+						force: o.force
+					});
+					if (!d$1.ok) {
+						const obj$1 = {
+							ok: false,
+							reason: d$1.reason,
+							message: d$1.message
+						};
+						if (d$1.reason === "lock-lost") obj$1.cause = d$1.cause;
+						return {
+							kind: "json",
+							status: 200,
+							obj: obj$1
+						};
+					}
+					return {
+						kind: "json",
+						status: 200,
+						obj: { ok: true }
+					};
+				}
+				const d = lock.acquire({
+					petId: petId$1,
+					lockId: o.lockId,
+					ttl: o.ttl
+				});
+				if (!d.ok) {
+					const obj$1 = {
+						ok: false,
+						reason: d.reason,
+						message: d.message
+					};
+					if (d.reason === "locked") obj$1.expiresAt = d.expiresAt;
+					if (d.reason === "lock-lost") obj$1.cause = d.cause;
+					return {
+						kind: "json",
+						status: 200,
+						obj: obj$1
+					};
+				}
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: true,
+						lockId: d.lockId,
+						petId: d.petId,
+						expiresAt: d.expiresAt
+					}
+				};
+			} catch (e) {
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: "generate-error",
+						message: e instanceof Error ? e.message : String(e)
+					}
+				};
+			}
+		}
 		if (rest === "whisper") {
 			if (method !== "POST") return {
 				kind: "json",
 				status: 405,
 				obj: { error: "method not allowed" }
 			};
-			const petId$1 = String(url.searchParams.get("pet") ?? "");
 			try {
-				const ok = await publishWhisper(petId$1);
+				const who = requirePet(url.searchParams, () => readAllConfig(configPaths), { surface: true });
+				if (!who.ok) return who.res;
+				const r = await publishWhisper(who.petId);
+				if (r.ok) return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: true,
+						text: r.text,
+						...r.image ? { image: r.image } : {}
+					}
+				};
+				const obj$1 = {
+					ok: false,
+					reason: r.reason
+				};
+				if (r.message) obj$1.message = r.message;
 				return {
 					kind: "json",
 					status: 200,
-					obj: ok ? { ok: true } : {
-						ok: false,
-						reason: "generate-error"
-					}
+					obj: obj$1
 				};
 			} catch (e) {
 				return {
@@ -2681,14 +5062,27 @@ function apply(ctx) {
 					message: "text 为空"
 				}
 			};
+			const duration = normalizeBroadcastDuration(o.duration);
+			if (duration === null) return {
+				kind: "json",
+				status: 200,
+				obj: {
+					ok: false,
+					reason: "bad-request",
+					message: "duration 必须是 ≥0 的有限数字（毫秒）"
+				}
+			};
+			const anim = normalizeBroadcastAnim(o.anim);
 			try {
 				const cfg = readAllConfig(configPaths);
 				const d = decideBroadcast({
 					cfg,
 					requested: String(url.searchParams.get("pet") ?? ""),
-					active: resolveActivePetId(),
 					text: o.text,
 					image: o.image,
+					url: o.url,
+					duration,
+					anim,
 					memeDirs: memeDirsFor
 				});
 				if (!d.ok) return {
@@ -2700,10 +5094,60 @@ function apply(ctx) {
 						message: d.message
 					}
 				};
-				state.writePet(d.petId, "say", d.image ? {
+				const noSurface = surfaceBlocked(cfg, d.petId, url.searchParams);
+				if (noSurface) return noSurface;
+				const blocked = lockBlocked(d.petId, url.searchParams);
+				if (blocked) return blocked;
+				const pic = d.url !== void 0 ? { url: d.url } : d.image !== void 0 ? { image: d.image } : {};
+				state.writePet(d.petId, "say", {
 					text: d.text,
-					image: d.image
-				} : { text: d.text });
+					...pic,
+					duration: d.duration,
+					anim: d.anim
+				});
+				return {
+					kind: "json",
+					status: 200,
+					obj: { ok: true }
+				};
+			} catch (e) {
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: "generate-error",
+						message: e instanceof Error ? e.message : String(e)
+					}
+				};
+			}
+		}
+		if (rest === "bubble/clear") {
+			if (method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			try {
+				const cfg = readAllConfig(configPaths);
+				const d = decideBubbleClear({
+					cfg,
+					requested: String(url.searchParams.get("pet") ?? "")
+				});
+				if (!d.ok) return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: d.reason,
+						message: d.message
+					}
+				};
+				const noSurface = surfaceBlocked(cfg, d.petId, url.searchParams);
+				if (noSurface) return noSurface;
+				const blocked = lockBlocked(d.petId, url.searchParams);
+				if (blocked) return blocked;
+				state.writePet(d.petId, "say", { clear: true });
 				return {
 					kind: "json",
 					status: 200,
@@ -2743,8 +5187,9 @@ function apply(ctx) {
 				const d = decideAnim({
 					cfg,
 					requested: String(url.searchParams.get("pet") ?? ""),
-					active: resolveActivePetId(),
-					name: o.name
+					name: o.name,
+					url: o.url,
+					facing: o.facing
 				});
 				if (!d.ok) return {
 					kind: "json",
@@ -2755,7 +5200,113 @@ function apply(ctx) {
 						message: d.message
 					}
 				};
-				state.writePet(d.petId, "anim", { name: d.name });
+				const noSurface = surfaceBlocked(cfg, d.petId, url.searchParams);
+				if (noSurface) return noSurface;
+				const blocked = lockBlocked(d.petId, url.searchParams);
+				if (blocked) return blocked;
+				const record = playback.create(d.petId, d.url ?? d.name ?? "");
+				state.writePet(d.petId, "anim", {
+					...d.url !== void 0 ? { url: d.url } : { name: d.name },
+					playbackId: record.playbackId,
+					...d.facing === void 0 ? {} : { facing: d.facing }
+				});
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: true,
+						playbackId: record.playbackId
+					}
+				};
+			} catch (e) {
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: "generate-error",
+						message: e instanceof Error ? e.message : String(e)
+					}
+				};
+			}
+		}
+		if (rest === "position" || rest === "throw") {
+			const isPosition = rest === "position";
+			if (method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			let parsed;
+			try {
+				parsed = JSON.parse(body ?? "null");
+			} catch {
+				return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid JSON body" }
+				};
+			}
+			const o = parsed && typeof parsed === "object" ? parsed : {};
+			try {
+				const cfg = readAllConfig(configPaths);
+				const requested = String(url.searchParams.get("pet") ?? "");
+				if (isPosition) {
+					const d$1 = decidePosition({
+						cfg,
+						requested,
+						x: o.x,
+						y: o.y,
+						mode: o.mode,
+						duration: o.duration
+					});
+					if (!d$1.ok) return {
+						kind: "json",
+						status: 200,
+						obj: {
+							ok: false,
+							reason: d$1.reason,
+							message: d$1.message
+						}
+					};
+					const noSurface$1 = surfaceBlocked(cfg, d$1.petId, url.searchParams);
+					if (noSurface$1) return noSurface$1;
+					const blocked$1 = lockBlocked(d$1.petId, url.searchParams);
+					if (blocked$1) return blocked$1;
+					state.writePet(d$1.petId, "position", positionLeafData(d$1));
+					return {
+						kind: "json",
+						status: 200,
+						obj: {
+							ok: true,
+							x: d$1.x,
+							y: d$1.y
+						}
+					};
+				}
+				const d = decideThrow({
+					cfg,
+					requested,
+					angle: o.angle,
+					power: o.power
+				});
+				if (!d.ok) return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: d.reason,
+						message: d.message
+					}
+				};
+				const noSurface = surfaceBlocked(cfg, d.petId, url.searchParams);
+				if (noSurface) return noSurface;
+				const blocked = lockBlocked(d.petId, url.searchParams);
+				if (blocked) return blocked;
+				state.writePet(d.petId, "throw", {
+					angle: d.angle,
+					power: d.power
+				});
 				return {
 					kind: "json",
 					status: 200,
@@ -2773,15 +5324,234 @@ function apply(ctx) {
 				};
 			}
 		}
-		if (rest === "chat") {
-			const petId$1 = String(url.searchParams.get("pet") ?? "");
+		if (rest === "pose" || rest === "pose/report") {
+			const isReport = rest === "pose/report";
+			if (isReport && method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			if (!isReport && method !== "GET") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			let parsedPose;
+			if (isReport) try {
+				parsedPose = JSON.parse(body ?? "null");
+			} catch {
+				return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid JSON body" }
+				};
+			}
 			try {
+				const who = requirePet(url.searchParams, () => readAllConfig(configPaths));
+				if (!who.ok) return who.res;
+				if (isReport) {
+					const p = normalizePoseInput(parsedPose);
+					if (!p.ok) return {
+						kind: "json",
+						status: 200,
+						obj: {
+							ok: false,
+							reason: p.reason,
+							message: p.message
+						}
+					};
+					pose.set(who.petId, p.pose);
+					return {
+						kind: "json",
+						status: 200,
+						obj: { ok: true }
+					};
+				}
+				const display = String(who.pet.display ?? "");
+				if (!displayCovers("desktop", display)) return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: "pet-not-displayed",
+						message: who.petId + " 的显示模式是 " + display + "；桌面端实况只对 display 含 desktop 的宠物有",
+						display
+					}
+				};
+				const snap = pose.get(who.petId);
+				if (snap === void 0) return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: "pose-unavailable",
+						message: "还没收到过这只宠物的桌面端实况（桌面端没起来，或刚重启还没来得及上报）"
+					}
+				};
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: true,
+						petId: who.petId,
+						...snap
+					}
+				};
+			} catch (e) {
+				return {
+					kind: "json",
+					status: 200,
+					obj: {
+						ok: false,
+						reason: "generate-error",
+						message: e instanceof Error ? e.message : String(e)
+					}
+				};
+			}
+		}
+		const playbackPath = rest === "playback" || rest.startsWith("playback/") ? parsePlaybackPath(rest) : void 0;
+		if (playbackPath) {
+			const playbackId = playbackPath.playbackId;
+			if (playbackPath.isReport) {
+				if (method !== "POST") return {
+					kind: "json",
+					status: 405,
+					obj: { error: "method not allowed" }
+				};
+				let reported;
+				try {
+					reported = JSON.parse(body ?? "null");
+				} catch {
+					return {
+						kind: "json",
+						status: 400,
+						obj: { error: "invalid JSON body" }
+					};
+				}
+				const o = reported && typeof reported === "object" ? reported : {};
+				const outcome = playback.report(playbackId, o.status, o.reason);
+				if (outcome === "unknown") return {
+					kind: "json",
+					status: 404,
+					obj: { error: "unknown playback" }
+				};
+				if (outcome === "invalid") return {
+					kind: "json",
+					status: 400,
+					obj: { error: "invalid status" }
+				};
+				return {
+					kind: "json",
+					status: 200,
+					obj: { ok: true }
+				};
+			}
+			if (method !== "GET") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			const record = playback.get(playbackId);
+			if (!record) return {
+				kind: "json",
+				status: 404,
+				obj: { error: "unknown playback" }
+			};
+			const parsed = parseWaitQuery(url.searchParams.get("wait"), url.searchParams.get("timeout"));
+			if (parsed.kind === "error") return {
+				kind: "json",
+				status: 400,
+				obj: { error: parsed.error }
+			};
+			if (parsed.kind === "none") return {
+				kind: "json",
+				status: 200,
+				obj: {
+					...record,
+					matched: false
+				}
+			};
+			const { wait: waitList, timeoutMs } = parsed;
+			if (waitList.includes(record.status)) return {
+				kind: "json",
+				status: 200,
+				obj: {
+					...record,
+					matched: true
+				}
+			};
+			return await new Promise((resolveWait) => {
+				let settled = false;
+				/** 收尾：只认第一次（唤醒 / 超时 / 取消 / 调用方断开 都可能先后到达） */
+				const settle = (result) => {
+					if (settled) return;
+					settled = true;
+					resolveWait(result);
+				};
+				const cancel = playback.wait({
+					playbackId,
+					wait: waitList,
+					timeoutMs,
+					onWake: (r, matched) => settle({
+						kind: "json",
+						status: 200,
+						obj: {
+							...r,
+							matched
+						}
+					})
+				});
+				if (cancel === void 0) {
+					settle({
+						kind: "json",
+						status: 404,
+						obj: { error: "unknown playback" }
+					});
+					return;
+				}
+				const onAbort = () => {
+					cancel();
+					settle({ kind: "none" });
+				};
+				if (signal?.aborted) {
+					onAbort();
+					return;
+				}
+				signal?.addEventListener("abort", onAbort, { once: true });
+			});
+		}
+		if (rest === "chat") {
+			if (method !== "GET" && method !== "POST") return {
+				kind: "json",
+				status: 405,
+				obj: { error: "method not allowed" }
+			};
+			try {
+				const roundsRaw = method === "GET" ? url.searchParams.get("rounds") : null;
+				let roundsOverride = null;
+				if (roundsRaw !== null && roundsRaw.trim() !== "") {
+					const n = Number(roundsRaw);
+					if (!Number.isInteger(n) || n < 0 || n > 200) return {
+						kind: "json",
+						status: 200,
+						obj: {
+							ok: false,
+							reason: "bad-request",
+							message: "rounds 必须是 0–200 的整数（不传则用配置）"
+						}
+					};
+					roundsOverride = n;
+				}
+				let cfgCache;
+				const cfg = () => cfgCache ??= readAllConfig(configPaths);
+				const who = requirePet(url.searchParams, cfg, { surface: method === "POST" });
+				if (!who.ok) return who.res;
+				const petId$1 = who.petId;
 				if (method === "GET") {
-					const cfg = readAllConfig(configPaths);
 					const mem = await readMemory();
-					const bucket = mem[findPetInstance(cfg, petId$1)?.entry ?? petId$1] ?? {};
+					const bucket = mem[who.entry] ?? {};
 					const list = (bucket[petId$1]?.messages ?? []).slice();
-					const rounds = memoryRounds(petId$1, cfg);
+					const rounds = roundsOverride ?? memoryRounds(who.conf);
 					const messages = sliceMemoryRounds(list, rounds);
 					return {
 						kind: "json",
@@ -2821,11 +5591,6 @@ function apply(ctx) {
 						obj: result
 					};
 				}
-				return {
-					kind: "json",
-					status: 405,
-					obj: { error: "method not allowed" }
-				};
 			} catch (e) {
 				return {
 					kind: "json",
@@ -2920,7 +5685,20 @@ function apply(ctx) {
 			body: "dsh-pet: unsupported animation format (expected .webm or .mov)"
 		};
 		const extraAnimDir = resolveAsset(petConfigDir, petId + "-animation");
-		const file = extraAnimDir !== void 0 && existsSync(extraAnimDir) ? resolveExisting(extraAnimDir, fileName) : resolveExisting(userRootFor(ext), fileName) ?? resolveExisting(assetRootFor(ext), fileName);
+		/** 按扩展名查同名素材（专属目录优先；否则用户根 → 包内根） */
+		const findAnim = (e) => {
+			const name = fileName.replace(/\.(webm|mov)$/i, "") + e;
+			return extraAnimDir !== void 0 && existsSync(extraAnimDir) ? resolveExisting(extraAnimDir, name) : resolveExisting(userRootFor(e), name) ?? resolveExisting(assetRootFor(e), name);
+		};
+		let file = findAnim(ext);
+		let servedExt = ext;
+		if (file === void 0 && ext === ".mov") {
+			const fb = findAnim(".webm");
+			if (fb !== void 0) {
+				file = fb;
+				servedExt = ".webm";
+			}
+		}
 		if (file === void 0) return {
 			kind: "text",
 			status: 404,
@@ -2929,21 +5707,26 @@ function apply(ctx) {
 		return {
 			kind: "file",
 			file,
-			contentType: MIME[ext] ?? "application/octet-stream"
+			contentType: MIME[servedExt] ?? "application/octet-stream"
 		};
 	};
 	ctx.effect(() => ctx.webServer.register({
 		kind: "prefix",
 		path: ROUTE_PREFIX,
 		handler: async (req, res) => {
+			const abort = new AbortController();
+			const onClose = () => abort.abort();
+			res.on("close", onClose);
 			try {
 				const body = req.method === "PUT" || req.method === "POST" ? await readBody(req) : void 0;
-				const result = await handlePetRoute(req.url ?? "/", req.method ?? "GET", body);
+				const result = await handlePetRoute(req.url ?? "/", req.method ?? "GET", body, abort.signal);
+				res.off("close", onClose);
 				if (result.kind === "json") sendJson$1(res, result.status, result.obj, result.headers);
-				else if (result.kind === "text") sendText$1(res, result.status, result.body);
-				else sendFile(res, result.file, result.contentType);
+				else if (result.kind === "text") sendText(res, result.status, result.body);
+				else if (result.kind === "none") {} else sendFile(res, result.file, result.contentType);
 			} catch (e) {
-				sendJson$1(res, 500, { error: e instanceof Error ? e.message : String(e) });
+				res.off("close", onClose);
+				if (!res.destroyed && !res.writableEnded) sendJson$1(res, 500, { error: e instanceof Error ? e.message : String(e) });
 			}
 		}
 	}), "dsh-pet: /dsh-pet-7340 asset route");
@@ -3018,8 +5801,12 @@ function apply(ctx) {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(session, event) => {
 				if (!shouldNotifySession(session)) return;
+				if (isCompletionTurnEnd(event)) {
+					scheduleCompletionNotify(sessionIdOf(session), event);
+					return;
+				}
 				const frame = reduceNotifyFrame(event);
-				if (frame) pushNotifyFrame(frame);
+				if (frame) pushNotifyFrame(withSessionId(frame, sessionIdOf(session)));
 			}
 );
 		const errorDispose = ctx.on(
@@ -3030,6 +5817,8 @@ function apply(ctx) {
 			}
 );
 		return () => {
+			for (const t of notifyActivityTimers.values()) clearTimeout(t);
+			notifyActivityTimers.clear();
 			sessionDispose();
 			errorDispose();
 		};
@@ -3084,10 +5873,15 @@ function apply(ctx) {
 				let min = Infinity;
 				for (const pet of flattenPetList(cfg)) {
 					const petId = String(pet.id ?? "");
-					if (!petId || pet.whisperEnabled !== true) continue;
-					const sec = whisperPeriodSec(cfg, petId);
+					if (!petId) continue;
+					const found = findPetInstance(cfg, petId);
+					if (!found) continue;
+					const schedule = automaticWhisperSchedule(ctx.standaloneAi, pet.whisperEnabled === true, whisperPeriodSec(found.conf));
+					if (!schedule.enabled) continue;
+					const sec = schedule.periodSec;
 					min = Math.min(min, sec);
 					if (now - (lastWhisperAt.get(petId) ?? 0) < sec * 1e3) continue;
+					if (lock.locked(petId)) continue;
 					lastWhisperAt.set(petId, now);
 					publishWhisper(petId).catch(() => {});
 				}
@@ -3182,97 +5976,547 @@ function apply(ctx) {
 	}), "dsh-pet: /chat command");
 	ctx.effect(() => () => {
 		disposed = true;
+		if (workFlushTimer !== null) {
+			clearTimeout(workFlushTimer);
+			workFlushTimer = null;
+		}
+		lock.releaseAll();
+		playback.cancelAll();
+		state.cancelAll();
 		stopHelper("dsh-host-stop");
 	});
 	startHelper();
 }
 
 //#endregion
+//#region src/standalone/request-security.ts
+function rejectRequest(res, status, error) {
+	res.writeHead(status, {
+		"content-type": "application/json; charset=utf-8",
+		"cache-control": "no-store"
+	});
+	res.end(JSON.stringify({ error }));
+	return false;
+}
+function publicRead(req) {
+	if (req.method !== "GET" && req.method !== "HEAD") return false;
+	let path;
+	try {
+		path = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+	} catch {
+		return false;
+	}
+	if (["/standalone-ai/settings", "/shutdown"].includes(path)) return false;
+	if (/^\/dsh-pet-\d+\/(?:whisper|chat)(?:\/|$)/.test(path)) return false;
+	return [
+		"/",
+		"/health",
+		"/standalone-ai/",
+		"/standalone-ai/settings.js",
+		"/standalone-ai/settings.css"
+	].includes(path) || /^\/dsh-pet-\d+\//.test(path);
+}
+function createRequestSecurity() {
+	const token = randomBytes(32).toString("base64url");
+	return {
+		token,
+		authenticatedUrl(baseUrl) {
+			const base = new URL(baseUrl);
+			if (base.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(base.hostname) || base.username || base.password) throw new Error("设置地址必须是本机 HTTP 地址");
+			return `${base.origin}/standalone-ai/#token=${token}`;
+		},
+		authorize(req, res) {
+			const host = req.headers.host;
+			const port = req.socket.localPort;
+			if (!port || host !== `127.0.0.1:${port}` && host !== `localhost:${port}`) return rejectRequest(res, 403, "仅允许当前本机地址");
+			if (req.headers.origin !== void 0 && req.headers.origin !== `http://${host}` || req.headers["sec-fetch-site"] === "cross-site") return rejectRequest(res, 403, "不允许跨站请求");
+			try {
+				if (publicRead(req)) return true;
+			} catch {
+				return rejectRequest(res, 400, "请求地址无效");
+			}
+			const supplied = req.headers["x-dsh-pet-token"];
+			if (typeof supplied !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(supplied) || !timingSafeEqual(Buffer.from(supplied), Buffer.from(token))) return rejectRequest(res, 403, "请从桌宠菜单重新打开设置");
+			return true;
+		}
+	};
+}
+function secureResponse(res, pathname) {
+	const writeHead = res.writeHead.bind(res);
+	const isPublicOp = pathname === "/" || pathname === "/health";
+	res.writeHead = (status, ...args) => {
+		const filtered = isPublicOp ? args : args.map((value) => {
+			if (Array.isArray(value)) return value.reduce((result, item, index) => {
+				if (index % 2 === 0 && !String(item).toLowerCase().startsWith("access-control-")) return [
+					...result,
+					String(item),
+					String(value[index + 1])
+				];
+				return result;
+			}, []);
+			if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).filter(([name]) => !name.toLowerCase().startsWith("access-control-")));
+			return value;
+		});
+		if (!isPublicOp) {
+			for (const name of res.getHeaderNames()) if (name.toLowerCase().startsWith("access-control-")) res.removeHeader(name);
+		}
+		res.setHeader("x-content-type-options", "nosniff");
+		res.setHeader("referrer-policy", "no-referrer");
+		res.setHeader("cache-control", "no-store");
+		return Reflect.apply(writeHead, res, [status, ...filtered]);
+	};
+}
+
+//#endregion
+//#region src/standalone/request-body.ts
+const MAX_REQUEST_BYTES = 1024 * 1024;
+const MAX_SETTINGS_BYTES = 16 * 1024;
+const BODY_TIMEOUT_MS = 5e3;
+async function boundedRequest(req, res, limit, timeoutMs = BODY_TIMEOUT_MS) {
+	const length = req.headers["content-length"];
+	if (length !== void 0 && (!/^\d+$/.test(length) || Number(length) > limit)) {
+		rejectRequest(res, 413, "请求正文过大");
+		return void 0;
+	}
+	const chunks = [];
+	const body = await new Promise((resolve$1) => {
+		let size = 0;
+		const finish = (status) => {
+			clearTimeout(timer);
+			req.off("data", onData);
+			req.off("end", onEnd);
+			req.off("error", onError);
+			req.off("aborted", onError);
+			if (status !== void 0) {
+				req.pause();
+				if (!res.writableEnded && !res.destroyed) rejectRequest(res, status, status === 408 ? "读取请求超时" : "请求正文无效或过大");
+				resolve$1(void 0);
+			} else resolve$1(Buffer.concat(chunks));
+		};
+		const onData = (chunk) => {
+			size += chunk.length;
+			if (size > limit) finish(413);
+			else chunks.push(Buffer.from(chunk));
+		};
+		const onEnd = () => finish();
+		const onError = () => finish(400);
+		const timer = setTimeout(() => finish(408), timeoutMs);
+		timer.unref();
+		req.on("data", onData);
+		req.once("end", onEnd);
+		req.once("error", onError);
+		req.once("aborted", onError);
+	});
+	if (body === void 0) return void 0;
+	return Object.assign(Readable.from([body]), {
+		method: req.method,
+		url: req.url,
+		headers: req.headers,
+		rawHeaders: req.rawHeaders,
+		socket: req.socket,
+		httpVersion: req.httpVersion
+	});
+}
+
+//#endregion
+//#region src/standalone/settings.ts
+const endpoint = z.string().max(2048).refine((value) => {
+	if (value === "") return true;
+	try {
+		const url = new URL(value);
+		return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash;
+	} catch {
+		return false;
+	}
+}, "接口地址必须是 HTTP(S) 地址，且不能含账号、查询参数或片段");
+const settingsSchema = z.object({
+	protocol: z.enum(["openai-compatible", "anthropic"]).optional(),
+	baseUrl: endpoint.optional(),
+	model: z.string().max(200).optional(),
+	apiKey: z.string().max(8192).optional(),
+	clearApiKey: z.boolean().optional(),
+	enabled: z.boolean().optional(),
+	automaticWhispers: z.boolean().optional(),
+	whisperIntervalSec: z.number().int().min(60).max(86400).optional(),
+	maxTokens: z.number().int().min(128).max(4096).optional(),
+	timeoutMs: z.number().int().min(1e3).max(6e4).optional()
+}).strict();
+function validateSettings$1(input) {
+	const result = settingsSchema.safeParse(input);
+	if (!result.success) throw new Error("设置无效：请检查协议、接口地址、间隔（至少 60 秒）和输出上限（128–4096）");
+	return result.data;
+}
+const publicNames = [
+	"protocol",
+	"baseUrl",
+	"model",
+	"enabled",
+	"automaticWhispers",
+	"whisperIntervalSec",
+	"maxTokens",
+	"timeoutMs",
+	"hasKey"
+];
+function publicSettings(input) {
+	if (input === null || typeof input !== "object") return {};
+	const record = input;
+	return Object.fromEntries(publicNames.filter((name) => Object.prototype.hasOwnProperty.call(record, name)).map((name) => [name, record[name]]));
+}
+
+//#endregion
+//#region src/standalone/settings-page.ts
+const settingsPage = `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>桌宠 AI 设置</title><link rel="stylesheet" href="/standalone-ai/settings.css">
+<script src="/standalone-ai/settings.js" defer></script></head><body>
+<main><header><span class="fish" aria-hidden="true">🐾</span><p class="local">独立桌宠 / 本机设置</p>
+<h1>桌宠 AI 设置</h1><p class="intro">配置你的大模型 API 接口，开启桌面聊天与碎碎念。<br>所有设置仅保存在本机，支持即时测试连接。</p></header>
+<form id="settings" aria-describedby="privacy">
+<fieldset><legend>模型连接</legend>
+<label for="protocol">接口协议</label><select id="protocol" name="protocol"><option value="openai-compatible">OpenAI 兼容</option><option value="anthropic">Anthropic</option></select>
+<label for="baseUrl">接口地址（Base URL）</label><input id="baseUrl" name="baseUrl" type="url" placeholder="https://example.com/v1" maxlength="2048" spellcheck="false" aria-describedby="endpoint-note"><p class="hint" id="endpoint-note">填写服务商提供的基础接口地址（支持 HTTP 与 HTTPS，通常以 /v1 结尾）。不要把密钥放进地址。</p>
+<label for="model">模型名称</label><input id="model" name="model" type="text" maxlength="200" placeholder="填写服务商的模型 ID，例如 deepseek-chat" spellcheck="false">
+<div class="key-heading"><label for="apiKey">API 密钥</label><span id="key-state" class="hint">尚未读取</span></div>
+<input id="apiKey" name="apiKey" type="password" autocomplete="new-password" maxlength="8192" placeholder="留空保留已保存的密钥" aria-describedby="key-note">
+<p id="key-note" class="hint">密钥只写入本机配置，不会回显。留空不会删除旧密钥。</p>
+<label class="check clear"><input id="clearApiKey" type="checkbox">清除已保存的密钥，并关闭 AI</label>
+<label class="check enabled"><input id="enabled" type="checkbox">启用 AI 对话</label>
+<div class="test-row"><button id="test-btn" type="button">测试连接</button><span id="test-result" class="test-result" role="status" aria-live="polite"></span></div>
+</fieldset>
+<fieldset><legend>定时自动碎碎念</legend>
+<label class="check"><input id="automaticWhispers" type="checkbox" aria-describedby="cost">开启自动碎碎念</label>
+<p id="cost" class="notice">开启后，桌宠会按设定间隔定时调用模型并在桌面上说话冒泡（产生 API 费用）。默认关闭；右键菜单中的手动对话与手动碎碎念不受此开关限制。</p>
+<div class="pair"><div><label for="whisperIntervalSec">碎碎念间隔（秒）</label><input id="whisperIntervalSec" type="number" min="60" max="86400" step="1" value="300" required></div>
+<div><label for="maxTokens">单次输出上限（tokens）</label><input id="maxTokens" type="number" min="128" max="4096" step="1" value="1024" required></div></div>
+<p class="hint">间隔至少 60 秒，默认 300 秒。输出上限越小，单次回复越简短。</p>
+</fieldset>
+<footer><p id="privacy">所有配置与密钥仅保存在当前机器。<br>关闭 AI 后，桌宠仍可正常显示、移动与互动。</p><button id="save" type="submit" disabled>保存到本机</button></footer>
+<p id="status" role="status" aria-live="polite">正在读取本机设置…</p>
+</form><noscript>需要启用 JavaScript 才能保存设置。请从桌宠菜单打开本页。</noscript></main></body></html>`;
+const settingsStyle = `
+:root{color-scheme:light;--ink:#203b4b;--muted:#526a78;--blue:#12618b;--line:#cbdce5;--paper:#fff;--water:#edf5fa}
+*{box-sizing:border-box}body{margin:0;background:var(--water);color:var(--ink);font:16px/1.6 "Microsoft YaHei UI","PingFang SC",sans-serif}
+main{max-width:720px;margin:48px auto;padding:0 24px 32px}header{padding:0 12px 28px}.fish{display:block;font:700 29px/1.3 Georgia,serif;color:var(--blue);letter-spacing:2px;margin-bottom:24px}.local{font-size:13px;color:var(--muted);margin:0 0 10px}h1{font-size:32px;line-height:1.3;letter-spacing:-1px;margin:0 0 16px;font-weight:700}.intro{margin:0;color:var(--muted)}
+form{background:var(--paper);border:1px solid var(--line);border-radius:16px 16px 6px 6px;padding:28px 32px 20px}fieldset{padding:0 0 28px;margin:0 0 24px;border:0;border-bottom:1px solid var(--line);min-width:0}legend{font-size:19px;font-weight:700;margin-bottom:18px;padding:0}label{display:block;font-weight:600;font-size:14px;margin:14px 0 6px}input:not([type=checkbox]),select{display:block;width:100%;min-height:44px;border:1px solid #a5bdcb;border-radius:6px;background:#fff;color:var(--ink);padding:9px 12px;font:inherit;font-size:15px}input::placeholder{color:#6a7e8b}input[type=checkbox]{accent-color:var(--blue);width:18px;height:18px;flex-shrink:0;margin:0}.check{display:flex;align-items:center;gap:10px;min-height:32px;cursor:pointer}.enabled{margin-top:24px}.clear{font-weight:400;color:var(--muted);font-size:13px}.hint{font-size:12px;line-height:1.6;color:var(--muted);margin:7px 0 0}.key-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px}.key-heading label{margin:0 0 6px}.key-heading .hint{margin:0 0 6px}.notice{font-size:13px;color:#704b13;background:#fff7e7;border-left:3px solid #c18e36;margin:12px 0 16px;padding:12px 14px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:20px}footer{display:flex;align-items:center;justify-content:space-between;gap:18px}footer p{font-size:12px;color:var(--muted);margin:0}button{border:0;border-radius:7px;min-height:44px;padding:10px 20px;background:var(--blue);color:#fff;font:600 15px/1.5 inherit;white-space:nowrap;cursor:pointer}button:hover{background:#0b4e73}button:disabled{opacity:.55;cursor:wait}:focus-visible{outline:3px solid #3a94c4;outline-offset:3px}#status{font-size:13px;min-height:24px;margin:18px 0 0;color:var(--blue)}#status[data-error=true]{color:#a13b30}
+.test-row{display:flex;align-items:center;gap:14px;margin:20px 0 6px;flex-wrap:wrap}#test-btn{background:#fff;color:var(--blue);border:1.5px solid var(--blue);min-height:38px;padding:6px 18px;font-size:14px;border-radius:6px;cursor:pointer;font-weight:600}#test-btn:hover{background:#edf5fa}#test-btn:disabled{opacity:.6;cursor:wait}.test-result{font-size:13px;line-height:1.5;min-height:22px;flex:1 1 200px}.test-success{color:#1a7f37;font-weight:600}.test-error{color:#cf222e}.reply-preview{display:block;color:var(--muted);font-weight:normal;font-size:12px;margin-top:4px;word-break:break-all}
+@media(max-width:560px){main{margin:24px auto;padding:0 14px 24px}header{padding:0 8px 24px}h1{font-size:28px}form{padding:24px 20px 16px}.pair{grid-template-columns:1fr;gap:0}footer{align-items:stretch;flex-direction:column}button{width:100%}.fish{margin-bottom:18px}}
+`;
+const settingsScript = `
+'use strict';
+(() => {
+  const token = new URLSearchParams(location.hash.slice(1)).get('token') || '';
+  history.replaceState(null, '', location.pathname);
+  const get = id => document.getElementById(id);
+  const form = get('settings');
+  const status = get('status');
+  const save = get('save');
+  const testBtn = get('test-btn');
+  const testResult = get('test-result');
+  function message(text, error = false) { status.textContent = text; status.dataset.error = String(error); }
+  async function request(method, body) {
+    const response = await fetch('/standalone-ai/settings', {
+      method, credentials: 'omit', cache: 'no-store', redirect: 'error',
+      headers: { 'X-DSH-Pet-Token': token, ...(body ? {'Content-Type': 'application/json'} : {}) },
+      ...(body ? {body: JSON.stringify(body)} : {})
+    });
+    if (!response.ok) {
+      if (response.status === 403) throw new Error('打开凭据已失效。请从桌宠菜单重新打开设置。');
+      if (response.status === 429) throw new Error('保存过于频繁，请稍等一分钟再试。');
+      throw new Error('设置未保存。请检查接口地址、模型名称与密钥，再重试。');
+    }
+    return response.json();
+  }
+  function populate(data) {
+    for (const id of ['protocol','baseUrl','model','whisperIntervalSec','maxTokens']) {
+      if (data[id] !== undefined) get(id).value = String(data[id]);
+    }
+    for (const id of ['enabled','automaticWhispers']) get(id).checked = data[id] === true;
+    get('key-state').textContent = data.hasKey ? '已保存 · 不回显' : '尚未设置';
+    get('apiKey').value = '';
+    get('clearApiKey').checked = false;
+  }
+  get('clearApiKey').addEventListener('change', () => {
+    get('apiKey').disabled = get('clearApiKey').checked;
+    if (get('clearApiKey').checked) {
+      get('apiKey').value = '';
+      get('enabled').checked = false;
+      get('automaticWhispers').checked = false;
+    }
+  });
+  if (testBtn && testResult) {
+    testBtn.addEventListener('click', async () => {
+      testBtn.disabled = true;
+      testResult.className = 'test-result';
+      testResult.textContent = '正在测试连接，请稍候…';
+      const input = {
+        protocol: get('protocol').value,
+        baseUrl: get('baseUrl').value.trim(),
+        model: get('model').value.trim(),
+        apiKey: get('apiKey').value.trim(),
+      };
+      try {
+        const response = await fetch('/standalone-ai/test', {
+          method: 'POST',
+          credentials: 'omit',
+          cache: 'no-store',
+          headers: {
+            'X-DSH-Pet-Token': token,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(input),
+        });
+        const data = await response.json();
+        if (data.ok) {
+          testResult.className = 'test-result test-success';
+          testResult.textContent = '✓ ' + data.message;
+          if (data.reply) {
+            const preview = document.createElement('span');
+            preview.className = 'reply-preview';
+            preview.textContent = '回复: ' + data.reply;
+            testResult.appendChild(preview);
+          }
+        } else {
+          testResult.className = 'test-result test-error';
+          testResult.textContent = '✗ ' + (data.message || data.error || '测试失败');
+        }
+      } catch (error) {
+        testResult.className = 'test-result test-error';
+        testResult.textContent = '✗ 请求异常：' + (error && error.message ? error.message : String(error));
+      } finally {
+        testBtn.disabled = false;
+      }
+    });
+  }
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    save.disabled = true;
+    message('正在保存到本机…');
+    const input = {
+      protocol: get('protocol').value, baseUrl: get('baseUrl').value.trim(), model: get('model').value.trim(),
+      apiKey: get('apiKey').value, clearApiKey: get('clearApiKey').checked,
+      enabled: get('enabled').checked, automaticWhispers: get('automaticWhispers').checked,
+      whisperIntervalSec: Number(get('whisperIntervalSec').value), maxTokens: Number(get('maxTokens').value)
+    };
+    get('apiKey').value = '';
+    try {
+      populate(await request('POST', input));
+      get('apiKey').disabled = false;
+      message('已保存到本机。');
+    } catch (error) { message(error.message, true); }
+    finally { save.disabled = false; }
+  });
+  if (!token) { message('请从桌宠菜单或本机启动器打开设置，以获得本次运行的访问凭据。', true); return; }
+  request('GET').then(data => { populate(data); save.disabled = false; message('设置只在本机保存。'); })
+    .catch(error => message(error.message, true));
+})();
+`;
+
+//#endregion
 //#region src/standalone/server.ts
 const DEFAULT_STANDALONE_PORT = 3080;
 const PORT_SCAN_LIMIT = 25;
-const CORS_HEADERS = {
-	"access-control-allow-origin": "*",
-	"access-control-allow-methods": "GET, POST, OPTIONS",
-	"access-control-allow-headers": "content-type",
-	"access-control-max-age": "600"
-};
-/** 只取 pathname（不解码，避免 %2F 一类输入在校验之前被改写）；非法 URL 落回 '/' */
-function pathnameOf(rawUrl) {
-	try {
-		return new URL(rawUrl ?? "/", "http://127.0.0.1").pathname;
-	} catch {
-		return "/";
-	}
-}
 function matches(route, pathname) {
 	if (route.kind === "exact") return pathname === route.path;
 	return pathname === route.path || pathname.startsWith(`${route.path}/`);
 }
-function sendJson(res, status, body, headers = {}) {
+function sendJson(res, status, body, cors = false) {
 	const payload = JSON.stringify(body);
 	res.writeHead(status, {
 		"content-type": "application/json; charset=utf-8",
 		"content-length": Buffer.byteLength(payload),
-		...CORS_HEADERS,
-		...headers
+		...cors ? { "access-control-allow-origin": "*" } : {}
 	});
 	res.end(payload);
 }
-function sendText(res, status, body) {
-	res.writeHead(status, {
-		"content-type": "text/plain; charset=utf-8",
+function sendAsset(res, body, type) {
+	res.writeHead(200, {
+		"content-type": `${type}; charset=utf-8`,
 		"content-length": Buffer.byteLength(body),
-		...CORS_HEADERS
+		"content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+		"x-frame-options": "DENY"
 	});
 	res.end(body);
 }
-/** handler 抛错时的收口：头已发出就断连（与插件 sendFile 的错误口径一致），否则 500 JSON */
-function fail(res, error, logger) {
-	const message = error instanceof Error ? error.message : String(error);
-	logger.error(`路由处理异常：${message}`);
-	if (res.headersSent) {
-		res.destroy();
-		return;
-	}
-	sendJson(res, 500, { error: message });
+function fail(res, _error, logger) {
+	logger.error("独立模式路由处理失败（详细内容已省略以保护凭据）");
+	if (res.headersSent) res.destroy();
+	else sendJson(res, 500, { error: "本机服务暂时无法处理请求" });
 }
-function createRequestListener(options) {
-	const { routes, logger, status, onShutdown } = options;
-	return (req, res) => {
+function settingsHandler(ai) {
+	let windowStart = Date.now();
+	let count = 0;
+	return async (req, res) => {
+		if (!ai) {
+			rejectRequest(res, 503, "本机 AI 设置尚未就绪");
+			return;
+		}
+		if (req.method === "GET") {
+			sendJson(res, 200, publicSettings(ai.getSettings()));
+			return;
+		}
+		if (req.method !== "POST") {
+			rejectRequest(res, 405, "仅支持 GET 或 POST");
+			return;
+		}
+		if (Date.now() - windowStart >= 6e4) {
+			windowStart = Date.now();
+			count = 0;
+		}
+		count += 1;
+		if (count > 20) {
+			rejectRequest(res, 429, "保存过于频繁，请稍后再试");
+			return;
+		}
+		if (req.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") {
+			rejectRequest(res, 415, "请使用 JSON 保存设置");
+			return;
+		}
+		try {
+			const chunks = [];
+			await new Promise((resolve$1, reject) => {
+				req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+				req.once("end", resolve$1);
+				req.once("error", reject);
+			});
+			const input = validateSettings$1(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+			sendJson(res, 200, publicSettings(await ai.saveSettings(input)));
+		} catch {
+			rejectRequest(res, 400, "设置未保存：请检查接口地址、模型名称、密钥和数值范围");
+		}
+	};
+}
+function testHandler(ai) {
+	return async (req, res) => {
+		if (req.method !== "POST") {
+			rejectRequest(res, 405, "仅支持 POST");
+			return;
+		}
+		try {
+			const chunks = [];
+			await new Promise((resolve$1, reject) => {
+				req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+				req.once("end", resolve$1);
+				req.once("error", reject);
+			});
+			const bodyStr = Buffer.concat(chunks).toString("utf8");
+			const input = bodyStr ? JSON.parse(bodyStr) : {};
+			if (ai?.testConnection) {
+				const result = await ai.testConnection(input);
+				sendJson(res, 200, result);
+			} else sendJson(res, 200, {
+				ok: false,
+				message: "当前环境未配置测试能力"
+			});
+		} catch {
+			sendJson(res, 400, {
+				ok: false,
+				message: "请求格式无效"
+			});
+		}
+	};
+}
+function dispatch(options, shutdownSecurity) {
+	const settings = settingsHandler(options.ai);
+	const tester = testHandler(options.ai);
+	return (req, res, pathname) => {
 		const method = req.method ?? "GET";
-		const pathname = pathnameOf(req.url);
-		logger.debug(`${method} ${pathname}`);
 		if (method === "OPTIONS") {
-			res.writeHead(204, CORS_HEADERS);
+			res.writeHead(204);
 			res.end();
 			return;
 		}
 		if (pathname === "/" || pathname === "/health") {
-			sendJson(res, 200, status?.() ?? { name: "dsh-pet-standalone" });
+			if (method !== "GET" && method !== "HEAD") {
+				rejectRequest(res, 405, "仅支持 GET");
+				return;
+			}
+			sendJson(res, 200, options.status?.() ?? { name: "dsh-pet-standalone" }, true);
 			return;
 		}
 		if (pathname === "/shutdown") {
+			if (method !== "POST") {
+				rejectRequest(res, 405, "停机请使用 POST");
+				return;
+			}
+			if (shutdownSecurity) {
+				const supplied = req.headers["x-dsh-pet-token"];
+				if (typeof supplied !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(supplied) || !timingSafeEqual(Buffer.from(supplied), Buffer.from(shutdownSecurity.token))) {
+					rejectRequest(res, 403, "停机需要提供令牌");
+					return;
+				}
+			}
 			sendJson(res, 200, {
 				ok: true,
 				stopping: true
 			});
-			queueMicrotask(() => onShutdown?.());
+			queueMicrotask(() => options.onShutdown?.());
 			return;
 		}
-		const route = routes.find((candidate) => matches(candidate, pathname));
-		if (route === void 0) {
-			sendText(res, 404, `dsh-pet-standalone: 没有匹配的路由（已注册：${routes.map((item) => item.path).join(", ") || "无"}）`);
+		const assets = {
+			"/standalone-ai/": [settingsPage, "text/html"],
+			"/standalone-ai/settings.js": [settingsScript, "text/javascript"],
+			"/standalone-ai/settings.css": [settingsStyle, "text/css"]
+		};
+		const asset = assets[pathname];
+		if (asset) {
+			if (method !== "GET" && method !== "HEAD") {
+				rejectRequest(res, 405, "仅支持 GET");
+				return;
+			}
+			sendAsset(res, asset[0], asset[1]);
+			return;
+		}
+		if (pathname === "/standalone-ai/settings") {
+			settings(req, res).catch((error) => fail(res, error, options.logger));
+			return;
+		}
+		if (pathname === "/standalone-ai/test") {
+			tester(req, res).catch((error) => fail(res, error, options.logger));
+			return;
+		}
+		const route = options.routes.find((candidate) => matches(candidate, pathname));
+		if (!route) {
+			res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+			res.end(`dsh-pet-standalone: 没有匹配的路由（已注册：${options.routes.map((item) => item.path).join(", ") || "无"}）`);
 			return;
 		}
 		try {
-			Promise.resolve(route.handler(req, res)).catch((error) => fail(res, error, logger));
+			Promise.resolve(route.handler(req, res)).catch((error) => fail(res, error, options.logger));
 		} catch (error) {
-			fail(res, error, logger);
+			fail(res, error, options.logger);
 		}
 	};
 }
-/** 从 preferred 起找一个能绑上的 127.0.0.1 端口；`preferred = 0` 表示交给系统分配 */
+function createRequestListener(options, injectedSecurity) {
+	const security = options.security ?? injectedSecurity;
+	const route = dispatch(options, security);
+	return (req, res) => {
+		let pathname;
+		try {
+			pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+		} catch {
+			rejectRequest(res, 400, "请求地址无效");
+			return;
+		}
+		secureResponse(res, pathname);
+		if (security && !security.authorize(req, res)) return;
+		options.logger.debug("收到本机 HTTP 请求");
+		const hasBody = req.headers["transfer-encoding"] !== void 0 || Number(req.headers["content-length"] ?? 0) > 0;
+		const bodyMethod = [
+			"POST",
+			"PUT",
+			"PATCH",
+			"DELETE"
+		].includes(req.method ?? "");
+		if ((hasBody || bodyMethod) && typeof req.on === "function") {
+			const limit = pathname === "/standalone-ai/settings" ? MAX_SETTINGS_BYTES : MAX_REQUEST_BYTES;
+			boundedRequest(req, res, limit, options.bodyTimeoutMs).then((bounded) => {
+				if (bounded) route(bounded, res, pathname);
+			}).catch((error) => fail(res, error, options.logger));
+		} else route(req, res, pathname);
+	};
+}
 async function bindFirstFree(server, preferred, logger) {
 	for (let port = preferred; port < preferred + PORT_SCAN_LIMIT; port += 1) try {
 		await new Promise((accept, reject) => {
@@ -3293,18 +6537,21 @@ async function bindFirstFree(server, preferred, logger) {
 		if (preferred > 0 && bound !== preferred) logger.warn(`端口 ${preferred} 被占用，改用 ${bound}`);
 		return bound;
 	} catch (error) {
-		const code = error.code;
-		if (code !== "EADDRINUSE") throw error;
+		if (error.code !== "EADDRINUSE") throw error;
 	}
 	throw new Error(`从 ${preferred} 起连续 ${PORT_SCAN_LIMIT} 个端口都被占用`);
 }
 async function listenStandaloneServer(options) {
-	const server = createServer(createRequestListener(options));
+	const security = options.security;
+	const server = createServer(createRequestListener(options, security));
+	server.requestTimeout = 1e4;
+	server.headersTimeout = 1e4;
 	server.on("clientError", (_error, socket) => socket.destroy());
 	const port = await bindFirstFree(server, options.port ?? DEFAULT_STANDALONE_PORT, options.logger);
 	options.logger.info(`独立模式服务已监听 http://127.0.0.1:${port}/`);
 	return {
 		port,
+		security: security ?? createRequestSecurity(),
 		async close() {
 			server.closeAllConnections();
 			await new Promise((accept) => server.close(() => accept()));
@@ -3325,7 +6572,8 @@ const USAGE = `dsh-pet 独立模式（不需要 DSH）
 
 说明：
   桌宠在独立模式下以「透明置顶小窗」运行；浏览器内浮层需要有 DSH 网页，独立模式不提供。
-  余额 / 碎碎念 / 对话 / 系统通知依赖 DSH 的服务，在独立模式下不可用。
+  对话与碎碎念可在本机 AI 设置页配置 API 后显式启用；未配置时不发送模型请求。
+  余额 / DSH 会话工作状态 / 系统通知仍需要 DSH 宿主。
 `;
 function parseArgs(argv) {
 	const options = {
@@ -3417,6 +6665,591 @@ function runCheck(logger) {
 }
 
 //#endregion
+//#region src/standalone/ai-storage.ts
+const MAX_CONFIG_BYTES = 32768;
+/** Never pass a shell command, account name, or an unvalidated SID to icacls. */
+function restrictFile(path) {
+	if (process.platform !== "win32") {
+		chmodSync(path, 384);
+		return;
+	}
+	const identity = execFileSync(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "whoami.exe"), [
+		"/user",
+		"/fo",
+		"csv",
+		"/nh"
+	], {
+		encoding: "utf8",
+		windowsHide: true
+	});
+	const sid = identity.match(/\bS-1-\d+(?:-\d+)+\b/)?.[0];
+	if (!sid) throw new Error("Cannot identify file owner");
+	execFileSync(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe"), [
+		path,
+		"/inheritance:r",
+		"/grant:r",
+		`*${sid}:F`
+	], {
+		stdio: "pipe",
+		windowsHide: true
+	});
+}
+function configPath(home) {
+	const directory = join(home, "dsh-pet");
+	if (!existsSync(directory)) mkdirSync(directory, {
+		recursive: true,
+		mode: 448
+	});
+	const info = lstatSync(directory);
+	if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Unsafe settings directory");
+	return join(directory, "standalone-ai.json");
+}
+function readAiSettings(home) {
+	const path = configPath(home);
+	if (!existsSync(path)) return void 0;
+	const stat = lstatSync(path);
+	if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_CONFIG_BYTES) throw new Error("Unsafe settings file");
+	if (process.platform === "win32") {
+		const acl = execFileSync(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe"), [path], {
+			encoding: "utf8",
+			windowsHide: true
+		});
+		if (/\b(?:Everyone|BUILTIN\\Users|Authenticated Users)\s*:/i.test(acl)) throw new Error("Unsafe settings permissions");
+	}
+	restrictFile(path);
+	const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+	try {
+		if (fstatSync(fd).size > MAX_CONFIG_BYTES) throw new Error("Settings file too large");
+		return JSON.parse(readFileSync(fd, "utf8"));
+	} finally {
+		closeSync(fd);
+	}
+}
+function writeAiSettings(home, settings) {
+	writePrivateJson(configPath(home), settings);
+}
+function writePrivateJson(path, settings) {
+	const directory = lstatSync(dirname(path));
+	if (!directory.isDirectory() || directory.isSymbolicLink()) throw new Error("Unsafe private file directory");
+	if (existsSync(path) && (!lstatSync(path).isFile() || lstatSync(path).isSymbolicLink())) throw new Error("Unsafe settings file");
+	const temporary = `${path}.${randomUUID()}.tmp`;
+	const fd = openSync(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 384);
+	try {
+		restrictFile(temporary);
+		writeFileSync(fd, JSON.stringify(settings), { encoding: "utf8" });
+		fsyncSync(fd);
+		closeSync(fd);
+	} catch (error) {
+		closeSync(fd);
+		unlinkSync(temporary);
+		throw error;
+	}
+	try {
+		renameSync(temporary, path);
+	} catch (error) {
+		unlinkSync(temporary);
+		throw error;
+	}
+}
+
+//#endregion
+//#region src/standalone/ai-config.ts
+const DEFAULT_AI_SETTINGS = Object.freeze({
+	protocol: "openai-compatible",
+	baseUrl: "",
+	model: "",
+	enabled: false,
+	automaticWhispers: false,
+	whisperIntervalSec: 300,
+	maxTokens: 1024,
+	timeoutMs: 3e4,
+	apiKey: ""
+});
+function safeEndpoint(value) {
+	if (!value) return true;
+	if (value !== value.trim() || /[\s\\]/.test(value)) return false;
+	try {
+		const url = new URL(value);
+		if (url.username || url.password || url.search || url.hash || value.includes("?") || value.includes("#")) return false;
+		return ["http:", "https:"].includes(url.protocol);
+	} catch {
+		return false;
+	}
+}
+function containsControlChar(s) {
+	for (let i = 0; i < s.length; i++) {
+		const code = s.charCodeAt(i);
+		if (code >= 0 && code <= 31 || code === 127) return true;
+	}
+	return false;
+}
+const fields = {
+	protocol: z.enum(["openai-compatible", "anthropic"]),
+	baseUrl: z.string().max(2048).refine(safeEndpoint),
+	model: z.string().trim().max(200).refine((s) => !containsControlChar(s)),
+	enabled: z.boolean(),
+	automaticWhispers: z.boolean(),
+	whisperIntervalSec: z.number().int().min(60).max(86400),
+	maxTokens: z.number().int().min(128).max(4096),
+	timeoutMs: z.number().int().min(1e3).max(6e4),
+	apiKey: z.string().max(4096).refine((s) => !containsControlChar(s) && !/\s/.test(s))
+};
+const persistedSchema = z.object(fields).strict();
+const patchSchema = persistedSchema.partial().extend({ clearApiKey: z.boolean().optional() }).strict();
+function validateSettings(input, previous) {
+	try {
+		const patch = patchSchema.parse(input);
+		if (patch.clearApiKey && patch.apiKey) throw new Error("Conflicting key changes");
+		const { clearApiKey,...values } = patch;
+		const apiKey = clearApiKey ? "" : values.apiKey || previous.apiKey;
+		const next = persistedSchema.parse({
+			...previous,
+			...values,
+			apiKey
+		});
+		if (next.enabled && (!next.model || !next.baseUrl || !next.apiKey)) throw new Error("Incomplete settings");
+		return next;
+	} catch {
+		throw new Error("Invalid standalone AI settings.");
+	}
+}
+function redact(settings) {
+	const { apiKey,...publicFields } = settings;
+	return {
+		...publicFields,
+		hasKey: apiKey.length > 0
+	};
+}
+function createAiConfig(home) {
+	let settings = DEFAULT_AI_SETTINGS;
+	try {
+		const loaded = readAiSettings(home);
+		if (loaded !== void 0) settings = Object.freeze(validateSettings(persistedSchema.parse(loaded), DEFAULT_AI_SETTINGS));
+	} catch {
+		throw new Error("Cannot securely load standalone AI settings.");
+	}
+	return {
+		current: () => settings,
+		publicSettings: () => redact(settings),
+		async save(input) {
+			const next = validateSettings(input, settings);
+			try {
+				writeAiSettings(home, next);
+			} catch {
+				throw new Error("Cannot securely save standalone AI settings.");
+			}
+			settings = Object.freeze(next);
+			return redact(settings);
+		}
+	};
+}
+
+//#endregion
+//#region src/standalone/ai-transport.ts
+const quiet = {
+	debug() {},
+	info() {},
+	warn() {},
+	error() {}
+};
+function isolatedFetch(settings, fetcher) {
+	const base = settings.baseUrl.replace(/\/+$/, "");
+	const expected = base + (settings.protocol === "anthropic" ? "/v1/messages" : "/chat/completions");
+	return async (url, init) => {
+		const beta = settings.protocol === "anthropic" && new URL(base).origin === "https://api.anthropic.com" && settings.model === "claude-opus-5-5";
+		const urlStr = String(url);
+		const validOpenAi = settings.protocol === "openai-compatible" && (urlStr === expected || urlStr === base + "/chat/completions" || urlStr === base + "/v1/chat/completions");
+		const validAnthropic = settings.protocol === "anthropic" && (urlStr === expected + (beta ? "?beta=true" : "") || urlStr === base + "/messages" || urlStr === base + "/v1/messages" + (beta ? "?beta=true" : ""));
+		if (!validOpenAi && !validAnthropic) throw new Error("Unexpected standalone AI endpoint.");
+		const headers = new Headers({
+			"content-type": "application/json",
+			accept: "application/json"
+		});
+		if (settings.protocol === "anthropic") {
+			headers.set("x-api-key", settings.apiKey);
+			headers.set("anthropic-version", "2023-06-01");
+			if (new URL(base).origin === "https://api.anthropic.com" && settings.model === "claude-opus-5-5") headers.set("anthropic-beta", "server-side-fallback-2026-07-01");
+		} else headers.set("authorization", `Bearer ${settings.apiKey}`);
+		return fetcher(url, {
+			method: "POST",
+			body: init?.body,
+			headers,
+			signal: init?.signal,
+			redirect: "error"
+		});
+	};
+}
+async function* sdkTextStream(settings, request, signal, fetcher) {
+	const shared = {
+		apiKey: settings.apiKey,
+		baseURL: settings.baseUrl.replace(/\/+$/, ""),
+		maxRetries: 0,
+		timeout: settings.timeoutMs,
+		fetch: isolatedFetch(settings, fetcher),
+		logger: quiet,
+		logLevel: "off"
+	};
+	if (settings.protocol === "openai-compatible") {
+		const client$1 = new OpenAI({
+			...shared,
+			organization: null,
+			project: null,
+			webhookSecret: null
+		});
+		const messages = [...request.system ? [{
+			role: "system",
+			content: request.system
+		}] : [], ...request.messages];
+		const stream$1 = await client$1.chat.completions.create({
+			model: settings.model,
+			messages,
+			stream: true,
+			max_tokens: settings.maxTokens,
+			n: 1
+		}, { signal });
+		for await (const event of stream$1) {
+			const delta = event.choices.find((choice) => choice.index === 0)?.delta;
+			if (delta?.refusal) yield { refusal: true };
+			if (delta?.content) yield { text: delta.content };
+		}
+		return;
+	}
+	const client = new Anthropic({
+		...shared,
+		authToken: null,
+		webhookKey: null
+	});
+	const opus = settings.model === "claude-opus-5-5";
+	const firstParty = new URL(settings.baseUrl).origin === "https://api.anthropic.com";
+	const parameters = {
+		model: settings.model,
+		max_tokens: settings.maxTokens,
+		system: request.system,
+		messages: request.messages,
+		stream: true,
+		...opus ? {
+			thinking: { type: "adaptive" },
+			output_config: { effort: "low" }
+		} : {}
+	};
+	const stream = opus && firstParty ? await client.beta.messages.create({
+		...parameters,
+		betas: ["server-side-fallback-2026-07-01"],
+		fallbacks: "default"
+	}, { signal }) : await client.messages.create(parameters, { signal });
+	for await (const event of stream) {
+		if (event.type === "message_delta" && event.delta.stop_reason === "refusal") yield { refusal: true };
+		if (event.type === "content_block_delta" && event.delta.type === "text_delta") yield { text: event.delta.text };
+	}
+}
+function isAuthenticationFailure(error) {
+	return error instanceof OpenAI.AuthenticationError || error instanceof OpenAI.PermissionDeniedError || error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError;
+}
+function isRateLimitFailure(error) {
+	return error instanceof OpenAI.RateLimitError || error instanceof Anthropic.RateLimitError;
+}
+
+//#endregion
+//#region src/standalone/ai-provider.ts
+const PROVIDER = "standalone";
+const MAX_INPUT_CHARS = 32768;
+const MAX_OUTPUT_CHARS = 16384;
+const MAX_EVENTS = 4096;
+const REQUESTS_PER_MINUTE = 6;
+const RATE_WINDOW_MS = 6e4;
+const textBlock = z.object({
+	type: z.literal("text"),
+	text: z.string().max(MAX_INPUT_CHARS)
+});
+const messageSchema = z.object({
+	role: z.enum(["user", "assistant"]),
+	content: z.union([z.string().max(MAX_INPUT_CHARS), z.array(z.unknown()).max(128)])
+});
+const inputSchema = z.object({
+	provider: z.literal(PROVIDER),
+	model: z.string().max(200),
+	system: z.string().max(MAX_INPUT_CHARS).optional(),
+	messages: z.array(messageSchema).min(1).max(64),
+	signal: z.custom((value) => value instanceof AbortSignal).optional()
+});
+function parseRequest(options, model) {
+	const parsed = inputSchema.safeParse(options);
+	if (!parsed.success || parsed.data.model !== model) throw new Error("Invalid standalone AI model selection or input.");
+	const { data } = parsed;
+	const messages = data.messages.map((message) => ({
+		role: message.role,
+		content: typeof message.content === "string" ? message.content : message.content.map((block) => {
+			if (typeof block !== "object" || block === null || !("type" in block) || block.type !== "text") return "";
+			const result = textBlock.safeParse(block);
+			if (!result.success) throw new Error("Invalid standalone AI text input.");
+			return result.data.text;
+		}).join("")
+	})).filter((message) => message.content.trim().length > 0);
+	const system = data.system ?? "";
+	const size = system.length + messages.reduce((sum, message) => sum + message.content.length, 0);
+	if (size > MAX_INPUT_CHARS || messages.length === 0 || messages[0].role !== "user" || messages[messages.length - 1]?.role !== "user") throw new Error("Standalone AI input is empty or exceeds limits.");
+	return {
+		request: {
+			system,
+			messages
+		},
+		signal: data.signal
+	};
+}
+function abortable(promise, signal) {
+	if (signal.aborted) return Promise.reject(new Error("Standalone AI request cancelled."));
+	return new Promise((resolve$1, reject) => {
+		const abort = () => reject(new Error("Standalone AI request cancelled."));
+		signal.addEventListener("abort", abort, { once: true });
+		promise.then(resolve$1, reject).finally(() => signal.removeEventListener("abort", abort));
+	});
+}
+function createStandaloneAi(home, logger, dependencies = {}) {
+	let store;
+	try {
+		store = createAiConfig(home);
+	} catch {
+		logger.error("Cannot securely load standalone AI settings.");
+		throw new Error("Cannot securely load standalone AI settings.");
+	}
+	const fetcher = dependencies.fetch ?? globalThis.fetch.bind(globalThis);
+	const now = dependencies.now ?? Date.now;
+	let disposed = false;
+	let paused = false;
+	let saving = false;
+	let requests = [];
+	let active;
+	const ready = () => !disposed && !paused && !saving && store.current().enabled && !!store.current().model && !!store.current().baseUrl && !!store.current().apiKey;
+	const selection = () => ({
+		provider: PROVIDER,
+		model: ready() ? store.current().model : ""
+	});
+	async function* stream(options) {
+		if (!ready()) throw new Error("Standalone AI is not ready. Configure and enable the model first.");
+		const settings = store.current();
+		const { request, signal: callerSignal } = parseRequest(options, settings.model);
+		if (callerSignal?.aborted) throw new Error("Standalone AI request cancelled.");
+		if (active) throw new Error("Standalone AI is busy. Please wait.");
+		const recent = requests.filter((time) => now() - time < RATE_WINDOW_MS);
+		if (recent.length >= REQUESTS_PER_MINUTE) throw new Error("Standalone AI rate limit reached. Please wait.");
+		requests = [...recent, now()];
+		const controller = new AbortController();
+		active = controller;
+		const abort = () => controller.abort();
+		callerSignal?.addEventListener("abort", abort, { once: true });
+		const timer = setTimeout(abort, settings.timeoutMs);
+		const iterator = sdkTextStream(settings, request, controller.signal, fetcher)[Symbol.asyncIterator]();
+		let emitted = 0;
+		let events = 0;
+		try {
+			while (true) {
+				const part = await abortable(iterator.next(), controller.signal);
+				if (controller.signal.aborted || !ready()) throw new Error("Standalone AI request cancelled.");
+				if (part.done) break;
+				if (++events > MAX_EVENTS) throw new Error("Standalone AI response exceeds limits.");
+				if (part.value.refusal) throw new Error("Standalone AI could not answer this request.");
+				const text = part.value.text;
+				if (!text) continue;
+				emitted += text.length;
+				if (emitted > MAX_OUTPUT_CHARS) throw new Error("Standalone AI response exceeds limits.");
+				yield {
+					type: "text",
+					text
+				};
+			}
+			if (emitted === 0) throw new Error("Standalone AI returned no text.");
+		} catch (error) {
+			if (isAuthenticationFailure(error)) {
+				paused = true;
+				logger.warn("Standalone AI authentication failed; save settings again to resume.");
+				throw new Error("Standalone AI authentication failed. Check credentials and save settings again.", { cause: error });
+			}
+			if (controller.signal.aborted) throw new Error("Standalone AI request cancelled or timed out.", { cause: error });
+			if (isRateLimitFailure(error)) throw new Error("Standalone AI provider rate limit reached. Please wait.", { cause: error });
+			if (error instanceof Error && [
+				"Standalone AI could not answer this request.",
+				"Standalone AI returned no text.",
+				"Standalone AI response exceeds limits."
+			].includes(error.message)) throw error;
+			logger.warn("Standalone AI request failed.");
+			throw new Error("Standalone AI request failed. Check the endpoint and model settings.", { cause: error });
+		} finally {
+			clearTimeout(timer);
+			callerSignal?.removeEventListener("abort", abort);
+			controller.abort();
+			if (active === controller) active = void 0;
+			iterator.return?.().catch(() => logger.debug("Standalone AI transport closed."));
+		}
+	}
+	return {
+		currentSelection: selection,
+		listProviders: () => ready() ? [{
+			id: PROVIDER,
+			name: "Standalone AI"
+		}] : [],
+		listModels: async (provider) => ready() && provider === PROVIDER ? [{
+			id: settingsModel(),
+			name: settingsModel()
+		}] : [],
+		resolveModelInfo: async (provider = PROVIDER, model = settingsModel(), signal) => ready() && !signal?.aborted && provider === PROVIDER && model === settingsModel() ? {
+			id: model,
+			name: model
+		} : void 0,
+		stream,
+		getSettings: () => store.publicSettings(),
+		async saveSettings(input) {
+			if (disposed) throw new Error("Standalone AI is disposed.");
+			if (saving) throw new Error("Standalone AI settings are being saved.");
+			saving = true;
+			active?.abort();
+			try {
+				const result = await store.save(input);
+				if (!disposed) paused = false;
+				return result;
+			} catch (error) {
+				paused = true;
+				throw error;
+			} finally {
+				saving = false;
+			}
+		},
+		isReady: ready,
+		async testConnection(input) {
+			if (disposed) return {
+				ok: false,
+				message: "服务已关闭"
+			};
+			const current = store.current();
+			const protocol = input.protocol === "anthropic" ? "anthropic" : input.protocol ?? current.protocol;
+			const baseUrl = (input.baseUrl !== void 0 ? input.baseUrl : current.baseUrl).trim();
+			const model = (input.model !== void 0 ? input.model : current.model).trim();
+			const apiKey = (input.apiKey !== void 0 && input.apiKey !== "" ? input.apiKey : current.apiKey).trim();
+			if (!baseUrl) return {
+				ok: false,
+				message: "请先填写接口地址（Base URL）"
+			};
+			if (!model) return {
+				ok: false,
+				message: "请先填写模型名称"
+			};
+			if (!apiKey) return {
+				ok: false,
+				message: "请先填写 API 密钥"
+			};
+			const testSettings = {
+				protocol,
+				baseUrl,
+				model,
+				apiKey,
+				enabled: true,
+				automaticWhispers: false,
+				whisperIntervalSec: 300,
+				maxTokens: 32,
+				timeoutMs: 15e3
+			};
+			const controller = new AbortController();
+			const timer = setTimeout(() => controller.abort(), 15e3);
+			try {
+				const testStream = sdkTextStream(testSettings, {
+					system: "",
+					messages: [{
+						role: "user",
+						content: "hi"
+					}]
+				}, controller.signal, fetcher);
+				let reply = "";
+				for await (const chunk of testStream) {
+					if (chunk.refusal) return {
+						ok: false,
+						message: "模型拒绝回答该测试请求"
+					};
+					if (chunk.text) {
+						reply += chunk.text;
+						if (reply.length >= 40) break;
+					}
+				}
+				if (!reply.trim()) return {
+					ok: true,
+					message: "连接成功！接口已成功响应。",
+					reply: "(模型返回了空白内容)"
+				};
+				return {
+					ok: true,
+					message: "连接成功！模型响应正常。",
+					reply: reply.trim()
+				};
+			} catch (error) {
+				if (controller.signal.aborted) return {
+					ok: false,
+					message: "连接超时（15 秒未响应）：请检查网络连通性或服务器状态"
+				};
+				if (isAuthenticationFailure(error)) return {
+					ok: false,
+					message: "身份验证失败 (HTTP 401/403)：请检查 API 密钥是否正确"
+				};
+				if (isRateLimitFailure(error)) return {
+					ok: false,
+					message: "请求受限或配额超限 (HTTP 429)：请检查 API 账户余额或调用频率"
+				};
+				const rawMsg = error instanceof Error ? error.message : String(error);
+				if (rawMsg.includes("404")) return {
+					ok: false,
+					message: "接口路径或模型不存在 (HTTP 404)：请检查接口地址（通常以 /v1 结尾）与模型名称"
+				};
+				if (rawMsg.includes("ECONNREFUSED") || rawMsg.includes("fetch failed")) return {
+					ok: false,
+					message: "无法连接到目标服务器：请检查地址与端口是否正确、服务器是否正在运行"
+				};
+				return {
+					ok: false,
+					message: `连接失败：${rawMsg}`
+				};
+			} finally {
+				clearTimeout(timer);
+			}
+		},
+		canWhisper: () => ready() && store.current().automaticWhispers,
+		dispose() {
+			disposed = true;
+			active?.abort();
+		}
+	};
+	function settingsModel() {
+		return store.current().model;
+	}
+}
+
+//#endregion
+//#region src/standalone/runtime-state.ts
+function writeStandaloneRuntime(home, details) {
+	const directory = join(home, "dsh-pet");
+	mkdirSync(directory, { recursive: true });
+	const file = join(directory, "standalone-runtime.json");
+	try {
+		writePrivateJson(file, {
+			name: "dsh-pet-standalone",
+			pid: process.pid,
+			startedAt: new Date().toISOString(),
+			...details
+		});
+	} catch (error) {
+		throw new Error("无法安全写入桌宠运行状态，请检查数据目录的访问权限。", { cause: error });
+	}
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		try {
+			const current = JSON.parse(readFileSync(file, "utf8"));
+			if (current.pid === process.pid && current.token === details.token) unlinkSync(file);
+		} catch (error) {
+			if (error.code === "ENOENT") return;
+			throw new Error("清理桌宠运行状态失败；请检查数据目录，未删除其他进程的状态。", { cause: error });
+		}
+	};
+}
+
+//#endregion
 //#region src/standalone/context.ts
 const STANDALONE_PROVIDER = "standalone";
 function createStandaloneLogger() {
@@ -3434,11 +7267,13 @@ function createStandaloneLogger() {
 	};
 }
 function createStandaloneContext(options) {
-	const { logger } = options;
+	const { logger, ai } = options;
 	const routes = options.routes ?? [];
 	const failures = [];
 	/** effect 释放函数（后注册先释放，与 Cordis 的逆序释放一致） */
 	const disposers = [];
+	/** 插件通过 ctx.provide 挂出去的服务（独立模式没有其他插件，通常为空） */
+	const services = new Map();
 	let disposed = false;
 	const portOf = () => typeof options.port === "function" ? options.port() : options.port;
 	const webServer = {
@@ -3470,18 +7305,38 @@ function createStandaloneContext(options) {
 				return void 0;
 			}
 		},
+		provide(name, value) {
+			services.set(name, value);
+			return () => {
+				if (services.get(name) === value) services.delete(name);
+			};
+		},
+		get(name) {
+			return services.get(name);
+		},
 		on() {
 			return () => {};
 		},
 		logger,
 		webServer,
+		connection: { authenticatedUrl: options.authenticatedUrl ?? ((baseUrl) => baseUrl) },
+		...ai ? { standaloneAi: {
+			isReady: () => ai.isReady(),
+			canWhisper: () => ai.canWhisper(),
+			whisperIntervalSec: () => ai.getSettings().whisperIntervalSec
+		} } : {},
 		commands: { register: () => () => {} },
-		agentDefaultModel: { currentSelection: () => ({
+		agentDefaultModel: { currentSelection: () => ai?.currentSelection() ?? {
 			provider: STANDALONE_PROVIDER,
 			model: ""
-		}) },
+		} },
 		credentials: { resolve: async () => void 0 },
-		llm: {
+		llm: ai ? {
+			listProviders: () => ai.listProviders(),
+			listModels: (provider) => ai.listModels(provider),
+			resolveModelInfo: (provider, model, signal) => ai.resolveModelInfo(provider, model, signal),
+			stream: (request) => ai.stream(request)
+		} : {
 			listProviders: () => [],
 			listModels: async () => [],
 			resolveModelInfo: async () => void 0,
@@ -3499,6 +7354,7 @@ function createStandaloneContext(options) {
 		async dispose() {
 			if (disposed) return;
 			disposed = true;
+			ai?.dispose();
 			for (const dispose of disposers.splice(0).reverse()) try {
 				await dispose();
 			} catch (error) {
@@ -3521,18 +7377,26 @@ async function run(logger, options) {
 	}
 	const routes = [];
 	const portRef = { value: options.port };
+	const ai = createStandaloneAi(home, logger);
+	const security = createRequestSecurity();
 	const context = createStandaloneContext({
 		port: () => portRef.value,
 		logger,
-		routes
+		routes,
+		ai,
+		authenticatedUrl: security.authenticatedUrl
 	});
 	let forwardShutdown = () => {};
 	const server = await listenStandaloneServer({
 		routes,
 		logger,
 		port: options.port,
+		security,
+		ai,
 		status: () => ({
 			name: "dsh-pet-standalone",
+			pid: process.pid,
+			pluginRoot: packageRoot,
 			plugin: {
 				root: packageRoot,
 				version: packageVersion(packageRoot)
@@ -3543,13 +7407,30 @@ async function run(logger, options) {
 		onShutdown: () => forwardShutdown()
 	});
 	portRef.value = server.port;
+	let releaseRuntime;
+	try {
+		releaseRuntime = writeStandaloneRuntime(home, {
+			port: server.port,
+			token: security.token,
+			settingsUrl: security.authenticatedUrl(`http://127.0.0.1:${server.port}`),
+			pluginRoot: packageRoot
+		});
+	} catch (error) {
+		await context.dispose();
+		await server.close();
+		throw error;
+	}
 	let shuttingDown = false;
 	const shutdown = async (reason) => {
 		if (shuttingDown) return;
 		shuttingDown = true;
 		logger.info(`收尾（${reason}）…`);
-		await context.dispose();
-		await server.close();
+		try {
+			await context.dispose();
+		} finally {
+			await server.close();
+			releaseRuntime();
+		}
 		logger.info("已退出。");
 	};
 	const requestShutdown = (reason) => {
@@ -3579,7 +7460,8 @@ async function run(logger, options) {
 		`  配置        ${configSource}`,
 		`  宠物        ${describePets(pets)}`,
 		desktopVisible.length === 0 ? "  桌面小窗    0 只：display 需要 desktop 或 both 才会出现透明小窗（服务仍在运行）" : `  桌面小窗    ${desktopVisible.length} 只`,
-		"  不可用      余额 / 碎碎念 / 对话 / 系统通知（依赖 DSH 的凭证、模型与会话）",
+		ai.isReady() ? "  AI          本机 API 已启用；自动碎碎念遵循设置页开关" : "  AI          未配置或未启用，不发送模型请求；右键“打开 AI 设置”后在本机填写",
+		"  不可用      余额 / 会话工作状态 / DSH 系统通知",
 		"  退出        Ctrl+C，或 POST /shutdown",
 		""
 	]) logger.info(line);

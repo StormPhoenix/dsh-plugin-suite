@@ -11,6 +11,10 @@ export declare const HIT_BOX: {
 };
 /** 拖拽判定阈值（px） */
 export declare const DRAG_THRESHOLD = 5;
+/** 弹弓窗口（ms）：**两次按下**之间的间隔小于它就按弹弓算（不是「松手」到「下次按下」）。
+ *  按下即记、按下即比，所以这次拖了多久、什么时候松手都不影响判定。
+ *  只认左键；没有模式、没有待拉状态（见 physics.ts 的弹弓换算）。 */
+export declare const SLINGSHOT_DOUBLE_MS = 200;
 /** 移动距离缩放基准（px）：config.jsonc 的 moves.minDist/maxDist 是「基准宠物宽 462px」下的绝对像素，
  *  运行时乘以 实际size/基准 等比缩放 —— 任何缩放下，行进距离与人物自身大小成比例（小宠物挪小步、大宠物挪大步） */
 export declare const PET_REF_WIDTH = 462;
