@@ -1,6 +1,6 @@
 # DSH 插件集合：独立插件与源码
 
-本仓库集中维护 DS Pet、Memory、乔木阅读、Better Sidebar 与 MCP Connector。仓库根是开发管理目录，不是 DSH Bundle。前三个插件保留原有分发结构；本次引入的 Better Sidebar 仅保存源码、测试、必要配置、文档与素材，不提交构建产物或辅助脚本，不能直接安装未构建的目录。
+本仓库集中维护 DS Pet、Memory、乔木阅读与 Better Sidebar。仓库根是开发管理目录，不是 DSH Bundle。前三个插件保留原有分发结构；本次引入的 Better Sidebar 仅保存源码、测试、必要配置、文档与素材，不提交构建产物或辅助脚本，不能直接安装未构建的目录。
 
 | 插件 | 安装目录 | 包名 | 条目 ID |
 |---|---|---|---|
@@ -8,7 +8,6 @@
 | Memory | `plugins/memory` | `dsh-memory` | `memory` |
 | 乔木阅读 | `plugins/qiaomu-reader` | `qiaomu-reader-dsh` | `qiaomu-reader` |
 | Better Sidebar | `plugins/better-sidebar` | `dsh-better-sidebar` | `better-sidebar` |
-| MCP Connector | `plugins/mcp-connector` | `dsh-mcp-connector` | `mcp-connector` |
 
 ## 按目录安装
 
@@ -43,12 +42,6 @@ pnpm build
 
 该命令递归执行各 workspace 包已有的 `build`：目前构建 Better Sidebar 与乔木阅读；Pet 和 Memory 没有 `build`，会被跳过，继续使用现有产物。Better Sidebar 的构建产物仅保留在本地，不提交；乔木阅读的构建会重写其已有分发产物。只构建 Better Sidebar 时使用 `pnpm --filter dsh-better-sidebar build`。
 
-## MCP Connector 本地维护版本
-
-MCP Connector 位于 `plugins/mcp-connector`，版本 `0.2.70-local.1`。上游采用手写 ESM JavaScript，`lib/` 是源码而非构建产物，因此无需构建即可按目录安装。安装前执行 `pnpm install --ignore-scripts`、`pnpm --filter dsh-mcp-connector check` 与 `node scripts/verify.mjs`。开发依赖链接相邻的已构建 `../deepseek-harness`；其他目录布局需调整链接。
-
-本地版使用 Host Connection 认证，保留 401/403，不提供普通市场覆盖更新；上游版本仅供参考，更新需人工合并源码。替换同名安装需要完整重启才能生效，本次源码迁移不修改任何生产 profile、连接记录或凭据。`runtime/cli-bridge.mjs` 是运行入口，必须保留；发布、营销及截图辅助脚本不随副本迁入。
-
 ## Better Sidebar 本地兼容版本
 
 `0.25.0-local.1` 保留上游包名、路由和 `better-sidebar` 条目 ID，把已移除的 Host `webRuntime` 依赖替换为 `connection.requestRejection()`，由 Host 统一执行信任与认证，保留 401/403，不通过豁免绕过缺失服务。来源提交与修改摘要见 [UPSTREAM.md](UPSTREAM.md) 和 [SNAPSHOT.json](SNAPSHOT.json)。本地修复不是上游发布版本，插件市场在线更新会覆盖修复。
@@ -70,7 +63,7 @@ node scripts/verify.mjs
 node scripts/verify-rebuild.mjs
 ```
 
-`verify.mjs` 检查三个原有分发包及 MCP Connector的独立入口、单条目 patch、客户端声明、资源与 JavaScript 语法，并检查缺失 Pet 客户端声明或入口会被拒绝。不导入插件、不打开用户数据库；静态检查不等于运行时验证。
+`verify.mjs` 检查 Pet 与乔木阅读的独立入口、单条目 patch、客户端声明、资源与 JavaScript 语法，并检查缺失 Pet 客户端声明或入口会被拒绝。不导入插件、不打开用户数据库；静态检查不等于运行时验证。
 
 `verify-rebuild.mjs` 保留对乔木阅读现有产物的检查，不覆盖仅存源码的 Better Sidebar：先核对已提交产物与 [SNAPSHOT.json](SNAPSHOT.json) 记录的发布摘要一致，再重新构建并逐字节比对。比对不一致时会还原已提交的产物并返回非零退出码，不留下脏工作树。运行前需在仓库根执行 `pnpm install --ignore-scripts`。
 

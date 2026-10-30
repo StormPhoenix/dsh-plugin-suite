@@ -43,30 +43,6 @@ const PLUGINS = [
     entry: './index.js',
     client: { entry: './client.js', moduleId: 'qiaomu-reader-dsh' },
   },
-  {
-    folder: 'mcp-connector',
-    name: 'dsh-mcp-connector',
-    id: 'mcp-connector',
-    entry: './lib/index.js',
-    client: { entry: './lib/client.js', moduleId: 'dsh-mcp-connector' },
-    extra: ({ dir, pkg }) => {
-      assert.equal(pkg.private, true);
-      assert.match(pkg.version, /-local\./);
-      checkSyntax(dir, ['runtime/cli-bridge.mjs']);
-      assert.doesNotMatch(JSON.stringify(pkg.scripts), /scripts\//);
-    },
-  },
-  {
-    folder: 'project-memory',
-    name: '@yolk_vat-y/dsh-project-memory',
-    id: 'project-memory',
-    entry: './src/index.js',
-    client: { entry: './client/client.js', moduleId: '@yolk_vat-y/dsh-project-memory' },
-    extra: ({ pkg }) => {
-      assert.equal(pkg.private, true);
-      assert.match(pkg.version, /-local\./);
-    },
-  },
 ];
 
 /** A web plugin exposes its client half at the declared entry, on no other platform. */
