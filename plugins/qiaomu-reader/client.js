@@ -106567,6 +106567,34 @@ function chapterHrefOf(engine, index) {
     return "";
   }
 }
+function textOffsetOf(flow, node, offset) {
+  const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT, null);
+  let seen = 0;
+  let current = walker.nextNode();
+  while (current) {
+    if (current === node) return seen + offset;
+    seen += (current.nodeValue || "").length;
+    current = walker.nextNode();
+  }
+  return null;
+}
+function caretAtTextOffset(flow, index) {
+  const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT, null);
+  let seen = 0;
+  let last = null;
+  let current = walker.nextNode();
+  while (current) {
+    const length = (current.nodeValue || "").length;
+    if (length > 0) {
+      if (index < seen + length) return { node: current, offset: index - seen };
+      last = current;
+    }
+    seen += length;
+    current = walker.nextNode();
+  }
+  if (last === null) return null;
+  return { node: last, offset: Math.max(0, (last.nodeValue || "").length - 1) };
+}
 function buildTextIndex(container) {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
   const map = [];
@@ -106773,6 +106801,7 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const pdfAnchorRef = React14.useRef(null);
   const pdfRenderedRef = React14.useRef(null);
   const textAnchorRef = React14.useRef(null);
+  const skipCaptureRef = React14.useRef(null);
   const wheelIntentRef = React14.useRef(createWheelIntent());
   const zoomIntentRef = React14.useRef(createZoomIntent());
   const highlights = React14.useMemo(
@@ -106838,21 +106867,49 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       window.removeEventListener("resize", update);
     };
   }, [isPdf, bookId]);
-  const captureTextAnchor = React14.useCallback(() => {
+  const captureTextAnchor = React14.useCallback((reason = "page") => {
     const viewport = viewportRef.current;
     const flow = flowRef.current;
     if (!viewport || !flow || isPdf) return;
     const box = viewport.getBoundingClientRect();
-    const caret = document.caretPositionFromPoint?.(box.left + 4, box.top + 8);
-    const fallback = !caret && document.caretRangeFromPoint?.(box.left + 4, box.top + 8);
+    const meta = measureRef.current;
+    const stride = Math.max(1, (meta.perPage || 1) * ((meta.columnWidth || 320) + (meta.gap || COLUMN_GAP)));
+    const flowBox = flow.getBoundingClientRect();
+    const shifted = Math.abs(parseFloat(/translateX\((-?[\d.]+)px\)/.exec(flow.style.transform || "")?.[1] ?? "0")) || 0;
+    const visualPage = settings.flow === "scroll" ? 0 : Math.round(shifted / stride);
+    const contentLeft = flowBox.left + shifted;
+    const content = {
+      left: Math.max(box.left, contentLeft),
+      top: Math.max(box.top, flowBox.top),
+      right: box.right,
+      bottom: box.bottom
+    };
+    const pageOf = (left) => visualPage + Math.floor((left - contentLeft + 1) / stride);
+    const commit = (node2, offset, rect) => {
+      if (settings.flow !== "scroll" && pageOf(rect.left) !== visualPage) return false;
+      const textOffset = textOffsetOf(flow, node2, offset);
+      textAnchorRef.current = {
+        node: node2,
+        offset,
+        textOffset,
+        y: rect.top - box.top,
+        scrollTop: viewport.scrollTop,
+        chapterIndex,
+        bookId,
+        page: liveRef.current.page
+      };
+      return true;
+    };
+    const caret = document.caretPositionFromPoint?.(content.left + 4, content.top + 8);
+    const fallback = !caret && document.caretRangeFromPoint?.(content.left + 4, content.top + 8);
     const caretNode = caret?.offsetNode || fallback?.startContainer;
     const caretOffset = caret?.offset ?? fallback?.startOffset;
     if (caretNode?.nodeType === Node.TEXT_NODE && flow.contains(caretNode) && caretOffset < caretNode.length) {
       const range = document.createRange();
       range.setStart(caretNode, caretOffset);
       range.setEnd(caretNode, caretOffset + 1);
-      textAnchorRef.current = { node: caretNode, offset: caretOffset, y: range.getBoundingClientRect().top - box.top, scrollTop: viewport.scrollTop, chapterIndex, bookId };
-      return;
+      const rect = range.getBoundingClientRect();
+      if (rect.bottom > content.top && rect.top < content.bottom && rect.left < content.right && rect.right > content.left && commit(caretNode, caretOffset, rect)) return;
     }
     const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT);
     let node;
@@ -106861,21 +106918,18 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       const range = document.createRange();
       range.selectNodeContents(node);
       for (const rect of range.getClientRects()) {
-        if (rect.bottom > box.top && rect.top < box.bottom && rect.right > box.left && rect.left < box.right) {
+        if (rect.bottom > content.top && rect.top < content.bottom && rect.right > content.left && rect.left < content.right) {
           let offset = 0;
           for (; offset < node.length; offset += 1) {
             range.setStart(node, offset);
             range.setEnd(node, offset + 1);
             const part = range.getBoundingClientRect();
-            if (part.bottom > box.top && part.top < box.bottom && part.right > box.left && part.left < box.right) {
-              textAnchorRef.current = { node, offset, y: part.top - box.top, scrollTop: viewport.scrollTop, chapterIndex, bookId };
-              return;
-            }
+            if (part.bottom > content.top && part.top < content.bottom && part.right > content.left && part.left < content.right && commit(node, offset, part)) return;
           }
         }
       }
     }
-  }, [isPdf, bookId, chapterIndex]);
+  }, [isPdf, bookId, chapterIndex, settings.flow]);
   const adjustZoom = React14.useCallback((direction, point = null) => {
     const live = liveRef.current;
     const viewport = viewportRef.current;
@@ -107270,25 +107324,64 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   React14.useEffect(() => {
     const measureNow = () => {
       try {
+        const pageBefore = liveRef.current.page ?? 0;
         measure();
+        const meta = measureRef.current;
         const anchor = textAnchorRef.current;
         const anchorViewport = viewportRef.current;
-        const anchorMoved = !!(anchor && anchorViewport && Number.isFinite(anchor.scrollTop) && Math.abs(anchorViewport.scrollTop - anchor.scrollTop) > Math.max(1, anchorViewport.clientHeight));
+        const anchorMoved = !!(anchor && anchorViewport && Number.isFinite(anchor.scrollTop) && settings.flow === "scroll" && Math.abs(anchorViewport.scrollTop - anchor.scrollTop) > Math.max(1, anchorViewport.clientHeight));
+        const anchorUsable = !!anchor && pendingRestoreRef.current === null && anchor.bookId === bookId && anchor.chapterIndex === chapterIndex && (settings.flow === "scroll" || anchor.page === pageBefore);
+        let landedPage = null;
         if (anchorMoved) {
           textAnchorRef.current = null;
-        } else if (anchor && anchor.node.isConnected && anchor.bookId === bookId && anchor.chapterIndex === chapterIndex) {
-          const range = document.createRange();
-          range.setStart(anchor.node, anchor.offset);
-          range.setEnd(anchor.node, Math.min(anchor.node.length, anchor.offset + 1));
-          const rect = range.getClientRects()[0];
-          if (rect && settings.flow === "paginated") {
-            const x = rect.left - flowRef.current.getBoundingClientRect().left;
-            const meta = measureRef.current;
-            setPage(Math.floor(Math.max(0, x) / (meta.perPage * (meta.columnWidth + meta.gap))));
-          } else if (rect) {
-            viewportRef.current.scrollTop += rect.top - viewportRef.current.getBoundingClientRect().top - anchor.y;
+        } else if (anchorUsable) {
+          const flow = flowRef.current;
+          const caret = flow && Number.isFinite(anchor.textOffset) ? caretAtTextOffset(flow, anchor.textOffset) : null;
+          const node = caret?.node ?? (anchor.node?.isConnected ? anchor.node : null);
+          const offset = caret?.offset ?? anchor.offset;
+          const range = node ? document.createRange() : null;
+          if (range) {
+            range.setStart(node, offset);
+            range.setEnd(node, Math.min(node.length, offset + 1));
           }
-          textAnchorRef.current = null;
+          const rect = range?.getClientRects()[0] ?? null;
+          if (rect && settings.flow === "paginated") {
+            const x = rect.left - flow.getBoundingClientRect().left;
+            const colStride = (meta.perPage || 1) * ((meta.columnWidth || 320) + (meta.gap || COLUMN_GAP));
+            landedPage = Math.min(
+              Math.floor((Math.max(0, x) + 1) / colStride),
+              Math.max(0, meta.pages - 1)
+            );
+            flow.style.transition = "none";
+            flow.style.transform = `translateX(${-landedPage * meta.perPage * (meta.columnWidth + meta.gap)}px)`;
+            setPage(landedPage);
+            liveRef.current = { ...liveRef.current, page: landedPage };
+            skipCaptureRef.current = { page: landedPage };
+          } else if (rect) {
+            const viewportNow = viewportRef.current;
+            viewportNow.scrollTop += rect.top - viewportNow.getBoundingClientRect().top - anchor.y;
+            textAnchorRef.current = {
+              ...anchor,
+              node,
+              offset,
+              y: anchor.y,
+              scrollTop: viewportNow.scrollTop
+            };
+          }
+          if (landedPage !== null) {
+            const viewportNow = viewportRef.current;
+            textAnchorRef.current = {
+              ...anchor,
+              node,
+              offset,
+              // 同一个字符现在显示在新页码上：页码跟上，字符序号保持不变。
+              page: landedPage,
+              y: viewportNow ? rect.top - viewportNow.getBoundingClientRect().top : 0,
+              scrollTop: viewportNow ? viewportNow.scrollTop : 0
+            };
+          } else if (!rect) {
+            textAnchorRef.current = null;
+          }
         }
       } catch (_error) {
       }
@@ -107320,18 +107413,34 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   React14.useEffect(() => {
     if (isPdf) return void 0;
     const viewport = viewportRef.current;
-    let frame;
+    let frame = null;
+    let timer = null;
+    const runCapture = () => {
+      const skip = skipCaptureRef.current;
+      if (skip !== null) {
+        skipCaptureRef.current = null;
+        if (liveRef.current.page === skip.page) return;
+      }
+      captureTextAnchor();
+    };
     const capture = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(captureTextAnchor);
+      if (frame !== null) cancelAnimationFrame(frame);
+      if (timer !== null) clearTimeout(timer);
+      if (settings.flow === "scroll") {
+        frame = requestAnimationFrame(runCapture);
+        return;
+      }
+      timer = setTimeout(runCapture, 220);
     };
     capture();
-    viewport?.addEventListener("scroll", capture);
+    const onScroll = () => capture();
+    viewport?.addEventListener("scroll", onScroll);
     return () => {
-      cancelAnimationFrame(frame);
-      viewport?.removeEventListener("scroll", capture);
+      if (frame !== null) cancelAnimationFrame(frame);
+      if (timer !== null) clearTimeout(timer);
+      viewport?.removeEventListener("scroll", onScroll);
     };
-  }, [isPdf, page, captureTextAnchor]);
+  }, [isPdf, page, settings.flow, captureTextAnchor]);
   React14.useLayoutEffect(() => {
     if (panel !== "toc") return void 0;
     reportTocAnchor();

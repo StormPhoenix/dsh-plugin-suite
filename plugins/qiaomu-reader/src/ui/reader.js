@@ -51,6 +51,51 @@ function chapterHrefOf(engine, index) {
 }
 
 /**
+ * 文本位置 → 正文内的字符序号（按文档顺序累加文本节点长度）。
+ * 重新排版（面板开合、字号变化）会重建节点，持有节点引用在下一次布局就失效；
+ * 字符序号只依赖文字本身，重排后仍能找回同一段文字。
+ * @param {HTMLElement} flow - 正文容器。
+ * @param {Text} node - 文本节点。
+ * @param {number} offset - 节点内偏移。
+ * @returns {number|null} 字符序号；节点不属于该正文时返回 null。
+ */
+export function textOffsetOf(flow, node, offset) {
+  const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT, null);
+  let seen = 0;
+  let current = walker.nextNode();
+  while (current) {
+    if (current === node) return seen + offset;
+    seen += (current.nodeValue || '').length;
+    current = walker.nextNode();
+  }
+  return null;
+}
+
+/**
+ * 字符序号 → 文本位置。
+ * @param {HTMLElement} flow - 正文容器。
+ * @param {number} index - 字符序号。
+ * @returns {{node: Text, offset: number}|null} 文本位置；正文没有文字时返回 null。
+ */
+export function caretAtTextOffset(flow, index) {
+  const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT, null);
+  let seen = 0;
+  let last = null;
+  let current = walker.nextNode();
+  while (current) {
+    const length = (current.nodeValue || '').length;
+    if (length > 0) {
+      if (index < seen + length) return { node: current, offset: index - seen };
+      last = current;
+    }
+    seen += length;
+    current = walker.nextNode();
+  }
+  if (last === null) return null;
+  return { node: last, offset: Math.max(0, (last.nodeValue || '').length - 1) };
+}
+
+/**
  * 收集容器内文本节点，生成「空白折叠后的文本」与「归一化下标 -> DOM 位置」映射。
  * 跨节点补一个空格，保证跨 <em>/<a> 的选区也能整段匹配。
  * @param {HTMLElement} container
@@ -295,6 +340,12 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   const pdfAnchorRef = React.useRef(null);
   const pdfRenderedRef = React.useRef(null);
   const textAnchorRef = React.useRef(null);
+  /*
+   * 重排修正把视线落到新页码后，会触发一次「页码变化」采样；
+   * 那次采样会把锚点从「视线字符」改成「新页首字符」（更靠前的文字），
+   * 反复开合面板就会一页页往回漂。这里记下要跳过的那次采样。
+   */
+  const skipCaptureRef = React.useRef(null);
   const wheelIntentRef = React.useRef(createWheelIntent());
   const zoomIntentRef = React.useRef(createZoomIntent());
 
@@ -366,20 +417,48 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   }, [isPdf, bookId]);
 
   /** Capture visible text before changing typography, without retaining a whole text index. */
-  const captureTextAnchor = React.useCallback(() => {
+  const captureTextAnchor = React.useCallback((reason = 'page') => {
     const viewport = viewportRef.current;
     const flow = flowRef.current;
     if (!viewport || !flow || isPdf) return;
     const box = viewport.getBoundingClientRect();
-    const caret = document.caretPositionFromPoint?.(box.left + 4, box.top + 8);
-    const fallback = !caret && document.caretRangeFromPoint?.(box.left + 4, box.top + 8);
+    const meta = measureRef.current;
+    const stride = Math.max(1, (meta.perPage || 1) * ((meta.columnWidth || 320) + (meta.gap || COLUMN_GAP)));
+    const flowBox = flow.getBoundingClientRect();
+    /*
+     * 分页模式里 flow 被 translateX 平移：它的 left 指向整章左缘，加上平移量才是当前页左缘。
+     * 平移量读 inline transform，它一定对应「当前页」，不依赖尚未提交的 page 状态。
+     */
+    const shifted = Math.abs(parseFloat(/translateX\((-?[\d.]+)px\)/.exec(flow.style.transform || '')?.[1] ?? '0')) || 0;
+    const visualPage = settings.flow === 'scroll' ? 0 : Math.round(shifted / stride);
+    const contentLeft = flowBox.left + shifted;
+    const content = {
+      left: Math.max(box.left, contentLeft),
+      top: Math.max(box.top, flowBox.top),
+      right: box.right,
+      bottom: box.bottom,
+    };
+    /** 字符落在当前页里才算有效锚点；+1 是列宽的亚像素误差容差。 */
+    const pageOf = (left) => visualPage + Math.floor((left - contentLeft + 1) / stride);
+    const commit = (node, offset, rect) => {
+      if (settings.flow !== 'scroll' && pageOf(rect.left) !== visualPage) return false;
+      const textOffset = textOffsetOf(flow, node, offset);
+      textAnchorRef.current = {
+        node, offset, textOffset, y: rect.top - box.top, scrollTop: viewport.scrollTop,
+        chapterIndex, bookId, page: liveRef.current.page,
+      };
+      return true;
+    };
+    const caret = document.caretPositionFromPoint?.(content.left + 4, content.top + 8);
+    const fallback = !caret && document.caretRangeFromPoint?.(content.left + 4, content.top + 8);
     const caretNode = caret?.offsetNode || fallback?.startContainer;
     const caretOffset = caret?.offset ?? fallback?.startOffset;
     if (caretNode?.nodeType === Node.TEXT_NODE && flow.contains(caretNode) && caretOffset < caretNode.length) {
       const range = document.createRange();
       range.setStart(caretNode, caretOffset); range.setEnd(caretNode, caretOffset + 1);
-      textAnchorRef.current = { node: caretNode, offset: caretOffset, y: range.getBoundingClientRect().top - box.top, scrollTop: viewport.scrollTop, chapterIndex, bookId };
-      return;
+      const rect = range.getBoundingClientRect();
+      if (rect.bottom > content.top && rect.top < content.bottom && rect.left < content.right && rect.right > content.left
+        && commit(caretNode, caretOffset, rect)) return;
     }
     const walker = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT);
     let node;
@@ -388,21 +467,19 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
       const range = document.createRange();
       range.selectNodeContents(node);
       for (const rect of range.getClientRects()) {
-        if (rect.bottom > box.top && rect.top < box.bottom && rect.right > box.left && rect.left < box.right) {
+        if (rect.bottom > content.top && rect.top < content.bottom && rect.right > content.left && rect.left < content.right) {
           let offset = 0;
           // A small range identifies the visible character, not the paragraph start.
           for (; offset < node.length; offset += 1) {
             range.setStart(node, offset); range.setEnd(node, offset + 1);
             const part = range.getBoundingClientRect();
-            if (part.bottom > box.top && part.top < box.bottom && part.right > box.left && part.left < box.right) {
-              textAnchorRef.current = { node, offset, y: part.top - box.top, scrollTop: viewport.scrollTop, chapterIndex, bookId };
-              return;
-            }
+            if (part.bottom > content.top && part.top < content.bottom && part.right > content.left && part.left < content.right
+              && commit(node, offset, part)) return;
           }
         }
       }
     }
-  }, [isPdf, bookId, chapterIndex]);
+  }, [isPdf, bookId, chapterIndex, settings.flow]);
 
   const adjustZoom = React.useCallback((direction, point = null) => {
     const live = liveRef.current;
@@ -826,31 +903,98 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   React.useEffect(() => {
     const measureNow = () => {
       try {
+        const pageBefore = liveRef.current.page ?? 0;
         measure();
+        const meta = measureRef.current;
         const anchor = textAnchorRef.current;
         /*
          * 锚点只在「用户没离开捕获时的位置」才代表当前视线：
          * 切章瞬间会在滚动位置仍为 0 时捕获到本章第一行，异步恢复到章尾后若再按锚点回填，
          * 视口会被拉回章首。位置偏移超过一屏即视为过期，直接丢弃。
+         * 分页模式的位置由页码和 translateX 决定，滚动位置恒为 0，过期判断不适用；
+         * 改为「落点恢复完成前一律不回填」，否则切章早期捕获的章首锚点会把视口拉回开头。
          */
         const anchorViewport = viewportRef.current;
         const anchorMoved = !!(anchor && anchorViewport && Number.isFinite(anchor.scrollTop)
+          && settings.flow === 'scroll'
           && Math.abs(anchorViewport.scrollTop - anchor.scrollTop) > Math.max(1, anchorViewport.clientHeight));
+        /*
+         * 锚点还必须是「当前这一页」采样到的：分页模式里页码变了但锚点没跟着变，
+         * 说明它是翻页前的位置，按它回填会整页倒退。
+         */
+        const anchorUsable = !!anchor
+          && pendingRestoreRef.current === null
+          && anchor.bookId === bookId
+          && anchor.chapterIndex === chapterIndex
+          && (settings.flow === 'scroll' || anchor.page === pageBefore);
+        let landedPage = null;
         if (anchorMoved) {
           textAnchorRef.current = null;
-        } else if (anchor && anchor.node.isConnected && anchor.bookId === bookId && anchor.chapterIndex === chapterIndex) {
-          const range = document.createRange();
-          range.setStart(anchor.node, anchor.offset);
-          range.setEnd(anchor.node, Math.min(anchor.node.length, anchor.offset + 1));
-          const rect = range.getClientRects()[0];
-          if (rect && settings.flow === 'paginated') {
-            const x = rect.left - flowRef.current.getBoundingClientRect().left;
-            const meta = measureRef.current;
-            setPage(Math.floor(Math.max(0, x) / (meta.perPage * (meta.columnWidth + meta.gap))));
-          } else if (rect) {
-            viewportRef.current.scrollTop += rect.top - viewportRef.current.getBoundingClientRect().top - anchor.y;
+        } else if (anchorUsable) {
+          const flow = flowRef.current;
+          /*
+           * 重新排版会重建正文节点，锚点里的节点引用可能已经脱离文档；
+           * 按字符序号重新定位同一段文字，位置才对得上。
+           */
+          const caret = flow && Number.isFinite(anchor.textOffset) ? caretAtTextOffset(flow, anchor.textOffset) : null;
+          const node = caret?.node ?? (anchor.node?.isConnected ? anchor.node : null);
+          const offset = caret?.offset ?? anchor.offset;
+          const range = node ? document.createRange() : null;
+          if (range) {
+            range.setStart(node, offset);
+            range.setEnd(node, Math.min(node.length, offset + 1));
           }
-          textAnchorRef.current = null;
+          const rect = range?.getClientRects()[0] ?? null;
+          if (rect && settings.flow === 'paginated') {
+            const x = rect.left - flow.getBoundingClientRect().left;
+            const colStride = (meta.perPage || 1) * ((meta.columnWidth || 320) + (meta.gap || COLUMN_GAP));
+            // +1px 与 revealNode 一致：吸收列宽取整带来的亚像素误差，避免边界字符掉到上一页。
+            landedPage = Math.min(
+              Math.floor((Math.max(0, x) + 1) / colStride),
+              Math.max(0, meta.pages - 1),
+            );
+            // 先无过渡地落到新页码，避免重排后先闪一帧旧位置再动画滑走。
+            flow.style.transition = 'none';
+            flow.style.transform = `translateX(${-landedPage * meta.perPage * (meta.columnWidth + meta.gap)}px)`;
+            setPage(landedPage);
+            // 同一轮重排里可能还有别的 measure()，它们读的是 liveRef，必须马上跟上新页码。
+            liveRef.current = { ...liveRef.current, page: landedPage };
+            // 这次页码变化是修正带来的，别让它把锚点重新采样成新页首。
+            skipCaptureRef.current = { page: landedPage };
+          } else if (rect) {
+            const viewportNow = viewportRef.current;
+            viewportNow.scrollTop += rect.top - viewportNow.getBoundingClientRect().top - anchor.y;
+            /*
+             * 滚动模式修正后同样续用该锚点：下一次重排（比如关闭面板）
+             * 不能依赖 scroll 事件是否触发，否则修正量为 0 或事件错过时
+             * 锚点丢失，位置随宽度变化漂移。
+             */
+            textAnchorRef.current = {
+              ...anchor,
+              node,
+              offset,
+              y: anchor.y,
+              scrollTop: viewportNow.scrollTop,
+            };
+          }
+          if (landedPage !== null) {
+            /*
+             * 修正后的位置就是新的视线起点：续用同一个字符序号，
+             * 下一次重排（比如关闭面板）不必等重新捕获。
+             */
+            const viewportNow = viewportRef.current;
+            textAnchorRef.current = {
+              ...anchor,
+              node,
+              offset,
+              // 同一个字符现在显示在新页码上：页码跟上，字符序号保持不变。
+              page: landedPage,
+              y: viewportNow ? rect.top - viewportNow.getBoundingClientRect().top : 0,
+              scrollTop: viewportNow ? viewportNow.scrollTop : 0,
+            };
+          } else if (!rect) {
+            textAnchorRef.current = null;
+          }
         }
         // The next setting action captures a fresh anchor before mutation.
       } catch (_error) {
@@ -886,12 +1030,40 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
   React.useEffect(() => {
     if (isPdf) return undefined;
     const viewport = viewportRef.current;
-    let frame;
-    const capture = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(captureTextAnchor); };
+    let frame = null;
+    let timer = null;
+    /** 重排修正引发的那次页码变化不采样，锚点保持在原来的字符上。 */
+    const runCapture = () => {
+      const skip = skipCaptureRef.current;
+      if (skip !== null) {
+        skipCaptureRef.current = null;
+        if (liveRef.current.page === skip.page) return;
+      }
+      captureTextAnchor();
+    };
+    const capture = () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      if (timer !== null) clearTimeout(timer);
+      if (settings.flow === 'scroll') {
+        frame = requestAnimationFrame(runCapture);
+        return;
+      }
+      /*
+       * 翻页 transform 带 .18s 过渡动画：动画期间视口仍显示上一页，
+       * 立即采样会把上一页首行错记为视线锚点，面板开合触发重排时
+       * 整页回跳。等过渡结束再采样，锚点才代表当前页。
+       */
+      timer = setTimeout(runCapture, 220);
+    };
     capture();
-    viewport?.addEventListener('scroll', capture);
-    return () => { cancelAnimationFrame(frame); viewport?.removeEventListener('scroll', capture); };
-  }, [isPdf, page, captureTextAnchor]);
+    const onScroll = () => capture();
+    viewport?.addEventListener('scroll', onScroll);
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      if (timer !== null) clearTimeout(timer);
+      viewport?.removeEventListener('scroll', onScroll);
+    };
+  }, [isPdf, page, settings.flow, captureTextAnchor]);
 
   // ------------------------------------------------------------- 位置上报
 
