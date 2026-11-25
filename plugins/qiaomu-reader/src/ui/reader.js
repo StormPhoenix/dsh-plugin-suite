@@ -1372,8 +1372,14 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
         if (mark) {
           const id = mark.getAttribute('data-qmr-hl');
           if (id) {
-            ui.store.set({ focusHighlightId: id });
-            ui.setPanel('highlights');
+            // 递增 focusToken：重复点同一条也要重新定位，并让侧栏列表滚到该条。
+            ui.store.set({
+              focusHighlightId: id,
+              focusToken: (ui.store.get().focusToken || 0) + 1,
+              notesMode: 'list',
+            });
+            const panel = ui.store.get().panel;
+            if (panel !== 'highlights' && panel !== 'notes') ui.setPanel('highlights');
             return;
           }
         }
@@ -1467,24 +1473,22 @@ export function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     ui.toast('已划线', 'ok');
   };
 
-  const onNote = () => {
+  const onNote = (draft) => {
     const current = ui.store.get().selection;
     if (!current) return;
+    const note = String((draft && draft.note) || '').trim();
+    const color = ['yellow', 'green', 'blue', 'pink'].includes(draft && draft.color) ? draft.color : 'yellow';
     const highlight = ui.addHighlight(bookId, {
       text: current.text,
       chapterHref: current.chapterHref,
-      color: 'yellow',
+      color,
       percent: current.percent,
       textOffset: current.textOffset,
-      note: '',
+      note,
     });
     ui.clearSelection();
-    if (highlight) {
-      ui.store.set({ editingHighlightId: highlight.id });
-      ui.setPanel('highlights');
-    } else {
-      ui.toast('请稍候再试', 'warn');
-    }
+    if (highlight) ui.toast(note ? '已添加批注' : '已划线', 'ok');
+    else ui.toast('请稍候再试', 'warn');
   };
 
   const onAsk = () => {

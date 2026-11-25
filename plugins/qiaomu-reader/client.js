@@ -103649,6 +103649,7 @@ button.qmr-tag-badge:hover:not(:disabled){border-color:var(--qmr-tag-tone,var(--
 .qmr-group-title:first-child{margin-top:2px}
 .qmr-hl-item{margin-bottom:8px;padding:8px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;
   background:var(--dsw-alias-bg-base)}
+.qmr-hl-item.is-focused{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary)}
 .qmr-hl-top{display:flex;align-items:flex-start;gap:6px}
 .qmr-dot{width:10px;height:10px;flex:0 0 auto;border-radius:50%;margin-top:5px;border:1px solid var(--dsw-alias-border-l2)}
 .qmr-dot-yellow{background:var(--qmr-hl-yellow,rgba(255,206,64,.9))}
@@ -103696,6 +103697,11 @@ button.qmr-tag-badge:hover:not(:disabled){border-color:var(--qmr-tag-tone,var(--
   border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer}
 .qmr-selmenu-btn:hover{background:var(--dsw-alias-bg-layer-2)}
 .qmr-selmenu-sep{width:1px;height:18px;margin:0 2px;background:var(--dsw-alias-border-l1)}
+.qmr-selmenu.is-composing{flex-direction:column;align-items:stretch;width:320px;max-width:calc(100vw - 16px);
+  padding:8px;gap:8px}
+.qmr-selpop-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.qmr-selpop-textarea{min-height:72px;max-height:180px;font-family:inherit}
+.qmr-selpop-tools{display:flex;align-items:center;justify-content:flex-end;gap:6px}
 .qmr-toast{position:absolute;left:50%;bottom:22px;z-index:60;transform:translateX(-50%);max-width:80%;
   padding:8px 14px;border-radius:8px;font-size:13px;background:var(--dsw-alias-bg-overlay,var(--dsw-alias-bg-layer-2));
   border:1px solid var(--dsw-alias-border-l2);box-shadow:0 6px 20px rgba(0,0,0,.24)}
@@ -105665,6 +105671,7 @@ function CompanionPanel({ ui, bookId, chapterIndex, engine, chatApi, SessionProv
 // src/ui/selection-menu.js
 var React8 = __toESM(require("react"), 1);
 var h7 = React8.createElement;
+var COMPOSING_SIZE = { width: 320, height: 208 };
 function computeMenuPosition(anchor, size) {
   const width = Math.max(80, size && size.width || 250);
   const height = Math.max(28, size && size.height || 42);
@@ -105681,21 +105688,90 @@ function computeMenuPosition(anchor, size) {
 function SelectionMenu({ ui, selection, onHighlight, onNote, onAsk }) {
   const elementRef = React8.useRef(null);
   const [position, setPosition] = React8.useState(() => computeMenuPosition(selection.anchor));
+  const [composing, setComposing] = React8.useState(false);
+  const [draft, setDraft] = React8.useState("");
+  const [color, setColor] = React8.useState("yellow");
   const themeId = ui.settingsOf(ui.useSel((state) => state.bookId)).theme;
+  React8.useEffect(() => {
+    setComposing(false);
+    setDraft("");
+    setColor("yellow");
+  }, [selection.text, selection.chapterHref]);
   React8.useLayoutEffect(() => {
     const element = elementRef.current;
-    const size = element ? { width: element.offsetWidth, height: element.offsetHeight } : void 0;
+    const size = element ? { width: element.offsetWidth, height: element.offsetHeight } : composing ? COMPOSING_SIZE : void 0;
     setPosition(computeMenuPosition(selection.anchor, size));
-  }, [selection.anchor, selection.text]);
+  }, [selection.anchor, selection.text, composing]);
   if (!selection || !selection.anchor) return null;
-  const swatches = HIGHLIGHT_COLORS2.map((color) => h7("button", {
-    key: color,
+  const swatches = HIGHLIGHT_COLORS2.map((item) => h7("button", {
+    key: item,
     type: "button",
-    className: "qmr-swatch",
-    style: { background: highlightPaint(themeId, color) },
-    "aria-label": `${HIGHLIGHT_COLOR_LABELS2[color]}\u8272\u5212\u7EBF`,
-    onClick: () => onHighlight(color)
+    className: `qmr-swatch${composing && color === item ? " is-active" : ""}`,
+    style: { background: highlightPaint(themeId, item) },
+    "aria-label": composing ? `\u6279\u6CE8\u989C\u8272\uFF1A${HIGHLIGHT_COLOR_LABELS2[item]}` : `${HIGHLIGHT_COLOR_LABELS2[item]}\u8272\u5212\u7EBF`,
+    "aria-pressed": composing ? color === item : void 0,
+    onClick: () => composing ? setColor(item) : onHighlight(item)
   }));
+  const submit = () => onNote({ note: draft.trim(), color });
+  if (composing) {
+    return h7(
+      "div",
+      {
+        ref: elementRef,
+        className: "qmr-selmenu is-composing",
+        style: { left: position.left, top: position.top },
+        role: "dialog",
+        "aria-label": "\u5199\u6279\u6CE8",
+        onMouseDown: (event) => {
+          const target = event.target;
+          if (target && target.closest && target.closest("input,textarea,button")) return;
+          event.preventDefault();
+        }
+      },
+      h7(
+        "div",
+        { className: "qmr-selpop-head" },
+        h7("span", { className: "qmr-swatches", "aria-label": "\u6279\u6CE8\u989C\u8272" }, swatches),
+        h7("button", {
+          type: "button",
+          className: "qmr-icon-btn",
+          "aria-label": "\u6536\u8D77\u6279\u6CE8\u7F16\u8F91\u5668",
+          onClick: () => setComposing(false)
+        }, h7(IconClose, { width: 14, height: 14 }))
+      ),
+      h7("textarea", {
+        className: "qmr-textarea qmr-selpop-textarea",
+        value: draft,
+        placeholder: "\u5199\u70B9\u4EC0\u4E48\u2026\uFF08\u7559\u7A7A\u5219\u53EA\u5212\u7EBF\uFF09",
+        "aria-label": "\u6279\u6CE8\u5185\u5BB9",
+        autoFocus: true,
+        onChange: (event) => setDraft(event.target.value),
+        onKeyDown: (event) => {
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            setComposing(false);
+          } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            submit();
+          }
+        }
+      }),
+      h7(
+        "div",
+        { className: "qmr-selpop-tools" },
+        h7("button", {
+          type: "button",
+          className: "qmr-btn qmr-btn-sm",
+          onClick: () => setComposing(false)
+        }, "\u53D6\u6D88"),
+        h7("button", {
+          type: "button",
+          className: "qmr-btn qmr-btn-sm qmr-btn-primary",
+          onClick: submit
+        }, draft.trim() ? "\u4FDD\u5B58\u6279\u6CE8" : "\u5212\u7EBF")
+      )
+    );
+  }
   return h7(
     "div",
     {
@@ -105718,7 +105794,7 @@ function SelectionMenu({ ui, selection, onHighlight, onNote, onAsk }) {
       type: "button",
       className: "qmr-selmenu-btn",
       "aria-label": "\u5199\u6279\u6CE8",
-      onClick: () => onNote()
+      onClick: () => setComposing(true)
     }, h7(IconNote, { width: 16, height: 16 })),
     h7("button", {
       type: "button",
@@ -105880,7 +105956,7 @@ function groupByChapter(highlights, engine) {
     items: items.slice().sort((a, b) => Number(a.percent || 0) - Number(b.percent || 0))
   }));
 }
-function HighlightItem({ ui, highlight, bookId, editing }) {
+function HighlightItem({ ui, highlight, bookId, editing, focused }) {
   const [draft, setDraft] = React10.useState(String(highlight.note || ""));
   React10.useEffect(() => {
     setDraft(String(highlight.note || ""));
@@ -105907,7 +105983,10 @@ ${truncate(highlight.text, 60)}`);
   };
   return h9(
     "div",
-    { className: "qmr-hl-item" },
+    {
+      className: `qmr-hl-item${focused ? " is-focused" : ""}`,
+      "data-qmr-hlid": String(highlight.id)
+    },
     h9(
       "div",
       { className: "qmr-hl-top" },
@@ -105957,7 +106036,10 @@ ${truncate(highlight.text, 60)}`);
       h9("button", {
         type: "button",
         className: "qmr-btn qmr-btn-sm",
-        onClick: () => ui.store.set({ editingHighlightId: highlight.id })
+        onClick: () => {
+          ui.focusHighlight(bookId, highlight.id);
+          ui.store.set({ editingHighlightId: highlight.id });
+        }
       }, highlight.note ? "\u7F16\u8F91\u6279\u6CE8" : "\u5199\u6279\u6CE8"),
       h9("button", {
         type: "button",
@@ -105974,12 +106056,23 @@ function HighlightsPanel({ ui }) {
   const bookState = ui.useSel((state) => (state.states || {})[bookId] || null);
   const mode = ui.useSel((state) => state.notesMode) || "list";
   const editingId = ui.useSel((state) => state.editingHighlightId);
+  const focusId = ui.useSel((state) => state.focusHighlightId);
+  const focusToken = ui.useSel((state) => state.focusToken);
+  const listRef = React10.useRef(null);
   const engineVersion = ui.useSel((state) => state.engineVersion);
   const engine = ui.engineOf(bookId);
   const book = ui.bookOf(bookId);
   React10.useEffect(() => {
     if (bookId != null) ui.loadState(bookId);
   }, [bookId, ui]);
+  React10.useEffect(() => {
+    if (mode !== "list" || !focusId) return;
+    const container = listRef.current;
+    if (!container) return;
+    const key = String(focusId).replace(/"/g, "");
+    const node = container.querySelector(`[data-qmr-hlid="${key}"]`);
+    if (node) node.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [mode, focusId, focusToken]);
   const highlights = bookState && bookState.highlights || [];
   const highlightsRef = React10.useRef(highlights);
   highlightsRef.current = highlights;
@@ -106044,7 +106137,7 @@ function HighlightsPanel({ ui }) {
     ),
     h9(
       "div",
-      { className: "qmr-panel-body" },
+      { className: "qmr-panel-body", ref: listRef },
       mode === "notes" ? h9(
         React10.Fragment,
         null,
@@ -106104,7 +106197,8 @@ function HighlightsPanel({ ui }) {
             ui,
             highlight,
             bookId,
-            editing: editingId === highlight.id
+            editing: editingId === highlight.id,
+            focused: focusId === highlight.id
           }))
         ))
       ) : h9(
@@ -107736,8 +107830,13 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
         if (mark) {
           const id = mark.getAttribute("data-qmr-hl");
           if (id) {
-            ui.store.set({ focusHighlightId: id });
-            ui.setPanel("highlights");
+            ui.store.set({
+              focusHighlightId: id,
+              focusToken: (ui.store.get().focusToken || 0) + 1,
+              notesMode: "list"
+            });
+            const panel2 = ui.store.get().panel;
+            if (panel2 !== "highlights" && panel2 !== "notes") ui.setPanel("highlights");
             return;
           }
         }
@@ -107814,24 +107913,22 @@ function ReaderView({ ui, chatApi, SessionProvider, renderSlot }) {
     ui.clearSelection();
     ui.toast("\u5DF2\u5212\u7EBF", "ok");
   };
-  const onNote = () => {
+  const onNote = (draft) => {
     const current = ui.store.get().selection;
     if (!current) return;
+    const note = String(draft && draft.note || "").trim();
+    const color = ["yellow", "green", "blue", "pink"].includes(draft && draft.color) ? draft.color : "yellow";
     const highlight = ui.addHighlight(bookId, {
       text: current.text,
       chapterHref: current.chapterHref,
-      color: "yellow",
+      color,
       percent: current.percent,
       textOffset: current.textOffset,
-      note: ""
+      note
     });
     ui.clearSelection();
-    if (highlight) {
-      ui.store.set({ editingHighlightId: highlight.id });
-      ui.setPanel("highlights");
-    } else {
-      ui.toast("\u8BF7\u7A0D\u5019\u518D\u8BD5", "warn");
-    }
+    if (highlight) ui.toast(note ? "\u5DF2\u6DFB\u52A0\u6279\u6CE8" : "\u5DF2\u5212\u7EBF", "ok");
+    else ui.toast("\u8BF7\u7A0D\u5019\u518D\u8BD5", "warn");
   };
   const onAsk = () => {
     const current = ui.store.get().selection;

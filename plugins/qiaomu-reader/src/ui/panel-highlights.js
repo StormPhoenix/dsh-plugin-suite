@@ -41,9 +41,10 @@ function groupByChapter(highlights, engine) {
  * @param {object} props.highlight
  * @param {string} props.bookId
  * @param {boolean} props.editing
+ * @param {boolean} [props.focused] 是否为当前定位项
  * @returns {React.ReactElement}
  */
-function HighlightItem({ ui, highlight, bookId, editing }) {
+function HighlightItem({ ui, highlight, bookId, editing, focused }) {
   const [draft, setDraft] = React.useState(String(highlight.note || ''));
   React.useEffect(() => {
     setDraft(String(highlight.note || ''));
@@ -72,7 +73,10 @@ function HighlightItem({ ui, highlight, bookId, editing }) {
 
   return h(
     'div',
-    { className: 'qmr-hl-item' },
+    {
+      className: `qmr-hl-item${focused ? ' is-focused' : ''}`,
+      'data-qmr-hlid': String(highlight.id),
+    },
     h(
       'div',
       { className: 'qmr-hl-top' },
@@ -124,7 +128,10 @@ function HighlightItem({ ui, highlight, bookId, editing }) {
         h('button', {
           type: 'button',
           className: 'qmr-btn qmr-btn-sm',
-          onClick: () => ui.store.set({ editingHighlightId: highlight.id }),
+          onClick: () => {
+            ui.focusHighlight(bookId, highlight.id);
+            ui.store.set({ editingHighlightId: highlight.id });
+          },
         }, highlight.note ? '编辑批注' : '写批注'),
         h('button', {
           type: 'button',
@@ -148,6 +155,9 @@ export function HighlightsPanel({ ui }) {
   const bookState = ui.useSel((state) => (state.states || {})[bookId] || null);
   const mode = ui.useSel((state) => state.notesMode) || 'list';
   const editingId = ui.useSel((state) => state.editingHighlightId);
+  const focusId = ui.useSel((state) => state.focusHighlightId);
+  const focusToken = ui.useSel((state) => state.focusToken);
+  const listRef = React.useRef(null);
   const engineVersion = ui.useSel((state) => state.engineVersion);
   const engine = ui.engineOf(bookId);
   const book = ui.bookOf(bookId);
@@ -155,6 +165,17 @@ export function HighlightsPanel({ ui }) {
   React.useEffect(() => {
     if (bookId != null) ui.loadState(bookId);
   }, [bookId, ui]);
+
+  // 正文里点中已有划线、或列表里点开某条时，把对应条目滚进侧栏可视区。
+  // Markdown 阅读笔记视图不做定位，只在列表视图生效。
+  React.useEffect(() => {
+    if (mode !== 'list' || !focusId) return;
+    const container = listRef.current;
+    if (!container) return;
+    const key = String(focusId).replace(/"/g, '');
+    const node = container.querySelector(`[data-qmr-hlid="${key}"]`);
+    if (node) node.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [mode, focusId, focusToken]);
 
   const highlights = (bookState && bookState.highlights) || [];
   const highlightsRef = React.useRef(highlights);
@@ -223,7 +244,7 @@ export function HighlightsPanel({ ui }) {
     ),
     h(
       'div',
-      { className: 'qmr-panel-body' },
+      { className: 'qmr-panel-body', ref: listRef },
       mode === 'notes'
         ? h(
           React.Fragment,
@@ -265,6 +286,7 @@ export function HighlightsPanel({ ui }) {
                 highlight,
                 bookId,
                 editing: editingId === highlight.id,
+                focused: focusId === highlight.id,
               })),
             )),
           )
